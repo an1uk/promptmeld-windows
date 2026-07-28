@@ -338,6 +338,33 @@ def test_appearance_option_is_saved(qtbot, tmp_path):
     assert load_settings(paths.settings_file).theme == "dark"
 
 
+def test_general_preferences_are_separate_from_writing_defaults(
+    qtbot,
+    tmp_path,
+):
+    dialog = ActionSettingsDialog(
+        [WritingAction("edit", "Edit", (), "Improve this.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+
+    assert [
+        dialog.tabs.tabText(index)
+        for index in range(dialog.tabs.count())
+    ] == ["Writing actions", "General", "Defaults & style"]
+    general_page = dialog.tabs.widget(1)
+    defaults_page = dialog.tabs.widget(2)
+    for control in (
+        dialog.theme,
+        dialog.most_used_count,
+        dialog.primary_language,
+    ):
+        assert general_page.isAncestorOf(control)
+        assert not defaults_page.isAncestorOf(control)
+
+
 def test_action_settings_saves_most_used_count(qtbot, tmp_path):
     paths = AppPaths.discover(tmp_path)
     paths.ensure()
