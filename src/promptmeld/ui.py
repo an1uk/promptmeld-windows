@@ -3,6 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QCursor, QKeyEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QFrame,
     QHBoxLayout,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
 from .actions import ActionRegistry
 from .branding import APP_NAME, TAGLINE
 from .icons import ActionIconProvider
+from .theme import resolve_theme
 
 
 class LauncherPopup(QWidget):
@@ -36,6 +38,7 @@ class LauncherPopup(QWidget):
         folder_icons: dict[str, str] | None = None,
         natural_voice_enabled: bool = False,
         auto_submit_enabled: bool = False,
+        theme: str = "auto",
     ):
         super().__init__()
         self.registry = registry
@@ -44,6 +47,7 @@ class LauncherPopup(QWidget):
         self.folder_icons = dict(folder_icons or {})
         self.natural_voice_enabled = natural_voice_enabled
         self.auto_submit_enabled = auto_submit_enabled
+        self.theme = theme
         self.current_folder = ""
         self.setWindowTitle(APP_NAME)
         self.setWindowFlags(
@@ -134,6 +138,11 @@ class LauncherPopup(QWidget):
         self.list.itemDoubleClicked.connect(self._run_item)
         self.natural_voice.toggled.connect(self._natural_voice_toggled)
         self.auto_submit.toggled.connect(self._auto_submit_toggled)
+        app = QApplication.instance()
+        if app is not None:
+            app.styleHints().colorSchemeChanged.connect(
+                self._system_colour_scheme_changed
+            )
         self._apply_style()
         self.refresh()
 
@@ -171,6 +180,14 @@ class LauncherPopup(QWidget):
         self.auto_submit.blockSignals(True)
         self.auto_submit.setChecked(enabled)
         self.auto_submit.blockSignals(False)
+
+    def set_theme(self, theme: str) -> None:
+        self.theme = theme
+        self._apply_style()
+
+    def _system_colour_scheme_changed(self, colour_scheme) -> None:
+        if self.theme == "auto":
+            self._apply_style()
 
     def _auto_submit_toggled(self, enabled: bool) -> None:
         self.auto_submit_enabled = enabled
@@ -421,6 +438,67 @@ class LauncherPopup(QWidget):
             self.custom_requested.emit(instruction)
 
     def _apply_style(self) -> None:
+        if resolve_theme(self.theme) == "light":
+            self.setStyleSheet(
+                """
+                QFrame#launcherFrame {
+                    background: #ffffff;
+                    border: 1px solid #cbd2dc;
+                    border-radius: 14px;
+                }
+                QLabel { color: #202631; }
+                QLabel#title { font-size: 18px; font-weight: 650; }
+                QLabel#tagline {
+                    color: #365fc7;
+                    font-size: 11px;
+                    font-style: italic;
+                }
+                QLabel#hint { color: #697381; font-size: 11px; }
+                QLabel#breadcrumb {
+                    color: #365fc7;
+                    font-size: 11px;
+                    padding: 0 2px 2px 2px;
+                }
+                QLineEdit {
+                    color: #202631;
+                    background: #f5f7fa;
+                    border: 1px solid #c5ccd6;
+                    border-radius: 8px;
+                    padding: 9px 10px;
+                    selection-background-color: #b9ceff;
+                }
+                QLineEdit:focus { border-color: #4d72d8; }
+                QListWidget {
+                    color: #202631;
+                    background: transparent;
+                    border: 0;
+                    outline: 0;
+                }
+                QListWidget::item {
+                    border-radius: 7px;
+                    padding: 10px 10px;
+                }
+                QListWidget::item:selected {
+                    background: #dce7ff;
+                    color: #173a87;
+                }
+                QPushButton {
+                    color: white;
+                    background: #315ecb;
+                    border: 0;
+                    border-radius: 8px;
+                    padding: 9px 15px;
+                    font-weight: 600;
+                }
+                QPushButton:hover { background: #244fae; }
+                QCheckBox {
+                    color: #303744;
+                    spacing: 8px;
+                    padding: 2px 1px;
+                }
+                """
+            )
+            return
         self.setStyleSheet(
             """
             QFrame#launcherFrame {

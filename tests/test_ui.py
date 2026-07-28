@@ -5,6 +5,7 @@ from promptmeld.app import make_tray_icon
 from promptmeld.config import load_actions, load_settings
 from promptmeld.icons import ActionIconProvider
 from promptmeld.models import (
+    AppSettings,
     DEFAULT_NATURAL_VOICE_INSTRUCTION,
     WritingAction,
 )
@@ -282,12 +283,59 @@ def test_action_instruction_editor_has_high_contrast_style(
         AppPaths.discover(tmp_path),
         ActionIconProvider(tmp_path),
         "Ctrl+Alt+Space",
+        AppSettings(theme="dark"),
     )
     qtbot.addWidget(dialog)
 
     assert dialog.instruction.objectName() == "actionInstruction"
     assert "QPlainTextEdit#actionInstruction" in dialog.styleSheet()
     assert "color: #ffffff" in dialog.styleSheet()
+
+
+def test_light_and_dark_appearance_options_apply_to_both_windows(
+    qtbot,
+    tmp_path,
+):
+    registry = ActionRegistry(
+        [WritingAction("edit", "Edit", (), "Improve this.")],
+        UsageTracker(tmp_path / "usage.json"),
+    )
+    light_popup = LauncherPopup(registry, theme="light")
+    dark_popup = LauncherPopup(registry, theme="dark")
+    light_dialog = ActionSettingsDialog(
+        [WritingAction("edit", "Edit", (), "Improve this.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+        AppSettings(theme="light"),
+    )
+    for widget in (light_popup, dark_popup, light_dialog):
+        qtbot.addWidget(widget)
+
+    assert "background: #ffffff" in light_popup.styleSheet()
+    assert "background: #16181d" in dark_popup.styleSheet()
+    assert light_dialog.theme.currentData() == "light"
+    assert "QDialog { background: #f5f7fa" in light_dialog.styleSheet()
+
+
+def test_appearance_option_is_saved(qtbot, tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    paths.settings_file.write_text("{}", encoding="utf-8")
+    settings = load_settings(paths.settings_file)
+    dialog = ActionSettingsDialog(
+        [WritingAction("edit", "Edit", (), "Improve this.")],
+        paths,
+        ActionIconProvider(tmp_path),
+        settings.popup_hotkey,
+        settings,
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.theme.setCurrentIndex(dialog.theme.findData("dark"))
+    dialog._save()
+
+    assert load_settings(paths.settings_file).theme == "dark"
 
 
 def test_action_settings_saves_most_used_count(qtbot, tmp_path):

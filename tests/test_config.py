@@ -131,6 +131,7 @@ def test_load_settings_includes_home_and_folder_display_defaults(tmp_path):
     settings = load_settings(path)
 
     assert settings.project_name == "PromptMeld"
+    assert settings.theme == "auto"
     assert settings.home_most_used_count == 3
     assert settings.folder_icons["Editing"] == "lucide:pencil"
     assert settings.natural_voice_enabled is False
@@ -149,6 +150,17 @@ def test_load_settings_rejects_invalid_auto_submit_value(tmp_path):
     )
 
     with pytest.raises(ConfigurationError, match="auto_submit_enabled"):
+        load_settings(path)
+
+
+def test_load_settings_rejects_invalid_theme(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"theme": "midnight"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="theme"):
         load_settings(path)
 
 

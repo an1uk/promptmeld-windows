@@ -31,6 +31,8 @@ and recently used actions rank first within the current scope.
 
 The **Defaults & style** tab controls:
 
+- Appearance: Auto (the default, following the Windows app colour mode), Light,
+  or Dark.
 - Automatic submission, which is off by default.
 - The default state and wording of **Preserve my natural voice**.
 - Primary writing language: English (UK), English (US), source language, or a
