@@ -66,6 +66,19 @@ account handles conversations. Treat selected text as information you are
 deliberately sending to ChatGPT, not as text that remains private because
 PromptMeld itself does not store it.
 
+### Do not assume the text is private until you press Return
+
+There is evidence that text merely entered into the ChatGPT message box may be
+sent to or processed by OpenAI before you press Return. PromptMeld cannot see
+or control that behaviour. Do not assume that editing, replacing, or leaving a
+prompt unsent will prevent OpenAI from having seen the earlier text.
+
+This means you should select and activate PromptMeld only with text that you
+are willing to expose to ChatGPT, even when **Submit automatically** is disabled.
+ChatGPT data controls and Temporary Chat may change how content is retained or
+used, but should not be treated as a guarantee that unsent composer text was
+never transmitted.
+
 PromptMeld transfers only the assembled writing request to the ChatGPT desktop
 app. It does this by pasting into the message composer, just as if you had
 copied and pasted the text yourself.
