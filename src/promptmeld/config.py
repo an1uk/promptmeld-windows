@@ -331,6 +331,9 @@ def load_settings(path: Path) -> AppSettings:
         raise ConfigurationError("project_name cannot be empty.")
     if not popup_hotkey:
         raise ConfigurationError("popup_hotkey cannot be empty.")
+    theme = str(raw.get("theme", "auto")).strip().casefold()
+    if theme not in {"auto", "light", "dark"}:
+        raise ConfigurationError("theme must be auto, light, or dark.")
 
     try:
         capture_timeout_ms = int(raw.get("capture_timeout_ms", 1000))
@@ -404,6 +407,7 @@ def load_settings(path: Path) -> AppSettings:
 
     known = {
         "project_name",
+        "theme",
         "popup_hotkey",
         "capture_timeout_ms",
         "automation_timeout_seconds",
@@ -422,6 +426,7 @@ def load_settings(path: Path) -> AppSettings:
     }
     return AppSettings(
         project_name=project_name,
+        theme=theme,
         popup_hotkey=popup_hotkey,
         capture_timeout_ms=capture_timeout_ms,
         automation_timeout_seconds=automation_timeout_seconds,
@@ -449,6 +454,7 @@ def settings_to_dict(settings: AppSettings) -> dict[str, object]:
     return {
         **settings.extra,
         "project_name": settings.project_name,
+        "theme": settings.theme,
         "popup_hotkey": settings.popup_hotkey,
         "capture_timeout_ms": settings.capture_timeout_ms,
         "automation_timeout_seconds": settings.automation_timeout_seconds,

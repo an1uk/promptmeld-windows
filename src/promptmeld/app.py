@@ -179,6 +179,7 @@ class PromptMeld:
                 self.settings.natural_voice_enabled,
                 self.settings.auto_submit_enabled,
             )
+            self.popup.set_theme(self.settings.theme)
 
     def _ensure_icons(self):
         if self.icons is None:
@@ -198,6 +199,7 @@ class PromptMeld:
                 self.settings.folder_icons,
                 self.settings.natural_voice_enabled,
                 self.settings.auto_submit_enabled,
+                self.settings.theme,
             )
             self.popup.action_requested.connect(self.run_action)
             self.popup.custom_requested.connect(self.run_custom)

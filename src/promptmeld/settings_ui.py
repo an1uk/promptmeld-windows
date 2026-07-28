@@ -7,6 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -45,6 +46,7 @@ from .models import (
     WritingAction,
 )
 from .paths import AppPaths
+from .theme import resolve_theme
 from .windows import HotkeyParseError, parse_hotkey
 
 
@@ -113,6 +115,25 @@ class ActionSettingsDialog(QDialog):
         root.addWidget(description)
 
         voice_settings = settings or AppSettings()
+        appearance_group = QGroupBox("Appearance")
+        appearance_layout = QHBoxLayout(appearance_group)
+        appearance_label = QLabel("Colour theme")
+        appearance_label.setObjectName("formLabel")
+        self.theme = NoWheelComboBox()
+        self.theme.addItem("Auto (follow Windows)", "auto")
+        self.theme.addItem("Light", "light")
+        self.theme.addItem("Dark", "dark")
+        selected_theme = self.theme.findData(voice_settings.theme)
+        self.theme.setCurrentIndex(max(0, selected_theme))
+        appearance_note = QLabel(
+            "Auto updates when the Windows app colour mode changes."
+        )
+        appearance_note.setObjectName("muted")
+        appearance_layout.addWidget(appearance_label)
+        appearance_layout.addWidget(self.theme)
+        appearance_layout.addWidget(appearance_note)
+        appearance_layout.addStretch(1)
+
         home_row = QHBoxLayout()
         home_label = QLabel("Most-used actions shown on launcher home")
         home_label.setObjectName("formLabel")
@@ -409,6 +430,7 @@ class ActionSettingsDialog(QDialog):
         defaults_layout = QVBoxLayout(defaults_page)
         defaults_layout.setContentsMargins(22, 18, 22, 18)
         defaults_layout.setSpacing(16)
+        defaults_layout.addWidget(appearance_group)
         defaults_layout.addLayout(home_row)
         defaults_layout.addWidget(submission_group)
         defaults_layout.addWidget(voice_group)
@@ -462,9 +484,16 @@ class ActionSettingsDialog(QDialog):
             self.natural_voice_default.toggled,
             self.natural_voice_instruction.textChanged,
             self.guided_drafting_default.toggled,
+            self.theme.currentIndexChanged,
         ):
             signal.connect(self._mark_unsaved)
 
+        self.theme.currentIndexChanged.connect(self._apply_style)
+        app = QApplication.instance()
+        if app is not None:
+            app.styleHints().colorSchemeChanged.connect(
+                self._system_colour_scheme_changed
+            )
         self._apply_style()
         self._refresh_list(0 if self.actions else -1)
         self._set_save_status("")
@@ -679,11 +708,18 @@ class ActionSettingsDialog(QDialog):
         cursor = self.instruction.textCursor()
         cursor.select(QTextCursor.SelectionType.Document)
         text_format = QTextCharFormat()
-        text_format.setForeground(QColor("#ffffff"))
+        colour = (
+            "#202631"
+            if resolve_theme(str(self.theme.currentData() or "auto")) == "light"
+            else "#ffffff"
+        )
+        text_format.setForeground(QColor(colour))
+        self.instruction.blockSignals(True)
         cursor.mergeCharFormat(text_format)
         cursor.clearSelection()
         self.instruction.setTextCursor(cursor)
         self.instruction.setCurrentCharFormat(text_format)
+        self.instruction.blockSignals(False)
 
     def _mark_unsaved(self, *args) -> None:
         if self._loading:
@@ -696,12 +732,15 @@ class ActionSettingsDialog(QDialog):
         saved: bool | None = None,
     ) -> None:
         self.save_status.setText(message)
+        light = (
+            resolve_theme(str(self.theme.currentData() or "auto")) == "light"
+        )
         colour = (
-            "#79d69a"
-            if saved is True
-            else "#d9b56d"
-            if saved is False
-            else "#9298a5"
+            "#267245" if light else "#79d69a"
+        ) if saved is True else (
+            "#8a5a00" if light else "#d9b56d"
+        ) if saved is False else (
+            "#697381" if light else "#9298a5"
         )
         self.save_status.setStyleSheet(f"color: {colour}; font-weight: 600;")
 
@@ -844,6 +883,7 @@ class ActionSettingsDialog(QDialog):
             if self.settings is not None:
                 self.settings = replace(
                     self.settings,
+                    theme=str(self.theme.currentData() or "auto"),
                     home_most_used_count=self.most_used_count.value(),
                     folder_icons=folder_icons,
                     natural_voice_enabled=(
@@ -999,7 +1039,134 @@ class ActionSettingsDialog(QDialog):
         self.up_button.setEnabled(position > 0)
         self.down_button.setEnabled(position < len(peers) - 1)
 
-    def _apply_style(self) -> None:
+    def _system_colour_scheme_changed(self, colour_scheme) -> None:
+        if str(self.theme.currentData() or "auto") == "auto":
+            self._apply_style()
+
+    def _apply_style(self, *args) -> None:
+        if resolve_theme(str(self.theme.currentData() or "auto")) == "light":
+            self.setStyleSheet(
+                """
+                QDialog { background: #f5f7fa; color: #202631; }
+                QLabel { color: #202631; }
+                QLabel#settingsTitle {
+                    color: #171c25;
+                    font-size: 22px;
+                    font-weight: 650;
+                }
+                QLabel#tagline {
+                    color: #365fc7;
+                    font-size: 12px;
+                    font-style: italic;
+                }
+                QLabel#muted { color: #697381; }
+                QLabel#formLabel { color: #3f4855; }
+                QLabel#inlineLabel { color: #697381; padding: 0 3px; }
+                QLabel#codeValue {
+                    color: #244fae;
+                    background: #e7edfa;
+                    border-radius: 5px;
+                    padding: 4px 7px;
+                    font-family: Consolas;
+                }
+                QLineEdit, QPlainTextEdit, QComboBox, QSpinBox {
+                    color: #202631;
+                    background: #ffffff;
+                    border: 1px solid #c5ccd6;
+                    border-radius: 7px;
+                    padding: 7px 9px;
+                    selection-background-color: #b9ceff;
+                }
+                QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus {
+                    border-color: #4d72d8;
+                }
+                QPlainTextEdit#actionInstruction {
+                    color: #202631;
+                    background: #ffffff;
+                    border: 1px solid #aeb8c5;
+                    font-size: 13px;
+                }
+                QPlainTextEdit#actionInstruction:focus {
+                    color: #202631;
+                    background: #ffffff;
+                    border-color: #4d72d8;
+                }
+                QPlainTextEdit#naturalVoiceInstruction {
+                    color: #202631;
+                    background: #ffffff;
+                    border-color: #aeb8c5;
+                }
+                QComboBox QAbstractItemView {
+                    color: #202631;
+                    background: #ffffff;
+                    selection-background-color: #dce7ff;
+                }
+                QTreeWidget {
+                    color: #202631;
+                    background: #ffffff;
+                    border: 1px solid #cbd2dc;
+                    border-radius: 8px;
+                    outline: 0;
+                }
+                QTreeWidget::item { padding: 7px; }
+                QTreeWidget::item:selected {
+                    background: #dce7ff;
+                    color: #173a87;
+                }
+                QTabWidget::pane {
+                    background: #f5f7fa;
+                    border: 1px solid #cbd2dc;
+                    border-radius: 7px;
+                    top: -1px;
+                }
+                QTabBar::tab {
+                    color: #4a5360;
+                    background: #e9edf2;
+                    border: 1px solid #cbd2dc;
+                    border-bottom: 0;
+                    padding: 9px 16px;
+                    min-width: 130px;
+                }
+                QTabBar::tab:selected {
+                    color: #173a87;
+                    background: #dce7ff;
+                }
+                QTabBar::tab:hover:!selected { background: #dde3ea; }
+                QWidget#settingsPage { background: #f5f7fa; }
+                QPushButton {
+                    color: #202631;
+                    background: #e4e9ef;
+                    border: 1px solid #c2cad4;
+                    border-radius: 7px;
+                    padding: 7px 11px;
+                }
+                QPushButton:hover { background: #d7dee7; }
+                QPushButton:disabled { color: #929aa5; background: #edf0f3; }
+                QDialogButtonBox QPushButton {
+                    min-width: 82px;
+                    color: white;
+                    background: #315ecb;
+                    border: 0;
+                    font-weight: 600;
+                }
+                QCheckBox { color: #303744; spacing: 8px; }
+                QGroupBox {
+                    color: #3f4855;
+                    border: 1px solid #cbd2dc;
+                    border-radius: 7px;
+                    margin-top: 8px;
+                    padding-top: 7px;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 4px;
+                }
+                QFrame { color: #cbd2dc; }
+                """
+            )
+            self._set_instruction_colour()
+            return
         self.setStyleSheet(
             """
             QDialog { background: #17191e; color: #e9ebef; }
@@ -1118,3 +1285,4 @@ class ActionSettingsDialog(QDialog):
             QFrame { color: #343842; }
             """
         )
+        self._set_instruction_colour()

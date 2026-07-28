@@ -60,6 +60,7 @@ class SubmissionResult:
 @dataclass(frozen=True, slots=True)
 class AppSettings:
     project_name: str = DEFAULT_PROJECT_NAME
+    theme: str = "auto"
     popup_hotkey: str = "Ctrl+Alt+Space"
     capture_timeout_ms: int = 1000
     automation_timeout_seconds: float = 8.0

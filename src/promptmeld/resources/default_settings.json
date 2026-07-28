@@ -1,5 +1,6 @@
 {
   "project_name": "PromptMeld",
+  "theme": "auto",
   "popup_hotkey": "Ctrl+Alt+Space",
   "capture_timeout_ms": 1000,
   "automation_timeout_seconds": 8.0,
