@@ -1,11 +1,11 @@
-Exit code: 0
-Wall time: 0.4 seconds
-Output:
 # PromptMeld
 
 *Write well and prosper.*
 
-PromptMeld is a Windows tray application for transforming selected text with ChatGPT. Select text in almost any application, invoke a writing action from a keyboard shortcut or Logitech Actions Ring, and the launcher prepares a focused prompt for a fresh chat in a dedicated ChatGPT Project.
+PromptMeld is a Windows tray application for transforming selected text with
+ChatGPT. Select text in almost any application, invoke a writing action from a
+keyboard shortcut or, optionally, a Logitech Actions Ring, and the launcher
+prepares a focused prompt for a fresh chat in a dedicated ChatGPT Project.
 
 The project is an early V1. It deliberately uses Windows accessibility controls rather than fixed screen coordinates. When ChatGPT does not expose the required project controls, the launcher opens ChatGPT and copies the completed prompt instead of typing into an unknown location.
 
@@ -35,7 +35,7 @@ The project is an early V1. It deliberately uses Windows accessibility controls 
 - Low-overhead idle mode: the popup, icon renderer, settings editor, COM, and
   UI Automation libraries are loaded only when needed. The automation helper
   stays warm briefly for faster consecutive actions, then exits automatically.
-- Logi Options+ Actions Ring integration without a custom plugin.
+- Optional Logi Options+ Actions Ring integration without a custom plugin.
 - No API key, telemetry, or selected-text logging.
 
 ![PromptMeld popup](docs/launcher-popup.png)
@@ -49,23 +49,20 @@ The project is an early V1. It deliberately uses Windows accessibility controls 
 ## Requirements
 
 - Windows 10 or 11.
-- Python 3.12 x64 for development.
 - The new ChatGPT desktop app, signed in.
-- Logi Options+ and an Actions Ring-capable MX device for mouse integration.
 
-Python 3.12 is required for the development environment. Packaged releases do not require Python.
+The installer includes everything PromptMeld needs. Python is required only
+for development.
+
+Logitech hardware and software are not required. The launcher works with
+keyboard shortcuts alone. Optional Actions Ring integration requires Logi
+Options+ and a compatible MX device.
 
 ## Setup
 
-1. Install Python 3.12 from [python.org](https://www.python.org/downloads/) and enable the Python launcher during installation.
-2. In PowerShell, run:
-
-   ```powershell
-   Set-ExecutionPolicy -Scope Process Bypass
-   .\setup.ps1
-   .\run.ps1
-   ```
-
+1. Download `PromptMeld-Setup-v0.1.0.exe` from the
+   [latest release](https://github.com/an1uk/promptmeld-windows/releases/latest).
+2. Run the installer, then launch **PromptMeld** from the Start menu.
 3. PromptMeld selects or, when necessary, creates a ChatGPT Project named for
    the action's configured folder, such as `PromptMeld - Editing`. Nested
    folders become names such as `PromptMeld - Correspondence - Email`.
@@ -74,7 +71,10 @@ Python 3.12 is required for the development environment. Packaged releases do no
 
    > Treat every chat as an independent writing request. Use only the text supplied in the current chat unless explicitly instructed otherwise.
 
-5. Follow [the Actions Ring setup guide](docs/LOGITECH_ACTIONS_RING.md).
+5. If desired, follow [the Actions Ring setup guide](docs/LOGITECH_ACTIONS_RING.md).
+
+The installer is not yet code-signed, so Microsoft Defender SmartScreen may
+identify early releases as an unrecognised app.
 
 The first run creates editable files in:
 
@@ -334,6 +334,16 @@ Home-screen and folder presentation settings are stored in `settings.json`:
 
 ## Development
 
+Install Python 3.12 x64 from
+[python.org](https://www.python.org/downloads/), enable the Python launcher,
+then create the development environment:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\setup.ps1
+.\run.ps1
+```
+
 Run the test suite:
 
 ```powershell
@@ -362,6 +372,17 @@ Each build first audits every declared and transitive package against
 Qt DLLs and plugins, copies the applicable licence texts into `LICENSES`, and
 refuses to complete if an unreviewed dependency or binary appears.
 
+Build the application and its Windows installer:
+
+```powershell
+.\build-installer.ps1
+```
+
+The installer is written to
+`dist\installer\PromptMeld-Setup-v0.1.0.exe`. Building it requires
+[Inno Setup 6](https://jrsoftware.org/isinfo.php); the installed application
+does not.
+
 ## Privacy
 
 Selected text and generated prompts are never written to logs. The app stores only action usage counts and timestamps. See [PRIVACY.md](PRIVACY.md) for details.
@@ -375,4 +396,3 @@ permissively licensed components include Python, pywin32, pywinauto, comtypes,
 six, OpenSSL, and Lucide. The unused GPL-only Qt Virtual Keyboard component is
 explicitly removed and prohibited by the release audit. See [LICENSE](LICENSE),
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and [LICENSES](LICENSES).
-

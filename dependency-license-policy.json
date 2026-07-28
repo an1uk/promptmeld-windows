@@ -1,0 +1,237 @@
+{
+  "format_version": 1,
+  "project_license": "MIT",
+  "packages": {
+    "pyside6": {
+      "scopes": ["runtime"],
+      "license_markers": ["LGPL-3.0-only"],
+      "selected_license": "LGPL-3.0-only",
+      "compatibility": "conditional",
+      "collect_license_files": false
+    },
+    "pyside6-addons": {
+      "scopes": ["runtime"],
+      "license_markers": ["LGPL-3.0-only"],
+      "selected_license": "LGPL-3.0-only",
+      "compatibility": "conditional",
+      "collect_license_files": false
+    },
+    "pyside6-essentials": {
+      "scopes": ["runtime"],
+      "license_markers": ["LGPL-3.0-only"],
+      "selected_license": "LGPL-3.0-only",
+      "compatibility": "conditional",
+      "collect_license_files": false
+    },
+    "shiboken6": {
+      "scopes": ["runtime"],
+      "license_markers": ["LGPL-3.0-only"],
+      "selected_license": "LGPL-3.0-only",
+      "compatibility": "conditional",
+      "collect_license_files": false
+    },
+    "pywin32": {
+      "scopes": ["runtime"],
+      "license_markers": ["PSF"],
+      "selected_license": "PSF-2.0",
+      "compatibility": "permissive",
+      "collect_license_files": true
+    },
+    "pywinauto": {
+      "scopes": ["runtime"],
+      "license_markers": ["BSD 3-clause"],
+      "selected_license": "BSD-3-Clause",
+      "compatibility": "permissive",
+      "collect_license_files": true
+    },
+    "comtypes": {
+      "scopes": ["runtime"],
+      "license_markers": ["MIT"],
+      "selected_license": "MIT",
+      "compatibility": "permissive",
+      "collect_license_files": true
+    },
+    "six": {
+      "scopes": ["runtime"],
+      "license_markers": ["MIT"],
+      "selected_license": "MIT",
+      "compatibility": "permissive",
+      "collect_license_files": true
+    },
+    "pyinstaller": {
+      "scopes": ["dev"],
+      "license_markers": ["special exception"],
+      "selected_license": "GPL-2.0-or-later WITH Bootloader-exception",
+      "compatibility": "build-tool-exception",
+      "collect_license_files": true
+    },
+    "pyinstaller-hooks-contrib": {
+      "scopes": ["dev"],
+      "license_markers": ["Apache Software License"],
+      "selected_license": "GPL-2.0-or-later for build hooks; Apache-2.0 for runtime hooks",
+      "compatibility": "build-tool-and-permissive-runtime-hooks",
+      "collect_license_files": true
+    },
+    "altgraph": {
+      "scopes": ["dev"],
+      "license_markers": ["MIT"],
+      "selected_license": "MIT",
+      "compatibility": "permissive"
+    },
+    "packaging": {
+      "scopes": ["build", "dev"],
+      "license_markers": ["Apache-2.0", "BSD-2-Clause"],
+      "marker_mode": "any",
+      "selected_license": "Apache-2.0 OR BSD-2-Clause",
+      "compatibility": "permissive"
+    },
+    "pefile": {
+      "scopes": ["dev"],
+      "license_markers": ["MIT"],
+      "selected_license": "MIT",
+      "compatibility": "permissive"
+    },
+    "pywin32-ctypes": {
+      "scopes": ["dev"],
+      "license_markers": ["BSD-3-Clause"],
+      "selected_license": "BSD-3-Clause",
+      "compatibility": "permissive"
+    },
+    "setuptools": {
+      "scopes": ["build", "dev"],
+      "license_markers": ["MIT"],
+      "selected_license": "MIT",
+      "compatibility": "permissive"
+    },
+    "wheel": {
+      "scopes": ["build", "dev"],
+      "license_markers": ["MIT"],
+      "selected_license": "MIT",
+      "compatibility": "permissive"
+    },
+    "pytest": {
+      "scopes": ["dev"],
+      "license_markers": ["MIT"],
+      "selected_license": "MIT",
+      "compatibility": "permissive"
+    },
+    "pytest-qt": {
+      "scopes": ["dev"],
+      "license_markers": ["MIT"],
+      "selected_license": "MIT",
+      "compatibility": "permissive"
+    },
+    "colorama": {
+      "scopes": ["dev"],
+      "license_markers": ["BSD License"],
+      "selected_license": "BSD-3-Clause",
+      "compatibility": "permissive"
+    },
+    "iniconfig": {
+      "scopes": ["dev"],
+      "license_markers": ["MIT"],
+      "selected_license": "MIT",
+      "compatibility": "permissive"
+    },
+    "pluggy": {
+      "scopes": ["dev"],
+      "license_markers": ["MIT"],
+      "selected_license": "MIT",
+      "compatibility": "permissive"
+    },
+    "pygments": {
+      "scopes": ["dev"],
+      "license_markers": ["BSD-2-Clause"],
+      "selected_license": "BSD-2-Clause",
+      "compatibility": "permissive"
+    },
+    "typing-extensions": {
+      "scopes": ["dev"],
+      "license_markers": ["PSF-2.0"],
+      "selected_license": "PSF-2.0",
+      "compatibility": "permissive"
+    }
+  },
+  "asset_checks": [
+    {
+      "path": "src/writing_launcher/resources/icons/lucide/LICENSE",
+      "license_markers": ["ISC License", "The MIT License"]
+    }
+  ],
+  "static_license_checks": [
+    {
+      "path": "LICENSES/GPL-3.0-only.txt",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    },
+    {
+      "path": "LICENSES/LGPL-3.0-only.txt",
+      "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+    },
+    {
+      "path": "LICENSES/Apache-2.0.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    }
+  ],
+  "bundle_policy": {
+    "forbidden_file_names": [
+      "Qt6VirtualKeyboard.dll",
+      "qtvirtualkeyboardplugin.dll"
+    ],
+    "allowed_qt_framework_binaries": [
+      "Qt6Core.dll",
+      "Qt6Gui.dll",
+      "Qt6Network.dll",
+      "Qt6OpenGL.dll",
+      "Qt6Svg.dll",
+      "Qt6Widgets.dll"
+    ],
+    "allowed_qt_plugin_binaries": [
+      "qcertonlybackend.dll",
+      "qdirect2d.dll",
+      "qgif.dll",
+      "qicns.dll",
+      "qico.dll",
+      "qjpeg.dll",
+      "qminimal.dll",
+      "qmodernwindowsstyle.dll",
+      "qnetworklistmanager.dll",
+      "qoffscreen.dll",
+      "qopensslbackend.dll",
+      "qschannelbackend.dll",
+      "qsvg.dll",
+      "qsvgicon.dll",
+      "qtga.dll",
+      "qtiff.dll",
+      "qtuiotouchplugin.dll",
+      "qwbmp.dll",
+      "qwebp.dll",
+      "qwindows.dll"
+    ],
+    "allowed_native_runtime_binaries": [
+      "libcrypto-3-x64.dll",
+      "libffi-8.dll",
+      "libssl-3-x64.dll",
+      "MSVCP140.dll",
+      "MSVCP140_1.dll",
+      "MSVCP140_2.dll",
+      "opengl32sw.dll",
+      "pyside6.abi3.dll",
+      "python3.dll",
+      "python312.dll",
+      "pythoncom312.dll",
+      "pywintypes312.dll",
+      "shiboken6.abi3.dll",
+      "VCRUNTIME140.dll",
+      "VCRUNTIME140_1.dll"
+    ],
+    "required_release_files": [
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md",
+      "LICENSES/GPL-3.0-only.txt",
+      "LICENSES/LGPL-3.0-only.txt",
+      "LICENSES/Apache-2.0.txt",
+      "LICENSES/Python-3.12.txt",
+      "LICENSES/DEPENDENCY_AUDIT.txt"
+    ]
+  }
+}
