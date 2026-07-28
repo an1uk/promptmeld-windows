@@ -9,13 +9,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from writing_launcher.actions import ActionRegistry
-from writing_launcher.config import ensure_user_configuration, load_actions, load_settings
-from writing_launcher.icons import ActionIconProvider
-from writing_launcher.paths import AppPaths
-from writing_launcher.settings_ui import ActionSettingsDialog
-from writing_launcher.ui import LauncherPopup
-from writing_launcher.usage import UsageTracker
+from promptmeld.actions import ActionRegistry
+from promptmeld.config import ensure_user_configuration, load_actions, load_settings
+from promptmeld.icons import ActionIconProvider
+from promptmeld.paths import AppPaths
+from promptmeld.settings_ui import ActionSettingsDialog
+from promptmeld.ui import LauncherPopup
+from promptmeld.usage import UsageTracker
 
 
 def main() -> int:

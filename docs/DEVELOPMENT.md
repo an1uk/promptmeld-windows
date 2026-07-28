@@ -12,8 +12,8 @@ Then run:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\setup.ps1
-.\run.ps1
+.\scripts\setup.ps1
+.\scripts\run.ps1
 ```
 
 ## Test
@@ -33,7 +33,7 @@ Run the dependency licence audit directly:
 ## Build the portable application
 
 ```powershell
-.\build.ps1
+.\scripts\build.ps1
 ```
 
 The output is written to `dist\PromptMeld`. `PromptMeld.exe` is the only
@@ -44,14 +44,14 @@ PromptMeld uses one-folder packaging because it starts faster and is easier for
 antivirus products to inspect than a self-extracting one-file executable.
 
 Each build audits every declared and transitive package against
-`dependency-license-policy.json`. After packaging, it checks the actual Qt
-DLLs and plugins, copies applicable licence texts into `LICENSES`, and stops if
-an unreviewed dependency or binary appears.
+`tools\dependency-license-policy.json`. After packaging, it checks the actual
+Qt DLLs and plugins, copies applicable licence texts into `LICENSES`, and stops
+if an unreviewed dependency or binary appears.
 
 ## Build the installer
 
 ```powershell
-.\build-installer.ps1
+.\scripts\build-installer.ps1
 ```
 
 The installer is written to:

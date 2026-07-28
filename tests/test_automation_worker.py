@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import json
 
-from writing_launcher import automation_worker
+from promptmeld import automation_worker
 
 
 def test_server_processes_multiple_requests_before_shutdown(monkeypatch):

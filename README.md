@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/writing_launcher/resources/branding/promptmeld.png" alt="PromptMeld logo" width="160">
+  <img src="src/promptmeld/resources/branding/promptmeld.png" alt="PromptMeld logo" width="160">
 </p>
 
 <h1 align="center">PromptMeld</h1>
@@ -42,6 +42,18 @@ while keeping you in control of what reaches ChatGPT and when it is submitted.
 
 PromptMeld requires Windows 10 or 11 and the current ChatGPT desktop app,
 signed in to your account.
+
+### Current compatibility
+
+PromptMeld currently works only with the new ChatGPT desktop app for Windows.
+It does not currently work with:
+
+- The Classic ChatGPT desktop experience.
+- ChatGPT in a web browser.
+
+Support for either may be investigated if PromptMeld gains sufficient traction
+and users request it. Please add your interest and use case through
+[GitHub Issues](https://github.com/an1uk/promptmeld-windows/issues).
 
 1. Download `PromptMeld-Setup-v0.1.0.exe` from the
    [latest release](https://github.com/an1uk/promptmeld-windows/releases/latest).

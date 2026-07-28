@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from writing_launcher.config import (
+from promptmeld.config import (
     CORRESPONDENCE_ACTION_IDS,
     LEGACY_NATURAL_VOICE_INSTRUCTION,
     ConfigurationError,
@@ -16,7 +16,7 @@ from writing_launcher.config import (
     load_settings,
     save_actions,
 )
-from writing_launcher.paths import AppPaths
+from promptmeld.paths import AppPaths
 
 
 def test_load_actions(tmp_path):
@@ -241,7 +241,7 @@ def test_untouched_legacy_defaults_are_backed_up_and_migrated(tmp_path):
     paths.ensure()
     legacy = Path(
         str(
-            files("writing_launcher").joinpath(
+            files("promptmeld").joinpath(
                 "resources",
                 "legacy_default_actions_v1.json",
             )
@@ -265,7 +265,7 @@ def test_customized_legacy_configuration_is_preserved_during_additive_migration(
     paths.ensure()
     legacy_path = Path(
         str(
-            files("writing_launcher").joinpath(
+            files("promptmeld").joinpath(
                 "resources",
                 "legacy_default_actions_v1.json",
             )

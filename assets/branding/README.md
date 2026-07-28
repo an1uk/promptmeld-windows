@@ -13,5 +13,5 @@ Source artwork: `promptmeld-icon-source.png`
 
 Packaged assets:
 
-- `src/writing_launcher/resources/branding/promptmeld.png`
-- `src/writing_launcher/resources/branding/promptmeld.ico`
+- `src/promptmeld/resources/branding/promptmeld.png`
+- `src/promptmeld/resources/branding/promptmeld.ico`

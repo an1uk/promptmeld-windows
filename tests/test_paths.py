@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from writing_launcher.paths import AppPaths
+from promptmeld.paths import AppPaths
 
 
 def test_first_promptmeld_run_copies_legacy_data_without_removing_it(

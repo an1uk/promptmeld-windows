@@ -4,8 +4,8 @@ import sys
 
 import pytest
 
-from writing_launcher import automation_client
-from writing_launcher.models import AppSettings
+from promptmeld import automation_client
+from promptmeld.models import AppSettings
 
 
 @pytest.fixture(autouse=True)

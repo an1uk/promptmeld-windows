@@ -88,7 +88,7 @@ def configure_logging(paths: AppPaths) -> None:
 
 
 def make_tray_icon() -> QIcon:
-    icon_path = files("writing_launcher").joinpath(
+    icon_path = files("promptmeld").joinpath(
         "resources",
         "branding",
         "promptmeld.png",

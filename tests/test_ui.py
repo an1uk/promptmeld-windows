@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-from writing_launcher.actions import ActionRegistry
-from writing_launcher.app import make_tray_icon
-from writing_launcher.config import load_actions, load_settings
-from writing_launcher.icons import ActionIconProvider
-from writing_launcher.models import (
+from promptmeld.actions import ActionRegistry
+from promptmeld.app import make_tray_icon
+from promptmeld.config import load_actions, load_settings
+from promptmeld.icons import ActionIconProvider
+from promptmeld.models import (
     DEFAULT_NATURAL_VOICE_INSTRUCTION,
     WritingAction,
 )
-from writing_launcher.paths import AppPaths
-from writing_launcher.settings_ui import (
+from promptmeld.paths import AppPaths
+from promptmeld.settings_ui import (
     ActionSettingsDialog,
     NoWheelComboBox,
 )
-from writing_launcher.ui import LauncherPopup
-from writing_launcher.usage import UsageTracker
+from promptmeld.ui import LauncherPopup
+from promptmeld.usage import UsageTracker
 from PySide6.QtWidgets import QLabel, QMessageBox
 
 

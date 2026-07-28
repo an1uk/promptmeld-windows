@@ -3,12 +3,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$projectRoot = Split-Path -Parent $scriptDirectory
 $applicationOutput = Join-Path $projectRoot "dist\PromptMeld"
 $installerScript = Join-Path $projectRoot "installer\PromptMeld.iss"
 
 if (-not $SkipApplicationBuild) {
-    & (Join-Path $projectRoot "build.ps1")
+    & (Join-Path $scriptDirectory "build.ps1")
     if ($LASTEXITCODE -ne 0) {
         throw "The PromptMeld application build failed."
     }
@@ -18,7 +19,7 @@ if (-not (Test-Path -LiteralPath (
     Join-Path $applicationOutput "PromptMeld.exe"
 ))) {
     throw (
-        "The packaged application is missing. Run .\build.ps1 first or " +
+        "The packaged application is missing. Run .\scripts\build.ps1 first or " +
         "omit -SkipApplicationBuild."
     )
 }

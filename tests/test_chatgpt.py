@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from writing_launcher.chatgpt import ChatGPTDesktop
+from promptmeld.chatgpt import ChatGPTDesktop
 
 
 @dataclass

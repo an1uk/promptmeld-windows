@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from writing_launcher.app import project_name_for_action
-from writing_launcher.models import WritingAction
+from promptmeld.app import project_name_for_action
+from promptmeld.models import WritingAction
 
 
 @pytest.mark.parametrize(

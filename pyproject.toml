@@ -25,7 +25,7 @@ dev = [
 ]
 
 [project.scripts]
-promptmeld = "writing_launcher.__main__:main"
+promptmeld = "promptmeld.__main__:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -35,7 +35,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-writing_launcher = [
+promptmeld = [
     "resources/*.json",
     "resources/branding/*.png",
     "resources/branding/*.ico",
