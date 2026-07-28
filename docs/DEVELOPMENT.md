@@ -57,12 +57,15 @@ if an unreviewed dependency or binary appears.
 The installer is written to:
 
 ```text
-dist\installer\PromptMeld-Setup-v0.1.0.exe
+dist\installer\PromptMeld-Setup-v0.1.0.1.exe
 ```
 
 Building the installer requires
 [Inno Setup 6](https://jrsoftware.org/isinfo.php). The installed application
-does not.
+does not. The first three version components come from `pyproject.toml`; the
+fourth is a local build number that increments whenever `scripts\build.ps1`
+runs. The same four-part version is embedded in both executables and used in
+the installer filename.
 
 ## Release checklist
 
