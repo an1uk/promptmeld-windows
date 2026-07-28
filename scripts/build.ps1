@@ -7,6 +7,70 @@ if (-not (Test-Path $python)) {
     throw "The virtual environment is missing. Follow the setup steps in README.md."
 }
 
+$projectMetadata = Get-Content -Raw (
+    Join-Path $projectRoot "pyproject.toml"
+)
+$versionMatch = [regex]::Match(
+    $projectMetadata,
+    '(?m)^version\s*=\s*"(\d+)\.(\d+)\.(\d+)"'
+)
+if (-not $versionMatch.Success) {
+    throw "The project version must use the numeric major.minor.patch format."
+}
+
+$buildDirectory = Join-Path $projectRoot "build"
+$buildNumberFile = Join-Path $buildDirectory "build-number.txt"
+New-Item -ItemType Directory -Path $buildDirectory -Force | Out-Null
+$buildNumber = 0
+if (Test-Path -LiteralPath $buildNumberFile) {
+    $savedBuildNumber = Get-Content -Raw -LiteralPath $buildNumberFile
+    if (-not [int]::TryParse($savedBuildNumber.Trim(), [ref]$buildNumber)) {
+        throw "The saved build number is invalid: $buildNumberFile"
+    }
+}
+$buildNumber++
+Set-Content -LiteralPath $buildNumberFile -Value $buildNumber -Encoding ASCII
+
+$major = [int]$versionMatch.Groups[1].Value
+$minor = [int]$versionMatch.Groups[2].Value
+$patch = [int]$versionMatch.Groups[3].Value
+$baseVersion = "$major.$minor.$patch"
+$buildVersion = "$baseVersion.$buildNumber"
+$versionInfoPath = Join-Path $buildDirectory "windows-version-info.txt"
+$versionInfo = @"
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=($major, $minor, $patch, $buildNumber),
+    prodvers=($major, $minor, $patch, $buildNumber),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        '040904B0',
+        [
+          StringStruct('CompanyName', 'PromptMeld contributors'),
+          StringStruct('FileDescription', 'PromptMeld'),
+          StringStruct('FileVersion', '$buildVersion'),
+          StringStruct('InternalName', 'PromptMeld'),
+          StringStruct('LegalCopyright', 'Copyright (c) PromptMeld contributors'),
+          StringStruct('OriginalFilename', 'PromptMeld.exe'),
+          StringStruct('ProductName', 'PromptMeld'),
+          StringStruct('ProductVersion', '$buildVersion')
+        ]
+      )
+    ]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
+"@
+Set-Content -LiteralPath $versionInfoPath -Value $versionInfo -Encoding UTF8
+
 Push-Location $projectRoot
 try {
     & $python "tools\check_licenses.py"
@@ -20,9 +84,10 @@ try {
         --windowed `
         --onedir `
         --name "PromptMeld" `
+        --version-file $versionInfoPath `
         --icon "src\promptmeld\resources\branding\promptmeld.ico" `
         --add-data "src\promptmeld\resources;promptmeld\resources" `
-        "tools\entrypoints\promptmeld.py"
+        "tools\entrypoints\promptmeld_launcher.py"
 
     & $python -m PyInstaller `
         --noconfirm `
@@ -31,6 +96,7 @@ try {
         --onedir `
         --contents-directory "." `
         --name "PromptMeldAutomation" `
+        --version-file $versionInfoPath `
         --icon "src\promptmeld\resources\branding\promptmeld.ico" `
         --collect-all pywinauto `
         "tools\entrypoints\promptmeld_automation.py"
@@ -38,6 +104,21 @@ try {
     $mainOutput = Join-Path $projectRoot "dist\PromptMeld"
     $mainInternal = Join-Path $mainOutput "_internal"
     $helperOutput = Join-Path $projectRoot "dist\PromptMeldAutomation"
+
+    Set-Content `
+        -LiteralPath (Join-Path $mainOutput "VERSION") `
+        -Value $buildVersion `
+        -Encoding ASCII
+
+    $smokeTest = Start-Process `
+        -FilePath (Join-Path $mainOutput "PromptMeld.exe") `
+        -ArgumentList "--smoke-test" `
+        -WindowStyle Hidden `
+        -Wait `
+        -PassThru
+    if ($smokeTest.ExitCode -ne 0) {
+        throw "The packaged PromptMeld executable failed its startup smoke test."
+    }
 
     # PyInstaller collects all Qt platform input plugins. PromptMeld does not
     # use Qt PDF, QML, Quick, or Virtual Keyboard. In particular, Virtual
@@ -104,6 +185,8 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Packaged dependency licence audit failed."
     }
+
+    Write-Host "PromptMeld build created: $buildVersion"
 } finally {
     Pop-Location
 }

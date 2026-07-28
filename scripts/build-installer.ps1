@@ -48,17 +48,14 @@ if (-not $compiler) {
     )
 }
 
-$projectMetadata = Get-Content -Raw (
-    Join-Path $projectRoot "pyproject.toml"
-)
-$versionMatch = [regex]::Match(
-    $projectMetadata,
-    '(?m)^version\s*=\s*"([^"]+)"'
-)
-if (-not $versionMatch.Success) {
-    throw "Could not read the application version from pyproject.toml."
+$versionFile = Join-Path $applicationOutput "VERSION"
+if (-not (Test-Path -LiteralPath $versionFile)) {
+    throw "The packaged application does not contain its generated VERSION file."
 }
-$version = $versionMatch.Groups[1].Value
+$version = (Get-Content -Raw -LiteralPath $versionFile).Trim()
+if ($version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+    throw "The packaged application version is invalid: $version"
+}
 
 & $compiler "/DMyAppVersion=$version" $installerScript
 if ($LASTEXITCODE -ne 0) {

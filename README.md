@@ -55,7 +55,7 @@ Support for either may be investigated if PromptMeld gains sufficient traction
 and users request it. Please add your interest and use case through
 [GitHub Issues](https://github.com/an1uk/promptmeld-windows/issues).
 
-1. Download `PromptMeld-Setup-v0.1.0.exe` from the
+1. Download the latest `PromptMeld-Setup-v<version>.exe` from the
    [latest release](https://github.com/an1uk/promptmeld-windows/releases/latest).
 2. Run the installer.
 3. Launch **PromptMeld** from the Start menu.
