@@ -1,5 +1,5 @@
-from writing_launcher.models import CapturedSelection, WritingAction
-from writing_launcher.prompting import PromptBuilder
+from promptmeld.models import CapturedSelection, WritingAction
+from promptmeld.prompting import PromptBuilder
 
 
 def test_prompt_contains_instruction_text_and_output_constraint():

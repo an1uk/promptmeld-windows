@@ -1,4 +1,4 @@
-from writing_launcher.automation_worker import main
+from promptmeld.__main__ import main
 
 
 if __name__ == "__main__":

@@ -154,7 +154,7 @@
   },
   "asset_checks": [
     {
-      "path": "src/writing_launcher/resources/icons/lucide/LICENSE",
+      "path": "src/promptmeld/resources/icons/lucide/LICENSE",
       "license_markers": ["ISC License", "The MIT License"]
     }
   ],

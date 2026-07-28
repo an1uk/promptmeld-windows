@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"
-$projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$projectRoot = Split-Path -Parent $scriptDirectory
 $python = Join-Path $projectRoot ".venv\Scripts\python.exe"
 
 if (-not (Test-Path $python)) {
@@ -19,9 +20,9 @@ try {
         --windowed `
         --onedir `
         --name "PromptMeld" `
-        --icon "src\writing_launcher\resources\branding\promptmeld.ico" `
-        --add-data "src\writing_launcher\resources;writing_launcher\resources" `
-        "launcher.py"
+        --icon "src\promptmeld\resources\branding\promptmeld.ico" `
+        --add-data "src\promptmeld\resources;promptmeld\resources" `
+        "tools\entrypoints\promptmeld.py"
 
     & $python -m PyInstaller `
         --noconfirm `
@@ -30,9 +31,9 @@ try {
         --onedir `
         --contents-directory "." `
         --name "PromptMeldAutomation" `
-        --icon "src\writing_launcher\resources\branding\promptmeld.ico" `
+        --icon "src\promptmeld\resources\branding\promptmeld.ico" `
         --collect-all pywinauto `
-        "automation_launcher.py"
+        "tools\entrypoints\promptmeld_automation.py"
 
     $mainOutput = Join-Path $projectRoot "dist\PromptMeld"
     $mainInternal = Join-Path $mainOutput "_internal"

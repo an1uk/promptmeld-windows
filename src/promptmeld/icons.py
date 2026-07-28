@@ -121,7 +121,7 @@ class ActionIconProvider:
             name = spec.partition(":")[2]
             if not name or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789-" for character in name):
                 return None
-            resource = files("writing_launcher").joinpath(
+            resource = files("promptmeld").joinpath(
                 "resources", "icons", "lucide", f"{name}.svg"
             )
             candidate = Path(str(resource))

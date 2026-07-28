@@ -111,4 +111,4 @@ class StartupManager:
             return f'"{sys.executable}"'
         pythonw = Path(sys.executable).with_name("pythonw.exe")
         executable = pythonw if pythonw.exists() else Path(sys.executable)
-        return f'"{executable}" -m writing_launcher'
+        return f'"{executable}" -m promptmeld'

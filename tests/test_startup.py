@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from writing_launcher.startup import StartupManager
+from promptmeld.startup import StartupManager
 
 
 def test_legacy_startup_registration_is_renamed(monkeypatch, tmp_path):

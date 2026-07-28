@@ -18,7 +18,8 @@ from packaging.utils import canonicalize_name
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-POLICY_PATH = PROJECT_ROOT / "dependency-license-policy.json"
+POLICY_RELATIVE_PATH = Path("tools") / "dependency-license-policy.json"
+POLICY_PATH = PROJECT_ROOT / POLICY_RELATIVE_PATH
 PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
 
 
@@ -91,7 +92,7 @@ def audit_environment(
     project_root: Path = PROJECT_ROOT,
     policy: dict[str, Any] | None = None,
 ) -> AuditResult:
-    policy = policy or load_policy(project_root / POLICY_PATH.name)
+    policy = policy or load_policy(project_root / POLICY_RELATIVE_PATH)
     declared = load_declared_requirements(project_root / PYPROJECT_PATH.name)
     package_policy = {
         canonicalize_name(name): value
@@ -165,7 +166,7 @@ def audit_environment(
         if approved is None:
             errors.append(
                 f"{display_name} {audited.version} has no reviewed entry in "
-                "dependency-license-policy.json."
+                "tools/dependency-license-policy.json."
             )
             continue
 
@@ -296,7 +297,7 @@ def collect_release_licenses(
     lucide_license = (
         project_root
         / "src"
-        / "writing_launcher"
+        / "promptmeld"
         / "resources"
         / "icons"
         / "lucide"

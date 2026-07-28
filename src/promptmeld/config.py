@@ -87,7 +87,7 @@ class ConfigurationError(ValueError):
 
 
 def _resource_path(name: str) -> Path:
-    return Path(str(files("writing_launcher").joinpath("resources", name)))
+    return Path(str(files("promptmeld").joinpath("resources", name)))
 
 
 def ensure_user_configuration(paths: AppPaths) -> None:

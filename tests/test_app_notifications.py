@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from writing_launcher.app import PromptMeld
-from writing_launcher.models import SubmissionResult
+from promptmeld.app import PromptMeld
+from promptmeld.models import SubmissionResult
 
 
 def _notifications_for(result: SubmissionResult) -> list[tuple[object, ...]]:

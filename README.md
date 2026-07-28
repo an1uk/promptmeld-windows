@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/writing_launcher/resources/branding/promptmeld.png" alt="PromptMeld logo" width="160">
+  <img src="src/promptmeld/resources/branding/promptmeld.png" alt="PromptMeld logo" width="160">
 </p>
 
 <h1 align="center">PromptMeld</h1>

@@ -1,5 +1,5 @@
-from writing_launcher import windows
-from writing_launcher.windows import SelectionCapture
+from promptmeld import windows
+from promptmeld.windows import SelectionCapture
 
 
 def test_selection_capture_retries_copy_when_first_attempt_is_missed(

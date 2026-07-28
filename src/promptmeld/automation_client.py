@@ -26,7 +26,7 @@ def _helper_command() -> list[str]:
             )
         ]
         if getattr(sys, "frozen", False)
-        else [sys.executable, "-m", "writing_launcher.automation_worker"]
+        else [sys.executable, "-m", "promptmeld.automation_worker"]
     )
 
 

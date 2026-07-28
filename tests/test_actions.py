@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from writing_launcher.actions import ActionRegistry
-from writing_launcher.models import WritingAction
-from writing_launcher.usage import UsageTracker
+from promptmeld.actions import ActionRegistry
+from promptmeld.models import WritingAction
+from promptmeld.usage import UsageTracker
 
 
 def make_action(action_id: str, name: str, keywords=()):

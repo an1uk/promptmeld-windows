@@ -1,8 +1,8 @@
 import pytest
 import win32con
 
-from writing_launcher import windows
-from writing_launcher.windows import (
+from promptmeld import windows
+from promptmeld.windows import (
     HotkeyParseError,
     is_hotkey_released,
     parse_hotkey,
