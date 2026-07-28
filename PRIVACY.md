@@ -6,6 +6,10 @@ own.
 
 ## The short version
 
+- Avoid selecting personal, confidential, or otherwise sensitive details unless
+  you are comfortable sending them to ChatGPT. Once pasted, ChatGPT may retain,
+  store, and record them according to your account settings and OpenAI's
+  policies; PromptMeld cannot prevent that.
 - PromptMeld captures text only after you invoke a shortcut or optional Actions
   Ring command.
 - Selected text is transferred through the Windows clipboard and held
@@ -54,6 +58,13 @@ third-party clipboard manager before using PromptMeld. You can also clear
 clipboard history after use.
 
 ## What reaches ChatGPT
+
+Do not use PromptMeld to send passwords, payment details, private identifiers,
+confidential business information, or other sensitive material unless you have
+checked that ChatGPT is an appropriate destination and understand how your
+account handles conversations. Treat selected text as information you are
+deliberately sending to ChatGPT, not as text that remains private because
+PromptMeld itself does not store it.
 
 PromptMeld transfers only the assembled writing request to the ChatGPT desktop
 app. It does this by pasting into the message composer, just as if you had
