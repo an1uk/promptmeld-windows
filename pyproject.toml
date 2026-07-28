@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "promptmeld"
+version = "0.1.0"
+description = "A Windows prompt launcher for ChatGPT with optional Logitech Actions Ring integration."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "PromptMeld contributors" }]
+dependencies = [
+    "PySide6>=6.8,<7",
+    "pywin32>=308",
+    "pywinauto>=0.6.9,<0.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "PyInstaller>=6.11,<7",
+    "pytest>=8.3,<10",
+    "pytest-qt>=4.4,<5",
+    "wheel>=0.45,<1",
+]
+
+[project.scripts]
+promptmeld = "writing_launcher.__main__:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+writing_launcher = [
+    "resources/*.json",
+    "resources/branding/*.png",
+    "resources/branding/*.ico",
+    "resources/icons/lucide/*.svg",
+    "resources/icons/lucide/LICENSE",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

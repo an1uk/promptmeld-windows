@@ -1,0 +1,254 @@
+from __future__ import annotations
+
+import ctypes
+import logging
+import time
+from ctypes import wintypes
+from dataclasses import dataclass
+
+import win32api
+import win32con
+import win32gui
+from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtWidgets import QWidget
+
+from .clipboard import (
+    ClipboardBusyError,
+    empty_clipboard,
+    read_clipboard_text,
+    write_clipboard_text,
+)
+from .branding import HOTKEY_RECEIVER_TITLE
+from .models import CapturedSelection
+
+LOGGER = logging.getLogger(__name__)
+_USER32 = ctypes.WinDLL("user32", use_last_error=True)
+ACTIVATE_EXISTING_MESSAGE = win32con.WM_APP + 0x214
+
+
+class SelectionCaptureError(RuntimeError):
+    pass
+
+
+class SelectionCapture:
+    def __init__(self, timeout_ms: int = 1000):
+        self.timeout_ms = timeout_ms
+
+    def capture(self) -> CapturedSelection:
+        source_hwnd = win32gui.GetForegroundWindow()
+        source_title = win32gui.GetWindowText(source_hwnd)
+        source_class = win32gui.GetClassName(source_hwnd)
+        LOGGER.info(
+            "Capturing selection from window class=%r hwnd=%s",
+            source_class,
+            source_hwnd,
+        )
+        self._empty_clipboard()
+        self._send_copy()
+
+        started = time.monotonic()
+        deadline = started + (self.timeout_ms / 1000)
+        retry_at = started + min(0.35, (self.timeout_ms / 1000) / 2)
+        copy_retried = False
+        text: str | None = None
+        while time.monotonic() < deadline:
+            text = self._read_text()
+            if text:
+                break
+            if not copy_retried and time.monotonic() >= retry_at:
+                copy_retried = True
+                if win32gui.GetForegroundWindow() == source_hwnd:
+                    LOGGER.info(
+                        "Retrying selection copy for window class=%r hwnd=%s",
+                        source_class,
+                        source_hwnd,
+                    )
+                    self._send_copy()
+                else:
+                    LOGGER.warning(
+                        "Source window lost focus before copy retry; hwnd=%s",
+                        source_hwnd,
+                    )
+            time.sleep(0.025)
+
+        if not text or not text.strip():
+            LOGGER.warning(
+                "No text selection detected from window class=%r hwnd=%s",
+                source_class,
+                source_hwnd,
+            )
+            raise SelectionCaptureError(
+                "No selected text was detected. Select text in another application and try again."
+            )
+        return CapturedSelection(
+            text=text,
+            source_hwnd=source_hwnd,
+            source_title=source_title,
+        )
+
+    @staticmethod
+    def _send_copy() -> None:
+        win32api.keybd_event(win32con.VK_CONTROL, 0, 0, 0)
+        try:
+            win32api.keybd_event(ord("C"), 0, 0, 0)
+            win32api.keybd_event(
+                ord("C"),
+                0,
+                win32con.KEYEVENTF_KEYUP,
+                0,
+            )
+        finally:
+            win32api.keybd_event(
+                win32con.VK_CONTROL,
+                0,
+                win32con.KEYEVENTF_KEYUP,
+                0,
+            )
+        time.sleep(0.01)
+
+    @staticmethod
+    def _empty_clipboard() -> None:
+        try:
+            empty_clipboard()
+        except ClipboardBusyError as exc:
+            raise SelectionCaptureError(str(exc)) from exc
+
+    @staticmethod
+    def _read_text() -> str | None:
+        return read_clipboard_text()
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedHotkey:
+    modifiers: int
+    virtual_key: int
+
+
+class HotkeyParseError(ValueError):
+    pass
+
+
+_MODIFIERS = {
+    "alt": win32con.MOD_ALT,
+    "ctrl": win32con.MOD_CONTROL,
+    "control": win32con.MOD_CONTROL,
+    "shift": win32con.MOD_SHIFT,
+    "win": win32con.MOD_WIN,
+    "windows": win32con.MOD_WIN,
+}
+
+_KEYS = {
+    "space": win32con.VK_SPACE,
+    "enter": win32con.VK_RETURN,
+    "tab": win32con.VK_TAB,
+    "escape": win32con.VK_ESCAPE,
+    "esc": win32con.VK_ESCAPE,
+    **{str(number): ord(str(number)) for number in range(10)},
+    **{chr(code).lower(): code for code in range(ord("A"), ord("Z") + 1)},
+    **{f"f{number}": win32con.VK_F1 + number - 1 for number in range(1, 25)},
+}
+
+
+def parse_hotkey(value: str) -> ParsedHotkey:
+    parts = [part.strip().casefold() for part in value.split("+") if part.strip()]
+    if len(parts) < 2:
+        raise HotkeyParseError(
+            f"Hotkey '{value}' must include a modifier and a key."
+        )
+    modifiers = win32con.MOD_NOREPEAT
+    key: int | None = None
+    for part in parts:
+        if part in _MODIFIERS:
+            modifiers |= _MODIFIERS[part]
+        elif part in _KEYS and key is None:
+            key = _KEYS[part]
+        else:
+            raise HotkeyParseError(f"Unsupported hotkey component: {part}")
+    if key is None:
+        raise HotkeyParseError(f"Hotkey '{value}' has no key.")
+    return ParsedHotkey(modifiers=modifiers, virtual_key=key)
+
+
+def _key_is_down(virtual_key: int) -> bool:
+    return bool(_USER32.GetAsyncKeyState(virtual_key) & 0x8000)
+
+
+def is_hotkey_released(value: str) -> bool:
+    """Return true only after the trigger key and its modifiers are all up."""
+
+    parsed = parse_hotkey(value)
+    keys = [parsed.virtual_key]
+    if parsed.modifiers & win32con.MOD_CONTROL:
+        keys.append(win32con.VK_CONTROL)
+    if parsed.modifiers & win32con.MOD_ALT:
+        keys.append(win32con.VK_MENU)
+    if parsed.modifiers & win32con.MOD_SHIFT:
+        keys.append(win32con.VK_SHIFT)
+    if parsed.modifiers & win32con.MOD_WIN:
+        keys.extend((win32con.VK_LWIN, win32con.VK_RWIN))
+    return not any(_key_is_down(key) for key in keys)
+
+
+class _HotkeyReceiver(QWidget):
+    hotkey_received = Signal(int)
+    activation_requested = Signal()
+
+    def nativeEvent(self, event_type, message):
+        try:
+            msg = wintypes.MSG.from_address(int(message))
+            if msg.message == win32con.WM_HOTKEY:
+                self.hotkey_received.emit(int(msg.wParam))
+                return True, 0
+            if msg.message == ACTIVATE_EXISTING_MESSAGE:
+                self.activation_requested.emit()
+                return True, 0
+        except (TypeError, ValueError):
+            LOGGER.exception("Failed to process native hotkey event")
+        return super().nativeEvent(event_type, message)
+
+
+class GlobalHotkeyManager(QObject):
+    activated = Signal(str)
+    activation_requested = Signal()
+
+    def __init__(self, qt_application):
+        super().__init__()
+        self._application = qt_application
+        self._receiver = _HotkeyReceiver()
+        self._receiver.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
+        self._receiver.setWindowTitle(HOTKEY_RECEIVER_TITLE)
+        self._receiver.hide()
+        self._receiver_hwnd = int(self._receiver.winId())
+        self._registered: dict[int, tuple[str, str]] = {}
+        self._next_id = 0xB000
+        self._receiver.hotkey_received.connect(self._dispatch)
+        self._receiver.activation_requested.connect(self.activation_requested)
+
+    def register(self, command_id: str, hotkey: str) -> None:
+        parsed = parse_hotkey(hotkey)
+        registration_id = self._next_id
+        self._next_id += 1
+        if not _USER32.RegisterHotKey(
+            self._receiver_hwnd,
+            registration_id,
+            parsed.modifiers,
+            parsed.virtual_key,
+        ):
+            error_code = ctypes.get_last_error()
+            raise RuntimeError(
+                f"Could not register {hotkey} for '{command_id}' "
+                f"(Windows error {error_code}). It may already be in use."
+            )
+        self._registered[registration_id] = (command_id, hotkey)
+        LOGGER.info("Registered hotkey %s for %s", hotkey, command_id)
+
+    def unregister_all(self) -> None:
+        for registration_id in tuple(self._registered):
+            _USER32.UnregisterHotKey(self._receiver_hwnd, registration_id)
+        self._registered.clear()
+
+    def _dispatch(self, registration_id: int) -> None:
+        item = self._registered.get(registration_id)
+        if item:
+            LOGGER.info("Hotkey activated for %s", item[0])
+            self.activated.emit(item[0])

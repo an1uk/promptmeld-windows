@@ -1,0 +1,66 @@
+[
+  {
+    "id": "improve",
+    "name": "Improve writing",
+    "keywords": ["rewrite", "revise", "polish", "better"],
+    "instruction": "Improve the writing for clarity, flow, and readability while preserving the original meaning and voice.",
+    "hotkey": "Ctrl+Alt+1",
+    "enabled": true
+  },
+  {
+    "id": "shorten",
+    "name": "Shorten",
+    "keywords": ["concise", "brief", "trim", "reduce"],
+    "instruction": "Shorten the text while preserving its meaning and essential details.",
+    "hotkey": "Ctrl+Alt+2",
+    "enabled": true
+  },
+  {
+    "id": "clarify",
+    "name": "Improve clarity",
+    "keywords": ["clear", "simplify", "readable", "explain"],
+    "instruction": "Rewrite the text to make it clearer and easier to understand without removing important detail.",
+    "hotkey": "Ctrl+Alt+3",
+    "enabled": true
+  },
+  {
+    "id": "professional",
+    "name": "Professional tone",
+    "keywords": ["business", "formal", "work", "polished"],
+    "instruction": "Rewrite the text in a polished, professional tone while keeping it natural and direct.",
+    "hotkey": "Ctrl+Alt+4",
+    "enabled": true
+  },
+  {
+    "id": "friendly",
+    "name": "Friendly tone",
+    "keywords": ["warm", "casual", "approachable", "kind"],
+    "instruction": "Rewrite the text in a warm, friendly, and approachable tone without sounding artificial.",
+    "hotkey": "Ctrl+Alt+5",
+    "enabled": true
+  },
+  {
+    "id": "grammar",
+    "name": "Correct grammar",
+    "keywords": ["proofread", "spelling", "punctuation", "fix"],
+    "instruction": "Correct grammar, spelling, punctuation, and obvious usage errors while changing as little else as possible.",
+    "hotkey": "Ctrl+Alt+6",
+    "enabled": true
+  },
+  {
+    "id": "formal",
+    "name": "More formal",
+    "keywords": ["official", "academic", "serious"],
+    "instruction": "Rewrite the text in a more formal register while preserving its meaning.",
+    "hotkey": null,
+    "enabled": true
+  },
+  {
+    "id": "expand",
+    "name": "Expand",
+    "keywords": ["detail", "elaborate", "longer"],
+    "instruction": "Expand the text with useful detail and smoother transitions, without inventing facts.",
+    "hotkey": null,
+    "enabled": true
+  }
+]
