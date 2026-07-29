@@ -94,7 +94,7 @@ manually.
 | `Ctrl+Alt+5` | Sarcastic reply |
 | `Ctrl+Alt+6` | Polite but firm reply |
 
-Shortcuts can be changed in **Manage writing actions**. PromptMeld reports a
+Shortcuts can be changed in **Configuration…**. PromptMeld reports a
 notification-area warning if another application already uses one.
 
 ## Privacy
@@ -120,7 +120,7 @@ what is stored locally and how to remove it.
 
 ## Configure
 
-Choose **Manage writing actions** from the notification-area menu to add,
+Choose **Configuration…** from the notification-area menu to add,
 organise, edit, duplicate, disable, or delete actions. The same window controls
 folder icons, natural-voice wording, primary language, guided drafting, and
 automatic submission.

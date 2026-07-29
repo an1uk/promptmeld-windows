@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import sys
 import time
 from dataclasses import replace
@@ -139,12 +138,8 @@ class PromptMeld:
         self.open_launcher_action = self.menu.addAction("Open launcher")
         self.open_launcher_action.triggered.connect(self.capture_and_show)
         self.menu.addSeparator()
-        self.manage_actions_action = self.menu.addAction("Manage writing actions…")
-        self.manage_actions_action.triggered.connect(self.open_action_settings)
-        self.open_config_action = self.menu.addAction("Open configuration folder")
-        self.open_config_action.triggered.connect(self.open_config_folder)
-        self.reload_action = self.menu.addAction("Reload configuration")
-        self.reload_action.triggered.connect(self.reload_configuration)
+        self.configuration_action = self.menu.addAction("Configuration…")
+        self.configuration_action.triggered.connect(self.open_action_settings)
         self.startup_action = self.menu.addAction("Start with Windows")
         self.startup_action.setCheckable(True)
         self.startup_action.setChecked(self.startup.is_enabled())
@@ -440,9 +435,6 @@ class PromptMeld:
                 8000,
             )
 
-    def reload_configuration(self) -> None:
-        self._reload_configuration()
-
     def reload_configuration_after_save(self) -> None:
         if self.icons is not None:
             self.icons.clear_cache()
@@ -463,10 +455,6 @@ class PromptMeld:
                 QSystemTrayIcon.MessageIcon.Critical,
                 8000,
             )
-
-    def open_config_folder(self) -> None:
-        self.paths.ensure()
-        os.startfile(self.paths.data_dir)
 
     def open_action_settings(self) -> None:
         if self.settings_dialog is not None and self.settings_dialog.isVisible():
