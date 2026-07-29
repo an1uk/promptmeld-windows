@@ -314,8 +314,14 @@ def test_light_and_dark_appearance_options_apply_to_both_windows(
 
     assert "background: #ffffff" in light_popup.styleSheet()
     assert "background: #16181d" in dark_popup.styleSheet()
+    assert "QCheckBox::indicator:checked" in light_popup.styleSheet()
+    assert "check-white.svg" in light_popup.styleSheet()
     assert light_dialog.theme.currentData() == "light"
     assert "QDialog { background: #f5f7fa" in light_dialog.styleSheet()
+    assert "QTabBar::tab" in light_dialog.styleSheet()
+    assert "color: #202631" in light_dialog.styleSheet()
+    assert "QCheckBox::indicator:checked" in light_dialog.styleSheet()
+    assert "check-white.svg" in light_dialog.styleSheet()
 
 
 def test_appearance_option_is_saved(qtbot, tmp_path):

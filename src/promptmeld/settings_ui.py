@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from importlib.resources import files
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, Signal
@@ -1055,6 +1056,13 @@ class ActionSettingsDialog(QDialog):
 
     def _apply_style(self, *args) -> None:
         if resolve_theme(str(self.theme.currentData() or "auto")) == "light":
+            checkmark = str(
+                files("promptmeld").joinpath(
+                    "resources",
+                    "icons",
+                    "check-white.svg",
+                )
+            ).replace("\\", "/")
             self.setStyleSheet(
                 """
                 QDialog { background: #f5f7fa; color: #202631; }
@@ -1111,6 +1119,15 @@ class ActionSettingsDialog(QDialog):
                     background: #ffffff;
                     selection-background-color: #dce7ff;
                 }
+                QComboBox QAbstractItemView::item {
+                    color: #202631;
+                    background: #ffffff;
+                    min-height: 28px;
+                }
+                QComboBox QAbstractItemView::item:selected {
+                    color: #102e70;
+                    background: #dce7ff;
+                }
                 QTreeWidget {
                     color: #202631;
                     background: #ffffff;
@@ -1118,7 +1135,11 @@ class ActionSettingsDialog(QDialog):
                     border-radius: 8px;
                     outline: 0;
                 }
-                QTreeWidget::item { padding: 7px; }
+                QTreeWidget::item {
+                    color: #202631;
+                    background: transparent;
+                    padding: 7px;
+                }
                 QTreeWidget::item:selected {
                     background: #dce7ff;
                     color: #173a87;
@@ -1130,12 +1151,13 @@ class ActionSettingsDialog(QDialog):
                     top: -1px;
                 }
                 QTabBar::tab {
-                    color: #4a5360;
-                    background: #e9edf2;
-                    border: 1px solid #cbd2dc;
+                    color: #202631;
+                    background: #e1e6ec;
+                    border: 1px solid #b8c1cc;
                     border-bottom: 0;
                     padding: 9px 16px;
                     min-width: 130px;
+                    font-weight: 600;
                 }
                 QTabBar::tab:selected {
                     color: #173a87;
@@ -1159,7 +1181,27 @@ class ActionSettingsDialog(QDialog):
                     border: 0;
                     font-weight: 600;
                 }
-                QCheckBox { color: #303744; spacing: 8px; }
+                QCheckBox { color: #202631; spacing: 8px; }
+                QCheckBox::indicator {
+                    width: 16px;
+                    height: 16px;
+                    border: 1px solid #687585;
+                    border-radius: 3px;
+                    background: #ffffff;
+                }
+                QCheckBox::indicator:hover {
+                    border-color: #315ecb;
+                    background: #f2f5fa;
+                }
+                QCheckBox::indicator:checked {
+                    border-color: #244fae;
+                    background: #315ecb;
+                    image: url("__CHECKMARK__");
+                }
+                QCheckBox::indicator:disabled {
+                    border-color: #aeb6c0;
+                    background: #e7eaee;
+                }
                 QGroupBox {
                     color: #3f4855;
                     border: 1px solid #cbd2dc;
@@ -1173,7 +1215,7 @@ class ActionSettingsDialog(QDialog):
                     padding: 0 4px;
                 }
                 QFrame { color: #cbd2dc; }
-                """
+                """.replace("__CHECKMARK__", checkmark)
             )
             self._set_instruction_colour()
             return

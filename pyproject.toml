@@ -39,6 +39,7 @@ promptmeld = [
     "resources/*.json",
     "resources/branding/*.png",
     "resources/branding/*.ico",
+    "resources/icons/*.svg",
     "resources/icons/lucide/*.svg",
     "resources/icons/lucide/LICENSE",
 ]
