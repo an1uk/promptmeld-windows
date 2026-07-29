@@ -247,6 +247,27 @@ class GlobalHotkeyManager(QObject):
             _USER32.UnregisterHotKey(self._receiver_hwnd, registration_id)
         self._registered.clear()
 
+    def is_available(self, hotkey: str) -> bool:
+        """Ask Windows whether a hotkey can currently be registered."""
+        parsed = parse_hotkey(hotkey)
+        candidate = (parsed.modifiers, parsed.virtual_key)
+        for _, registered_hotkey in self._registered.values():
+            registered = parse_hotkey(registered_hotkey)
+            if (registered.modifiers, registered.virtual_key) == candidate:
+                return True
+
+        registration_id = self._next_id
+        self._next_id += 1
+        if not _USER32.RegisterHotKey(
+            self._receiver_hwnd,
+            registration_id,
+            parsed.modifiers,
+            parsed.virtual_key,
+        ):
+            return False
+        _USER32.UnregisterHotKey(self._receiver_hwnd, registration_id)
+        return True
+
     def _dispatch(self, registration_id: int) -> None:
         item = self._registered.get(registration_id)
         if item:

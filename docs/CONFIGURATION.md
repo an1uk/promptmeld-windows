@@ -10,8 +10,7 @@ The action manager lets you:
 
 - Add, duplicate, delete, enable, and reorder actions.
 - Organise actions in folders and nested folders.
-- Edit action names, search keywords, ChatGPT instructions, and optional
-  global hotkeys.
+- Edit action names, search keywords, and ChatGPT instructions.
 - Pin actions to the launcher home screen.
 - Choose whether an action follows, always applies, or ignores the
   **Preserve my natural voice** setting.
@@ -20,8 +19,8 @@ The action manager lets you:
 - Configure badged folder icons.
 - Control how many genuinely used actions appear in **Most used**.
 
-Changes take effect immediately after **Save**. Required fields, supported
-hotkey syntax, and duplicate hotkeys are validated before saving.
+Changes take effect immediately after **Save**. Required fields and action IDs
+are validated before saving.
 
 Use `/` in a folder name to create nesting, for example
 `Replies & arguments/Analysis`. Search covers every folder, while frequently
@@ -37,6 +36,22 @@ The **General** tab controls:
   custom language.
 - The number of most-used actions shown on the launcher home screen.
 - Whether PromptMeld starts automatically when you sign in to Windows.
+
+## Hotkeys
+
+The **Hotkeys** tab shows the required launcher shortcut in its own section,
+separate from the writing-action shortcuts below it. Click a shortcut field,
+then press the actual combination you want to use, or choose **Change** and
+then press it. A shortcut must contain one supported key together with Ctrl,
+Alt, Shift, or the Windows key. Use **Clear** to remove an action shortcut; the
+launcher shortcut is required but can be replaced with **Change**. Actions with
+assigned shortcuts are grouped above actions without shortcuts.
+
+PromptMeld flags duplicates immediately. It also asks Windows whether an active
+shortcut is already registered by the operating system or another application.
+This is a useful clash check, but some applications handle keys without
+registering a Windows global hotkey and therefore cannot be detected in
+advance.
 
 ## Defaults and writing style
 
@@ -121,6 +136,7 @@ Home-screen, submission, language, and style settings are stored in
 ```json
 {
   "project_name": "PromptMeld",
+  "popup_hotkey": "Ctrl+Alt+Space",
   "home_most_used_count": 3,
   "auto_submit_enabled": false,
   "natural_voice_enabled": false,

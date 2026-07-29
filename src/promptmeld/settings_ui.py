@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import replace
 from importlib.resources import files
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
+from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QColor,
+    QPainter,
+    QPen,
+    QPolygonF,
+    QTextCharFormat,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -17,13 +26,18 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QGroupBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
+    QProxyStyle,
     QPushButton,
     QSpinBox,
+    QStyle,
+    QTableWidget,
+    QTableWidgetItem,
     QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
@@ -69,6 +83,160 @@ class NoWheelSpinBox(QSpinBox):
         event.ignore()
 
 
+class BranchArrowStyle(QProxyStyle):
+    """Draw only compact folder arrows, never native connector lines."""
+
+    def __init__(self):
+        super().__init__()
+        self._arrow_colour = QColor("#c9d1e2")
+
+    def set_arrow_colour(self, colour: str) -> None:
+        self._arrow_colour = QColor(colour)
+
+    def drawPrimitive(self, element, option, painter, widget=None) -> None:
+        if element != QStyle.PrimitiveElement.PE_IndicatorBranch:
+            super().drawPrimitive(element, option, painter, widget)
+            return
+        if not option.state & QStyle.StateFlag.State_Children:
+            return
+
+        centre = option.rect.center()
+        if option.state & QStyle.StateFlag.State_Open:
+            points = QPolygonF(
+                (
+                    QPointF(centre.x() - 3.0, centre.y() - 1.5),
+                    QPointF(centre.x(), centre.y() + 1.5),
+                    QPointF(centre.x() + 3.0, centre.y() - 1.5),
+                )
+            )
+        else:
+            points = QPolygonF(
+                (
+                    QPointF(centre.x() - 1.5, centre.y() - 3.0),
+                    QPointF(centre.x() + 1.5, centre.y()),
+                    QPointF(centre.x() - 1.5, centre.y() + 3.0),
+                )
+            )
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(
+            QPen(
+                self._arrow_colour,
+                1.5,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin,
+            )
+        )
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPolyline(points)
+        painter.restore()
+
+
+class HotkeyCaptureEdit(QLineEdit):
+    """Capture one supported global-hotkey chord without free-text entry."""
+
+    hotkey_changed = Signal(str)
+    capture_started = Signal()
+    capture_rejected = Signal(str)
+
+    _MODIFIER_KEYS = {
+        int(Qt.Key.Key_Control),
+        int(Qt.Key.Key_Alt),
+        int(Qt.Key.Key_Shift),
+        int(Qt.Key.Key_Meta),
+    }
+    _NAMED_KEYS = {
+        int(Qt.Key.Key_Space): "Space",
+        int(Qt.Key.Key_Return): "Enter",
+        int(Qt.Key.Key_Enter): "Enter",
+        int(Qt.Key.Key_Tab): "Tab",
+        int(Qt.Key.Key_Escape): "Escape",
+    }
+
+    def __init__(self, hotkey: str = "", parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setReadOnly(True)
+        self.setPlaceholderText("Click here, then press a shortcut")
+        self.setToolTip(
+            "Click this field and press one key together with Ctrl, Alt, "
+            "Shift, or the Windows key."
+        )
+        self.set_hotkey(hotkey)
+
+    def set_hotkey(self, hotkey: str) -> None:
+        blocked = self.blockSignals(True)
+        self.setText(hotkey)
+        self.blockSignals(blocked)
+
+    def clear_hotkey(self) -> None:
+        if not self.text():
+            return
+        self.setText("")
+        self.hotkey_changed.emit("")
+
+    def begin_capture(self) -> None:
+        QTimer.singleShot(0, self._focus_for_capture)
+        self.capture_started.emit()
+
+    def _focus_for_capture(self) -> None:
+        self.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self.selectAll()
+
+    def event(self, event) -> bool:
+        if event.type() == QEvent.Type.ShortcutOverride:
+            event.accept()
+            return True
+        return super().event(event)
+
+    def keyPressEvent(self, event) -> None:
+        key = int(event.key())
+        if key in self._MODIFIER_KEYS:
+            event.accept()
+            return
+
+        modifiers = event.modifiers()
+        names: list[str] = []
+        if modifiers & Qt.KeyboardModifier.ControlModifier:
+            names.append("Ctrl")
+        if modifiers & Qt.KeyboardModifier.AltModifier:
+            names.append("Alt")
+        if modifiers & Qt.KeyboardModifier.ShiftModifier:
+            names.append("Shift")
+        if modifiers & Qt.KeyboardModifier.MetaModifier:
+            names.append("Win")
+        if not names:
+            self.capture_rejected.emit(
+                "Include Ctrl, Alt, Shift, or the Windows key."
+            )
+            event.accept()
+            return
+
+        key_name = self._key_name(key)
+        if key_name is None:
+            self.capture_rejected.emit(
+                "That key is not supported. Use A-Z, 0-9, F1-F24, "
+                "Space, Enter, Tab, or Escape."
+            )
+            event.accept()
+            return
+
+        hotkey = "+".join((*names, key_name))
+        self.setText(hotkey)
+        self.hotkey_changed.emit(hotkey)
+        event.accept()
+
+    @classmethod
+    def _key_name(cls, key: int) -> str | None:
+        if int(Qt.Key.Key_A) <= key <= int(Qt.Key.Key_Z):
+            return chr(ord("A") + key - int(Qt.Key.Key_A))
+        if int(Qt.Key.Key_0) <= key <= int(Qt.Key.Key_9):
+            return str(key - int(Qt.Key.Key_0))
+        if int(Qt.Key.Key_F1) <= key <= int(Qt.Key.Key_F24):
+            return f"F{key - int(Qt.Key.Key_F1) + 1}"
+        return cls._NAMED_KEYS.get(key)
+
+
 class ActionSettingsDialog(QDialog):
     actions_saved = Signal()
     ITEM_KIND_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -81,17 +249,22 @@ class ActionSettingsDialog(QDialog):
         popup_hotkey: str,
         settings: AppSettings | None = None,
         parent: QWidget | None = None,
+        hotkey_availability: Callable[[str], bool] | None = None,
     ):
         super().__init__(parent)
         self.paths = paths
         self.icon_provider = icon_provider
         self.popup_hotkey = popup_hotkey
+        self.hotkey_availability = hotkey_availability
+        self.hotkey_editors: dict[str, HotkeyCaptureEdit] = {}
+        self.hotkey_status_labels: dict[str, QLabel] = {}
         self.settings = settings
         self.folder_icons = dict(settings.folder_icons if settings else {})
         self.actions = list(actions)
         self.current_row = -1
         self.selected_folder = ""
         self._loading = False
+        self._saved_state: tuple | None = None
 
         self.setMinimumSize(900, 650)
         self.setWindowTitle(f"{APP_NAME} - Configuration")
@@ -108,8 +281,8 @@ class ActionSettingsDialog(QDialog):
         heading_row.addStretch(1)
         heading_row.addWidget(self.tagline)
         description = QLabel(
-            "Configure writing actions separately from launcher defaults and "
-            "style preferences."
+            "Configure writing actions, hotkeys, launcher preferences, and "
+            "writing defaults."
         )
         description.setObjectName("muted")
         description.setWordWrap(True)
@@ -271,6 +444,9 @@ class ActionSettingsDialog(QDialog):
         self.action_list.setHeaderHidden(True)
         self.action_list.setIconSize(QSize(34, 34))
         self.action_list.setMinimumWidth(285)
+        self.branch_arrow_style = BranchArrowStyle()
+        self.branch_arrow_style.setParent(self.action_list)
+        self.action_list.setStyle(self.branch_arrow_style)
         self.action_list.currentItemChanged.connect(self._selection_changed)
         left.addWidget(self.action_list, 1)
 
@@ -380,10 +556,6 @@ class ActionSettingsDialog(QDialog):
         self.keywords.setPlaceholderText("comma-separated search words")
         form.addRow(self._form_label("Keywords"), self.keywords)
 
-        self.hotkey = QLineEdit()
-        self.hotkey.setPlaceholderText("Optional, e.g. Ctrl+Alt+7")
-        form.addRow(self._form_label("Global hotkey"), self.hotkey)
-
         self.natural_voice_mode = NoWheelComboBox()
         self.natural_voice_mode.addItem(
             "Use launcher checkbox",
@@ -427,6 +599,110 @@ class ActionSettingsDialog(QDialog):
         actions_page = QWidget()
         actions_page.setObjectName("settingsPage")
         actions_page.setLayout(content)
+        hotkeys_page = QWidget()
+        hotkeys_page.setObjectName("settingsPage")
+        hotkeys_layout = QVBoxLayout(hotkeys_page)
+        hotkeys_layout.setContentsMargins(22, 18, 22, 18)
+        hotkeys_layout.setSpacing(12)
+        hotkeys_description = QLabel(
+            "Click a shortcut field and press the actual key combination. "
+            "Each shortcut must contain one key together with Ctrl, Alt, "
+            "Shift, or the Windows key."
+        )
+        hotkeys_description.setObjectName("muted")
+        hotkeys_description.setWordWrap(True)
+        hotkeys_layout.addWidget(hotkeys_description)
+        launcher_hotkey_group = QGroupBox("Launcher shortcut")
+        launcher_hotkey_layout = QHBoxLayout(launcher_hotkey_group)
+        launcher_hotkey_label = QLabel("Open launcher")
+        launcher_hotkey_label.setObjectName("formLabel")
+        self.launcher_hotkey_editor = HotkeyCaptureEdit(self.popup_hotkey)
+        self.launcher_hotkey_editor.setMinimumWidth(220)
+        self.launcher_hotkey_editor.hotkey_changed.connect(
+            lambda value: self._hotkey_changed("__popup__", value)
+        )
+        self.launcher_hotkey_editor.capture_rejected.connect(
+            lambda message: self._set_hotkey_status(
+                "__popup__",
+                "error",
+                message,
+            )
+        )
+        self.launcher_hotkey_editor.capture_started.connect(
+            lambda: self._set_hotkey_status(
+                "__popup__",
+                "unchecked",
+                "Press the new shortcut now",
+            )
+        )
+        self.change_launcher_hotkey_button = QPushButton("Change")
+        self.change_launcher_hotkey_button.setObjectName(
+            "changeHotkeyButton"
+        )
+        self.change_launcher_hotkey_button.setFocusPolicy(
+            Qt.FocusPolicy.NoFocus
+        )
+        self.change_launcher_hotkey_button.setToolTip(
+            "Press the actual key combination after choosing Change."
+        )
+        self.change_launcher_hotkey_button.clicked.connect(
+            self.launcher_hotkey_editor.begin_capture
+        )
+        self.launcher_hotkey_status = QLabel()
+        self.launcher_hotkey_status.setObjectName("hotkeyStatus")
+        self.launcher_hotkey_status.setWordWrap(True)
+        launcher_hotkey_layout.addWidget(launcher_hotkey_label)
+        launcher_hotkey_layout.addWidget(self.launcher_hotkey_editor, 1)
+        launcher_hotkey_layout.addWidget(
+            self.change_launcher_hotkey_button
+        )
+        launcher_hotkey_layout.addWidget(self.launcher_hotkey_status, 1)
+        hotkeys_layout.addWidget(launcher_hotkey_group)
+        action_hotkeys_label = QLabel("Writing-action shortcuts")
+        action_hotkeys_label.setObjectName("formLabel")
+        hotkeys_layout.addWidget(action_hotkeys_label)
+        self.hotkey_table = QTableWidget()
+        self.hotkey_table.setObjectName("hotkeyTable")
+        self.hotkey_table.setColumnCount(3)
+        self.hotkey_table.setHorizontalHeaderLabels(
+            ("Writing action", "Shortcut", "Status")
+        )
+        self.hotkey_table.verticalHeader().hide()
+        self.hotkey_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.NoSelection
+        )
+        self.hotkey_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.hotkey_table.setAlternatingRowColors(True)
+        self.hotkey_table.horizontalHeader().setSectionResizeMode(
+            0,
+            QHeaderView.ResizeMode.Stretch,
+        )
+        self.hotkey_table.horizontalHeader().setSectionResizeMode(
+            1,
+            QHeaderView.ResizeMode.ResizeToContents,
+        )
+        self.hotkey_table.horizontalHeader().setSectionResizeMode(
+            2,
+            QHeaderView.ResizeMode.Stretch,
+        )
+        self.hotkey_table.setMinimumWidth(760)
+        hotkeys_layout.addWidget(self.hotkey_table, 1)
+        hotkey_footer = QHBoxLayout()
+        hotkey_note = QLabel(
+            "Windows can detect shortcuts registered by other applications, "
+            "but not every application reserves shortcuts this way."
+        )
+        hotkey_note.setObjectName("muted")
+        hotkey_note.setWordWrap(True)
+        self.check_hotkeys_button = QPushButton("Check availability")
+        self.check_hotkeys_button.clicked.connect(
+            lambda: self._update_hotkey_statuses(check_windows=True)
+        )
+        hotkey_footer.addWidget(hotkey_note, 1)
+        hotkey_footer.addWidget(self.check_hotkeys_button)
+        hotkeys_layout.addLayout(hotkey_footer)
         general_page = QWidget()
         general_page.setObjectName("settingsPage")
         general_layout = QVBoxLayout(general_page)
@@ -477,12 +753,21 @@ class ActionSettingsDialog(QDialog):
         defaults_layout.addStretch(1)
         self.tabs.addTab(general_page, "General")
         self.tabs.addTab(actions_page, "Writing actions")
+        self.tabs.addTab(hotkeys_page, "Hotkeys")
         self.tabs.addTab(defaults_page, "Defaults & style")
+        self.tabs.currentChanged.connect(self._tab_changed)
         root.addWidget(self.tabs, 1)
 
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save
             | QDialogButtonBox.StandardButton.Close
+        )
+        close_button = self.buttons.button(
+            QDialogButtonBox.StandardButton.Close
+        )
+        close_button.setText("Close without saving")
+        close_button.setToolTip(
+            "Discard changes made since the last time you chose Save."
         )
         self.buttons.accepted.connect(self._save)
         self.buttons.rejected.connect(self.reject)
@@ -514,7 +799,6 @@ class ActionSettingsDialog(QDialog):
             self.folder_combo.currentTextChanged,
             self.icon_combo.currentTextChanged,
             self.keywords.textChanged,
-            self.hotkey.textChanged,
             self.natural_voice_mode.currentIndexChanged,
             self.guided_drafting.toggled,
             self.instruction.textChanged,
@@ -537,6 +821,7 @@ class ActionSettingsDialog(QDialog):
             )
         self._apply_style()
         self._refresh_list(0 if self.actions else -1)
+        self._saved_state = self._configuration_state()
         self._set_save_status("")
 
     def _refresh_list(self, selected_row: int) -> None:
@@ -606,6 +891,214 @@ class ActionSettingsDialog(QDialog):
         self._loading = False
         self._load_current()
         self._update_button_states()
+        if hasattr(self, "hotkey_table"):
+            self._refresh_hotkey_rows()
+
+    def _tab_changed(self, index: int) -> None:
+        if self.tabs.tabText(index) != "Hotkeys":
+            return
+        self._commit_current()
+        self._refresh_hotkey_rows()
+
+    def _refresh_hotkey_rows(self) -> None:
+        self.hotkey_table.setRowCount(0)
+        self.launcher_hotkey_editor.set_hotkey(self.popup_hotkey)
+        self.hotkey_editors = {
+            "__popup__": self.launcher_hotkey_editor,
+        }
+        self.hotkey_status_labels = {
+            "__popup__": self.launcher_hotkey_status,
+        }
+        assigned_actions = [action for action in self.actions if action.hotkey]
+        unassigned_actions = [
+            action for action in self.actions if not action.hotkey
+        ]
+        rows = [
+            (
+                action.id,
+                (
+                    action.name
+                    if action.enabled
+                    else f"{action.name} (disabled)"
+                ),
+                action.hotkey or "",
+            )
+            for action in (*assigned_actions, *unassigned_actions)
+        ]
+        self.hotkey_table.setRowCount(len(rows))
+        for row, (command_id, name, hotkey) in enumerate(rows):
+            command_item = QTableWidgetItem(name)
+            action = next(
+                action for action in self.actions if action.id == command_id
+            )
+            if action.folder:
+                command_item.setToolTip(f"Folder: {action.folder}")
+            self.hotkey_table.setItem(row, 0, command_item)
+
+            shortcut_widget = QWidget()
+            shortcut_layout = QHBoxLayout(shortcut_widget)
+            shortcut_layout.setContentsMargins(0, 0, 0, 0)
+            shortcut_layout.setSpacing(6)
+            editor = HotkeyCaptureEdit(hotkey)
+            editor.setMinimumWidth(220)
+            editor.hotkey_changed.connect(
+                lambda value, item_id=command_id: self._hotkey_changed(
+                    item_id,
+                    value,
+                )
+            )
+            editor.capture_rejected.connect(
+                lambda message, item_id=command_id: (
+                    self._set_hotkey_status(item_id, "error", message)
+                )
+            )
+            editor.capture_started.connect(
+                lambda item_id=command_id: self._set_hotkey_status(
+                    item_id,
+                    "unchecked",
+                    "Press the new shortcut now",
+                )
+            )
+            clear_button = QPushButton("Clear")
+            clear_button.setObjectName("clearHotkeyButton")
+            clear_button.setToolTip("Remove this action's global shortcut.")
+            clear_button.clicked.connect(editor.clear_hotkey)
+            change_button = QPushButton("Change")
+            change_button.setObjectName("changeHotkeyButton")
+            change_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            change_button.setToolTip(
+                "Press the actual key combination after choosing Change."
+            )
+            change_button.clicked.connect(editor.begin_capture)
+            shortcut_layout.addWidget(editor, 1)
+            shortcut_layout.addWidget(change_button)
+            shortcut_layout.addWidget(clear_button)
+            self.hotkey_table.setCellWidget(row, 1, shortcut_widget)
+
+            status = QLabel()
+            status.setObjectName("hotkeyStatus")
+            status.setWordWrap(True)
+            self.hotkey_table.setCellWidget(row, 2, status)
+            self.hotkey_editors[command_id] = editor
+            self.hotkey_status_labels[command_id] = status
+            self.hotkey_table.setRowHeight(row, 46)
+        self._update_hotkey_statuses(
+            check_windows=self.hotkey_availability is not None
+        )
+
+    def _hotkey_changed(self, command_id: str, hotkey: str) -> None:
+        if command_id == "__popup__":
+            self.popup_hotkey = hotkey
+        else:
+            self.actions = [
+                replace(action, hotkey=hotkey or None)
+                if action.id == command_id
+                else action
+                for action in self.actions
+            ]
+        self._mark_unsaved()
+        self._update_hotkey_statuses(check_windows=True)
+
+    def _update_hotkey_statuses(self, check_windows: bool = False) -> None:
+        entries = [
+            ("__popup__", "Open launcher", self.popup_hotkey, True),
+            *[
+                (
+                    action.id,
+                    action.name,
+                    action.hotkey or "",
+                    action.enabled,
+                )
+                for action in self.actions
+            ],
+        ]
+        parsed_entries: dict[str, tuple[int, int]] = {}
+        names = {command_id: name for command_id, name, _, _ in entries}
+
+        for command_id, _, hotkey, enabled in entries:
+            if not hotkey:
+                state = "error" if command_id == "__popup__" else "empty"
+                message = (
+                    "Required"
+                    if command_id == "__popup__"
+                    else "Not assigned"
+                )
+                self._set_hotkey_status(command_id, state, message)
+                continue
+            try:
+                parsed = parse_hotkey(hotkey)
+            except HotkeyParseError as exc:
+                self._set_hotkey_status(command_id, "error", str(exc))
+                continue
+            if not enabled:
+                self._set_hotkey_status(
+                    command_id,
+                    "inactive",
+                    "Inactive while action is disabled",
+                )
+                continue
+            parsed_entries[command_id] = (
+                parsed.modifiers,
+                parsed.virtual_key,
+            )
+
+        by_chord: dict[tuple[int, int], list[str]] = {}
+        for command_id, chord in parsed_entries.items():
+            by_chord.setdefault(chord, []).append(command_id)
+        clashing: set[str] = set()
+        for command_ids in by_chord.values():
+            if len(command_ids) < 2:
+                continue
+            clashing.update(command_ids)
+            for command_id in command_ids:
+                others = [
+                    names[other]
+                    for other in command_ids
+                    if other != command_id
+                ]
+                self._set_hotkey_status(
+                    command_id,
+                    "error",
+                    f"Clashes with {', '.join(others)}",
+                )
+
+        for command_id, _, hotkey, _ in entries:
+            if command_id not in parsed_entries or command_id in clashing:
+                continue
+            if not check_windows or self.hotkey_availability is None:
+                self._set_hotkey_status(
+                    command_id,
+                    "unchecked",
+                    "Not checked",
+                )
+                continue
+            try:
+                available = self.hotkey_availability(hotkey)
+            except Exception:
+                available = False
+            self._set_hotkey_status(
+                command_id,
+                "available" if available else "error",
+                (
+                    "Available"
+                    if available
+                    else "Already used by Windows or another app"
+                ),
+            )
+
+    def _set_hotkey_status(
+        self,
+        command_id: str,
+        state: str,
+        message: str,
+    ) -> None:
+        label = self.hotkey_status_labels.get(command_id)
+        if label is None:
+            return
+        label.setProperty("state", state)
+        label.setText(message)
+        label.style().unpolish(label)
+        label.style().polish(label)
 
     def _selection_changed(
         self,
@@ -646,7 +1139,6 @@ class ActionSettingsDialog(QDialog):
             self.name,
             self.folder_combo,
             self.keywords,
-            self.hotkey,
             self.natural_voice_mode,
             self.guided_drafting,
             self.instruction,
@@ -664,7 +1156,6 @@ class ActionSettingsDialog(QDialog):
             self.folder_combo.setCurrentText(action.folder)
             self._set_icon_spec(action.icon)
             self.keywords.setText(", ".join(action.keywords))
-            self.hotkey.setText(action.hotkey or "")
             voice_index = self.natural_voice_mode.findData(
                 action.natural_voice
             )
@@ -680,7 +1171,6 @@ class ActionSettingsDialog(QDialog):
             self.folder_combo.setCurrentText(self.selected_folder)
             self._set_icon_spec(self.folder_icons.get(self.selected_folder, ""))
             self.keywords.clear()
-            self.hotkey.clear()
             self.natural_voice_mode.setCurrentIndex(0)
             self.guided_drafting.setChecked(False)
             self.instruction.clear()
@@ -693,7 +1183,6 @@ class ActionSettingsDialog(QDialog):
             self.icon_combo.setCurrentIndex(-1)
             self.icon_combo.clearEditText()
             self.keywords.clear()
-            self.hotkey.clear()
             self.natural_voice_mode.setCurrentIndex(0)
             self.guided_drafting.setChecked(False)
             self.instruction.clear()
@@ -720,7 +1209,6 @@ class ActionSettingsDialog(QDialog):
             name=self.name.text().strip(),
             keywords=keywords,
             instruction=self.instruction.toPlainText().strip(),
-            hotkey=self.hotkey.text().strip() or None,
             enabled=self.enabled.isChecked(),
             show_on_home=self.show_on_home.isChecked(),
             icon=self._selected_icon_spec(),
@@ -763,9 +1251,28 @@ class ActionSettingsDialog(QDialog):
         self.instruction.blockSignals(False)
 
     def _mark_unsaved(self, *args) -> None:
-        if self._loading:
+        if self._loading or self._saved_state is None:
             return
-        self._set_save_status("Unsaved changes", saved=False)
+        if self._configuration_state() == self._saved_state:
+            self._set_save_status("")
+        else:
+            self._set_save_status("Unsaved changes", saved=False)
+
+    def _configuration_state(self) -> tuple:
+        self._commit_current()
+        return (
+            tuple(self.actions),
+            tuple(sorted(self.folder_icons.items())),
+            self.popup_hotkey,
+            str(self.theme.currentData() or "auto"),
+            self.start_with_windows.isChecked(),
+            self.most_used_count.value(),
+            self.primary_language.currentText().strip(),
+            self.auto_submit_default.isChecked(),
+            self.natural_voice_default.isChecked(),
+            self.natural_voice_instruction.toPlainText().strip(),
+            self.guided_drafting_default.isChecked(),
+        )
 
     def _set_save_status(
         self,
@@ -924,6 +1431,7 @@ class ActionSettingsDialog(QDialog):
             if self.settings is not None:
                 self.settings = replace(
                     self.settings,
+                    popup_hotkey=self.popup_hotkey,
                     theme=str(self.theme.currentData() or "auto"),
                     startup_enabled=self.start_with_windows.isChecked(),
                     home_most_used_count=self.most_used_count.value(),
@@ -950,6 +1458,8 @@ class ActionSettingsDialog(QDialog):
             QMessageBox.warning(self, "Cannot save actions", str(exc))
             return
         self.actions = actions
+        self.folder_icons = folder_icons
+        self._saved_state = self._configuration_state()
         self.actions_saved.emit()
         self._set_save_status("Changes saved", saved=True)
 
@@ -982,7 +1492,10 @@ class ActionSettingsDialog(QDialog):
     def _validated_actions(self) -> list[WritingAction]:
         ids: set[str] = set()
         hotkeys: dict[tuple[int, int], str] = {}
-        popup = parse_hotkey(self.popup_hotkey)
+        try:
+            popup = parse_hotkey(self.popup_hotkey)
+        except HotkeyParseError as exc:
+            raise ValueError(f"Open launcher: {exc}") from exc
         hotkeys[(popup.modifiers, popup.virtual_key)] = "Open launcher"
         validated: list[WritingAction] = []
 
@@ -1101,20 +1614,8 @@ class ActionSettingsDialog(QDialog):
             )
         ).replace("\\", "/")
         if resolve_theme(str(self.theme.currentData() or "auto")) == "light":
-            chevron_down = str(
-                files("promptmeld").joinpath(
-                    "resources",
-                    "icons",
-                    "chevron-down-light.svg",
-                )
-            ).replace("\\", "/")
-            chevron_right = str(
-                files("promptmeld").joinpath(
-                    "resources",
-                    "icons",
-                    "chevron-right-light.svg",
-                )
-            ).replace("\\", "/")
+            self.branch_arrow_style.set_arrow_colour("#4b5563")
+            self.action_list.viewport().update()
             self.setStyleSheet(
                 """
                 QDialog { background: #f5f7fa; color: #202631; }
@@ -1201,19 +1702,28 @@ class ActionSettingsDialog(QDialog):
                     background: #dce7ff;
                     color: #173a87;
                 }
-                QTreeWidget::branch,
-                QTreeWidget::branch:hover,
-                QTreeWidget::branch:selected {
-                    background: transparent;
+                QTableWidget {
+                    color: #202631;
+                    background: #ffffff;
+                    alternate-background-color: #f5f7fa;
+                    gridline-color: #d8dee8;
+                    border: 1px solid #cbd2dc;
+                    border-radius: 8px;
+                }
+                QHeaderView::section {
+                    color: #344052;
+                    background: #e8edf5;
                     border: 0;
-                    border-image: none;
+                    border-right: 1px solid #cbd2dc;
+                    border-bottom: 1px solid #cbd2dc;
+                    padding: 7px;
+                    font-weight: 600;
                 }
-                QTreeWidget::branch:closed:has-children {
-                    image: url("__CHEVRON_RIGHT__");
-                }
-                QTreeWidget::branch:open:has-children {
-                    image: url("__CHEVRON_DOWN__");
-                }
+                QLabel#hotkeyStatus[state="available"] { color: #18733b; }
+                QLabel#hotkeyStatus[state="error"] { color: #a32626; }
+                QLabel#hotkeyStatus[state="inactive"],
+                QLabel#hotkeyStatus[state="unchecked"],
+                QLabel#hotkeyStatus[state="empty"] { color: #667085; }
                 QTabWidget::pane {
                     background: #f5f7fa;
                     border: 1px solid #cbd2dc;
@@ -1288,31 +1798,13 @@ class ActionSettingsDialog(QDialog):
                 """.replace(
                     "__CHECKMARK__",
                     checkmark,
-                ).replace(
-                    "__CHEVRON_RIGHT__",
-                    chevron_right,
-                ).replace(
-                    "__CHEVRON_DOWN__",
-                    chevron_down,
                 )
             )
             self._set_instruction_colour()
             self._update_about_link(light=True)
             return
-        chevron_down = str(
-            files("promptmeld").joinpath(
-                "resources",
-                "icons",
-                "chevron-down-dark.svg",
-            )
-        ).replace("\\", "/")
-        chevron_right = str(
-            files("promptmeld").joinpath(
-                "resources",
-                "icons",
-                "chevron-right-dark.svg",
-            )
-        ).replace("\\", "/")
+        self.branch_arrow_style.set_arrow_colour("#c9d1e2")
+        self.action_list.viewport().update()
         self.setStyleSheet(
             """
             QDialog { background: #17191e; color: #e9ebef; }
@@ -1383,19 +1875,32 @@ class ActionSettingsDialog(QDialog):
                 color: #ffffff;
             }
             QTreeWidget::item:selected { background: #304a91; color: white; }
-            QTreeWidget::branch,
-            QTreeWidget::branch:hover,
-            QTreeWidget::branch:selected {
+            QTableWidget {
+                color: #f6f7fa;
+                background: #191c22;
+                alternate-background-color: #22262e;
+                gridline-color: #343842;
+                border: 1px solid #343842;
+                border-radius: 8px;
+            }
+            QTableWidget::item {
+                color: #f6f7fa;
                 background: transparent;
+            }
+            QHeaderView::section {
+                color: #d7dbe4;
+                background: #292c34;
                 border: 0;
-                border-image: none;
+                border-right: 1px solid #414650;
+                border-bottom: 1px solid #414650;
+                padding: 7px;
+                font-weight: 600;
             }
-            QTreeWidget::branch:closed:has-children {
-                image: url("__CHEVRON_RIGHT__");
-            }
-            QTreeWidget::branch:open:has-children {
-                image: url("__CHEVRON_DOWN__");
-            }
+            QLabel#hotkeyStatus[state="available"] { color: #7ee2a8; }
+            QLabel#hotkeyStatus[state="error"] { color: #ff9d9d; }
+            QLabel#hotkeyStatus[state="inactive"],
+            QLabel#hotkeyStatus[state="unchecked"],
+            QLabel#hotkeyStatus[state="empty"] { color: #aeb4c0; }
             QTabWidget::pane {
                 background: #17191e;
                 border: 1px solid #343842;
@@ -1446,9 +1951,12 @@ class ActionSettingsDialog(QDialog):
                 background: #292e38;
             }
             QCheckBox::indicator:checked {
-                border-color: #9fb2ef;
-                background: #315ecb;
+                border: 2px solid #ffffff;
+                background: #4f7cff;
                 image: url("__CHECKMARK__");
+            }
+            QCheckBox::indicator:checked:hover {
+                background: #638cff;
             }
             QCheckBox::indicator:disabled {
                 border-color: #59616d;
@@ -1470,12 +1978,6 @@ class ActionSettingsDialog(QDialog):
             """.replace(
                 "__CHECKMARK__",
                 checkmark,
-            ).replace(
-                "__CHEVRON_RIGHT__",
-                chevron_right,
-            ).replace(
-                "__CHEVRON_DOWN__",
-                chevron_down,
             )
         )
         self._set_instruction_colour()

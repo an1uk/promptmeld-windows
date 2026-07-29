@@ -53,7 +53,8 @@ ranked from usage; Smart Action positions remain fixed in V1.
 
 - If nothing happens, confirm PromptMeld is visible in the Windows notification area.
 - Test the keyboard shortcut outside Logi Options+ first.
-- If PromptMeld reports a shortcut conflict, change the shortcut in its JSON configuration and update the matching Smart Action.
+- If PromptMeld reports a shortcut conflict, change it in the **Hotkeys** tab
+  of **Configuration…**, then update the matching Smart Action.
 - If ChatGPT opens but does not receive the prompt, check the clipboard. The full prompt is copied whenever safe desktop automation is unavailable.
 - Logi Options+ can require a brief delay after application switching, but PromptMeld itself performs the ChatGPT wait and does not require a delay in the Smart Action.
 

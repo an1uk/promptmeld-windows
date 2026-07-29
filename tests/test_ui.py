@@ -12,11 +12,18 @@ from promptmeld.models import (
 from promptmeld.paths import AppPaths
 from promptmeld.settings_ui import (
     ActionSettingsDialog,
+    BranchArrowStyle,
+    HotkeyCaptureEdit,
     NoWheelComboBox,
 )
 from promptmeld.ui import LauncherPopup
 from promptmeld.usage import UsageTracker
-from PySide6.QtWidgets import QLabel, QMessageBox
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QDialogButtonBox,
+    QLabel,
+    QMessageBox,
+)
 
 
 def test_promptmeld_application_icon_is_available(qtbot):
@@ -330,22 +337,19 @@ def test_light_and_dark_appearance_options_apply_to_both_windows(
     assert "QCheckBox::indicator:checked" in light_dialog.styleSheet()
     assert "check-white.svg" in light_dialog.styleSheet()
     assert "QTreeWidget::item:hover:!selected" in light_dialog.styleSheet()
-    assert "QTreeWidget::branch:hover" in light_dialog.styleSheet()
-    assert "QTreeWidget::branch:selected" in light_dialog.styleSheet()
     assert "show-decoration-selected: 0" in light_dialog.styleSheet()
-    assert "chevron-right-light.svg" in light_dialog.styleSheet()
-    assert "chevron-down-light.svg" in light_dialog.styleSheet()
-    assert "chevron-right-dark.svg" not in light_dialog.styleSheet()
-    assert "chevron-down-dark.svg" not in light_dialog.styleSheet()
+    assert isinstance(light_dialog.branch_arrow_style, BranchArrowStyle)
+    assert "QTreeWidget::branch" not in light_dialog.styleSheet()
     assert "background: #20242b" not in light_dialog.styleSheet()
     assert "QCheckBox::indicator:checked" in dark_dialog.styleSheet()
     assert "check-white.svg" in dark_dialog.styleSheet()
-    assert "chevron-right-dark.svg" in dark_dialog.styleSheet()
-    assert "chevron-down-dark.svg" in dark_dialog.styleSheet()
-    assert "QTreeWidget::branch:selected" in dark_dialog.styleSheet()
+    assert "border: 2px solid #ffffff" in dark_dialog.styleSheet()
+    assert "background: #4f7cff" in dark_dialog.styleSheet()
     assert "show-decoration-selected: 0" in dark_dialog.styleSheet()
-    assert "chevron-right-light.svg" not in dark_dialog.styleSheet()
-    assert "chevron-down-light.svg" not in dark_dialog.styleSheet()
+    assert isinstance(dark_dialog.branch_arrow_style, BranchArrowStyle)
+    assert "QTreeWidget::branch" not in dark_dialog.styleSheet()
+    assert "QTableWidget::item" in dark_dialog.styleSheet()
+    assert "color: #f6f7fa" in dark_dialog.styleSheet()
     assert "background: #ffffff" not in dark_dialog.styleSheet()
 
 
@@ -384,9 +388,9 @@ def test_general_preferences_are_separate_from_writing_defaults(
     assert [
         dialog.tabs.tabText(index)
         for index in range(dialog.tabs.count())
-    ] == ["General", "Writing actions", "Defaults & style"]
+    ] == ["General", "Writing actions", "Hotkeys", "Defaults & style"]
     general_page = dialog.tabs.widget(0)
-    defaults_page = dialog.tabs.widget(2)
+    defaults_page = dialog.tabs.widget(3)
     for control in (
         dialog.theme,
         dialog.most_used_count,
@@ -410,6 +414,31 @@ def test_general_tab_shows_about_version_and_github_link(qtbot, tmp_path):
     assert dialog.version_label.text().startswith("Version ")
     assert "github.com/an1uk/promptmeld-windows" in dialog.github_link.text()
     assert dialog.github_link.openExternalLinks()
+    assert (
+        dialog.buttons.button(QDialogButtonBox.StandardButton.Close).text()
+        == "Close without saving"
+    )
+
+
+def test_unsaved_status_clears_when_changes_are_reverted(qtbot, tmp_path):
+    dialog = ActionSettingsDialog(
+        [WritingAction("edit", "Edit", (), "Improve this.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.save_status.text() == ""
+    dialog.start_with_windows.setChecked(True)
+    assert dialog.save_status.text() == "Unsaved changes"
+    dialog.start_with_windows.setChecked(False)
+    assert dialog.save_status.text() == ""
+
+    dialog.name.setText("Changed")
+    assert dialog.save_status.text() == "Unsaved changes"
+    dialog.name.setText("Edit")
+    assert dialog.save_status.text() == ""
 
 
 def test_start_with_windows_option_is_saved(qtbot, tmp_path):
@@ -602,6 +631,114 @@ def test_action_settings_rejects_duplicate_hotkeys(qtbot, tmp_path):
         assert "same hotkey" in str(exc)
     else:
         raise AssertionError("Expected duplicate hotkeys to be rejected")
+
+
+def test_hotkey_capture_uses_the_pressed_key_combination(qtbot):
+    editor = HotkeyCaptureEdit()
+    qtbot.addWidget(editor)
+    editor.show()
+    editor.setFocus()
+
+    qtbot.keyClick(
+        editor,
+        Qt.Key.Key_7,
+        Qt.KeyboardModifier.ControlModifier
+        | Qt.KeyboardModifier.AltModifier,
+    )
+
+    assert editor.text() == "Ctrl+Alt+7"
+    qtbot.keyClick(editor, Qt.Key.Key_8)
+    assert editor.text() == "Ctrl+Alt+7"
+
+
+def test_hotkeys_tab_edits_clears_and_reports_clashes(qtbot, tmp_path):
+    actions = [
+        WritingAction("one", "One", (), "First.", "Ctrl+Alt+1"),
+        WritingAction("two", "Two", (), "Second."),
+        WritingAction("three", "Three", (), "Third.", "Ctrl+Alt+3"),
+    ]
+    dialog = ActionSettingsDialog(
+        actions,
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+        hotkey_availability=lambda hotkey: hotkey != "Ctrl+Alt+9",
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.hotkey_table.rowCount() == 3
+    assert [
+        dialog.hotkey_table.item(row, 0).text()
+        for row in range(dialog.hotkey_table.rowCount())
+    ] == ["One", "Three", "Two"]
+    two = dialog.hotkey_editors["two"]
+    two.setFocus()
+    qtbot.keyClick(
+        two,
+        Qt.Key.Key_1,
+        Qt.KeyboardModifier.ControlModifier
+        | Qt.KeyboardModifier.AltModifier,
+    )
+    assert "Clashes with One" in dialog.hotkey_status_labels["two"].text()
+    assert "Clashes with Two" in dialog.hotkey_status_labels["one"].text()
+
+    qtbot.keyClick(
+        two,
+        Qt.Key.Key_9,
+        Qt.KeyboardModifier.ControlModifier
+        | Qt.KeyboardModifier.AltModifier,
+    )
+    assert (
+        dialog.hotkey_status_labels["two"].text()
+        == "Already used by Windows or another app"
+    )
+    two.clear_hotkey()
+    assert dialog.hotkey_status_labels["two"].text() == "Not assigned"
+    assert (
+        next(action for action in dialog.actions if action.id == "two").hotkey
+        is None
+    )
+
+
+def test_hotkeys_tab_saves_a_recorded_launcher_shortcut(qtbot, tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    paths.settings_file.write_text("{}", encoding="utf-8")
+    settings = load_settings(paths.settings_file)
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        paths,
+        ActionIconProvider(tmp_path),
+        settings.popup_hotkey,
+        settings,
+        hotkey_availability=lambda hotkey: True,
+    )
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.tabs.setCurrentIndex(2)
+
+    launcher = dialog.hotkey_editors["__popup__"]
+    assert dialog.launcher_hotkey_editor is launcher
+    assert dialog.change_launcher_hotkey_button.text() == "Change"
+    qtbot.mouseClick(
+        dialog.change_launcher_hotkey_button,
+        Qt.MouseButton.LeftButton,
+    )
+    qtbot.wait(1)
+    assert launcher.hasFocus()
+    assert (
+        dialog.hotkey_status_labels["__popup__"].text()
+        == "Press the new shortcut now"
+    )
+    qtbot.keyClick(
+        launcher,
+        Qt.Key.Key_F8,
+        Qt.KeyboardModifier.ControlModifier
+        | Qt.KeyboardModifier.ShiftModifier,
+    )
+    dialog._save()
+
+    assert load_settings(paths.settings_file).popup_hotkey == "Ctrl+Shift+F8"
 
 
 def test_action_settings_can_load_shipped_starter_set(

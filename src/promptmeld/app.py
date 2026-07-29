@@ -438,15 +438,16 @@ class PromptMeld:
     def reload_configuration_after_save(self) -> None:
         if self.icons is not None:
             self.icons.clear_cache()
-        self._reload_configuration()
+        self._reload_configuration(register_hotkeys=False)
         self._apply_startup_preference()
 
-    def _reload_configuration(self) -> None:
+    def _reload_configuration(self, register_hotkeys: bool = True) -> None:
         try:
             self.hotkeys.unregister_all()
             self.usage.load()
             self._load_components()
-            self.register_hotkeys()
+            if register_hotkeys:
+                self.register_hotkeys()
             LOGGER.info("Configuration reloaded")
         except ConfigurationError as exc:
             LOGGER.exception("Configuration reload failed")
@@ -464,16 +465,22 @@ class PromptMeld:
             return
         from .settings_ui import ActionSettingsDialog
 
-        self.settings_dialog = ActionSettingsDialog(
-            self.actions,
-            self.paths,
-            self._ensure_icons(),
-            self.settings.popup_hotkey,
-            replace(
-                self.settings,
-                startup_enabled=self.startup.is_enabled(),
-            ),
-        )
+        self.hotkeys.unregister_all()
+        try:
+            self.settings_dialog = ActionSettingsDialog(
+                self.actions,
+                self.paths,
+                self._ensure_icons(),
+                self.settings.popup_hotkey,
+                replace(
+                    self.settings,
+                    startup_enabled=self.startup.is_enabled(),
+                ),
+                hotkey_availability=self.hotkeys.is_available,
+            )
+        except Exception:
+            self.register_hotkeys()
+            raise
         self.settings_dialog.actions_saved.connect(
             self.reload_configuration_after_save
         )
@@ -486,6 +493,8 @@ class PromptMeld:
         self.settings_dialog = None
         if self.icons is not None:
             self.icons.clear_cache()
+        self.hotkeys.unregister_all()
+        self.register_hotkeys()
 
     def toggle_startup(self, enabled: bool) -> None:
         previous_registration = self.startup.is_enabled()
