@@ -1,6 +1,6 @@
 # Configuration and customisation
 
-PromptMeld is designed to be configured through **Manage writing actions** in
+PromptMeld is designed to be configured through **Configuration…** in
 the notification-area menu. Direct JSON editing remains available for advanced
 use and troubleshooting.
 
@@ -109,8 +109,8 @@ Valid `natural_voice` values are `inherit`, `always`, and `never`. Set
 `guided_drafting` to `true` only for actions that may benefit from requesting
 missing context.
 
-After manual changes, choose **Reload configuration** from the notification-area
-menu.
+After manual JSON changes, exit and restart PromptMeld. Changes made through
+the configuration window take effect immediately after saving.
 
 ## Manual defaults editing
 
