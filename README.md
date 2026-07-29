@@ -134,6 +134,14 @@ PromptMeld keeps its editable configuration under:
 See [Configuration and customisation](docs/CONFIGURATION.md) for the action
 manager, JSON formats, data files, and upgrade behaviour.
 
+## Get involved
+
+PromptMeld is an early open-source project, and participation is welcome.
+[Report bugs or suggest improvements](https://github.com/an1uk/promptmeld-windows/issues),
+help test new releases, improve the documentation, or submit a pull request.
+If you plan a substantial change, opening an issue first is a good way to
+discuss the approach.
+
 ## Documentation
 
 - [Privacy](PRIVACY.md)
