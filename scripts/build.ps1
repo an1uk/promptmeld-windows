@@ -88,6 +88,9 @@ try {
         --icon "src\promptmeld\resources\branding\promptmeld.ico" `
         --add-data "src\promptmeld\resources;promptmeld\resources" `
         "tools\entrypoints\promptmeld_launcher.py"
+    if ($LASTEXITCODE -ne 0) {
+        throw "The PromptMeld application package build failed."
+    }
 
     & $python -m PyInstaller `
         --noconfirm `
@@ -100,6 +103,9 @@ try {
         --icon "src\promptmeld\resources\branding\promptmeld.ico" `
         --collect-all pywinauto `
         "tools\entrypoints\promptmeld_automation.py"
+    if ($LASTEXITCODE -ne 0) {
+        throw "The PromptMeld automation helper build failed."
+    }
 
     $mainOutput = Join-Path $projectRoot "dist\PromptMeld"
     $mainInternal = Join-Path $mainOutput "_internal"

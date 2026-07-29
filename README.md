@@ -97,8 +97,10 @@ manually.
 | `Ctrl+Alt+5` | Sarcastic reply |
 | `Ctrl+Alt+6` | Polite but firm reply |
 
-Shortcuts can be changed in **Configuration…**. PromptMeld reports a
-notification-area warning if another application already uses one.
+Shortcuts can be changed in the **Hotkeys** tab of **Configuration…** by
+clicking a field and pressing the desired key combination. PromptMeld flags
+duplicates and asks Windows whether each shortcut is already registered by
+another application.
 
 ## Privacy
 
