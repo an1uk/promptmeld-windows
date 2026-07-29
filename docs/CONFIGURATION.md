@@ -36,6 +36,7 @@ The **General** tab controls:
 - Primary writing language: English (UK), English (US), source language, or a
   custom language.
 - The number of most-used actions shown on the launcher home screen.
+- Whether PromptMeld starts automatically when you sign in to Windows.
 
 ## Defaults and writing style
 
