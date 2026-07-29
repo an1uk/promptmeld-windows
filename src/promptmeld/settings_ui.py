@@ -1207,6 +1207,7 @@ class ActionSettingsDialog(QDialog):
                     background: transparent;
                     border: 0;
                     border-image: none;
+                    image: none;
                 }
                 QTreeWidget::branch:closed:has-children {
                     image: url("__CHEVRON_RIGHT__");
@@ -1389,6 +1390,7 @@ class ActionSettingsDialog(QDialog):
                 background: transparent;
                 border: 0;
                 border-image: none;
+                image: none;
             }
             QTreeWidget::branch:closed:has-children {
                 image: url("__CHEVRON_RIGHT__");
