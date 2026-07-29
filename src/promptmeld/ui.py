@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from importlib.resources import files
+
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QCursor, QKeyEvent
 from PySide6.QtWidgets import (
@@ -439,6 +441,13 @@ class LauncherPopup(QWidget):
 
     def _apply_style(self) -> None:
         if resolve_theme(self.theme) == "light":
+            checkmark = str(
+                files("promptmeld").joinpath(
+                    "resources",
+                    "icons",
+                    "check-white.svg",
+                )
+            ).replace("\\", "/")
             self.setStyleSheet(
                 """
                 QFrame#launcherFrame {
@@ -492,11 +501,31 @@ class LauncherPopup(QWidget):
                 }
                 QPushButton:hover { background: #244fae; }
                 QCheckBox {
-                    color: #303744;
+                    color: #202631;
                     spacing: 8px;
                     padding: 2px 1px;
                 }
-                """
+                QCheckBox::indicator {
+                    width: 16px;
+                    height: 16px;
+                    border: 1px solid #687585;
+                    border-radius: 3px;
+                    background: #ffffff;
+                }
+                QCheckBox::indicator:hover {
+                    border-color: #315ecb;
+                    background: #f2f5fa;
+                }
+                QCheckBox::indicator:checked {
+                    border-color: #244fae;
+                    background: #315ecb;
+                    image: url("__CHECKMARK__");
+                }
+                QCheckBox::indicator:disabled {
+                    border-color: #aeb6c0;
+                    background: #e7eaee;
+                }
+                """.replace("__CHECKMARK__", checkmark)
             )
             return
         self.setStyleSheet(

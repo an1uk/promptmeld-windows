@@ -27,19 +27,24 @@ Use `/` in a folder name to create nesting, for example
 `Replies & arguments/Analysis`. Search covers every folder, while frequently
 and recently used actions rank first within the current scope.
 
+## General settings
+
+The **General** tab controls:
+
+- Appearance: Auto (the default, following the Windows app colour mode), Light,
+  or Dark.
+- Primary writing language: English (UK), English (US), source language, or a
+  custom language.
+- The number of most-used actions shown on the launcher home screen.
+
 ## Defaults and writing style
 
 The **Defaults & style** tab controls:
 
-- Appearance: Auto (the default, following the Windows app colour mode), Light,
-  or Dark.
 - Automatic submission, which is off by default.
 - The default state and wording of **Preserve my natural voice**.
-- Primary writing language: English (UK), English (US), source language, or a
-  custom language.
 - Guided drafting, which allows supported actions to ask up to three concise
   questions when essential context is missing.
-- Folder icons and the number of most-used actions shown on the home screen.
 
 PromptMeld deliberately does not automate ChatGPT's model picker because model
 names, availability, and layout can change by account and application version.
