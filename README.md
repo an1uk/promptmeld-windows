@@ -22,6 +22,9 @@ while keeping you in control of what reaches ChatGPT and when it is submitted.
 
 ## What it does
 
+PromptMeld melds your selected text with a reusable writing prompt, then opens
+ChatGPT and pastes the combined request into a fresh chat.
+
 - Includes 26 starter actions for editing, replies, tone, technical help, and
   correspondence.
 - Searches actions across configurable folders and ranks frequently used

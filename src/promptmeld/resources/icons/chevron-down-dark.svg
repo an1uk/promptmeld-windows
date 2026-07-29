@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
   <path
-    d="m6.75 5.25 2.75 2.75-2.75 2.75"
+    d="m5.25 6.75 2.75 2.75 2.75-2.75"
     fill="none"
-    stroke="#36516f"
+    stroke="#d4e0f2"
     stroke-linecap="round"
     stroke-linejoin="round"
     stroke-width="1.6"

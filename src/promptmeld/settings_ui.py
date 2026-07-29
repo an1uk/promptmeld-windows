@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import display_version
 from .config import (
     DEFAULT_FOLDER_ICONS,
     load_default_actions,
@@ -38,7 +39,7 @@ from .config import (
     save_actions,
     save_settings,
 )
-from .branding import APP_NAME, TAGLINE
+from .branding import APP_NAME, REPOSITORY_URL, TAGLINE
 from .icons import ActionIconProvider
 from .models import (
     DEFAULT_NATURAL_VOICE_INSTRUCTION,
@@ -441,9 +442,29 @@ class ActionSettingsDialog(QDialog):
         )
         self.start_with_windows.setChecked(voice_settings.startup_enabled)
         startup_layout.addWidget(self.start_with_windows)
+        about_group = QGroupBox(f"About {APP_NAME}")
+        about_layout = QVBoxLayout(about_group)
+        self.version_label = QLabel(f"Version {display_version()}")
+        self.version_label.setObjectName("formLabel")
+        about_description = QLabel(
+            f"{APP_NAME} is an open-source Windows companion for turning "
+            "selected text into focused ChatGPT writing requests."
+        )
+        about_description.setObjectName("muted")
+        about_description.setWordWrap(True)
+        self.github_link = QLabel()
+        self.github_link.setObjectName("githubLink")
+        self.github_link.setOpenExternalLinks(True)
+        self.github_link.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextBrowserInteraction
+        )
+        about_layout.addWidget(self.version_label)
+        about_layout.addWidget(about_description)
+        about_layout.addWidget(self.github_link)
         general_layout.addWidget(appearance_group)
         general_layout.addWidget(launcher_group)
         general_layout.addWidget(startup_group)
+        general_layout.addWidget(about_group)
         general_layout.addStretch(1)
         defaults_page = QWidget()
         defaults_page.setObjectName("settingsPage")
@@ -454,8 +475,8 @@ class ActionSettingsDialog(QDialog):
         defaults_layout.addWidget(voice_group)
         defaults_layout.addWidget(guided_group)
         defaults_layout.addStretch(1)
-        self.tabs.addTab(actions_page, "Writing actions")
         self.tabs.addTab(general_page, "General")
+        self.tabs.addTab(actions_page, "Writing actions")
         self.tabs.addTab(defaults_page, "Defaults & style")
         root.addWidget(self.tabs, 1)
 
@@ -1064,15 +1085,22 @@ class ActionSettingsDialog(QDialog):
         if str(self.theme.currentData() or "auto") == "auto":
             self._apply_style()
 
+    def _update_about_link(self, light: bool) -> None:
+        colour = "#244fae" if light else "#b8c8ff"
+        self.github_link.setText(
+            f'<a href="{REPOSITORY_URL}" style="color: {colour};">'
+            "View PromptMeld on GitHub</a>"
+        )
+
     def _apply_style(self, *args) -> None:
+        checkmark = str(
+            files("promptmeld").joinpath(
+                "resources",
+                "icons",
+                "check-white.svg",
+            )
+        ).replace("\\", "/")
         if resolve_theme(str(self.theme.currentData() or "auto")) == "light":
-            checkmark = str(
-                files("promptmeld").joinpath(
-                    "resources",
-                    "icons",
-                    "check-white.svg",
-                )
-            ).replace("\\", "/")
             chevron_down = str(
                 files("promptmeld").joinpath(
                     "resources",
@@ -1158,6 +1186,7 @@ class ActionSettingsDialog(QDialog):
                     border: 1px solid #cbd2dc;
                     border-radius: 8px;
                     outline: 0;
+                    show-decoration-selected: 0;
                 }
                 QTreeWidget::item {
                     color: #202631;
@@ -1173,8 +1202,11 @@ class ActionSettingsDialog(QDialog):
                     color: #173a87;
                 }
                 QTreeWidget::branch,
-                QTreeWidget::branch:hover {
+                QTreeWidget::branch:hover,
+                QTreeWidget::branch:selected {
                     background: transparent;
+                    border: 0;
+                    border-image: none;
                 }
                 QTreeWidget::branch:closed:has-children {
                     image: url("__CHEVRON_RIGHT__");
@@ -1265,7 +1297,22 @@ class ActionSettingsDialog(QDialog):
                 )
             )
             self._set_instruction_colour()
+            self._update_about_link(light=True)
             return
+        chevron_down = str(
+            files("promptmeld").joinpath(
+                "resources",
+                "icons",
+                "chevron-down-dark.svg",
+            )
+        ).replace("\\", "/")
+        chevron_right = str(
+            files("promptmeld").joinpath(
+                "resources",
+                "icons",
+                "chevron-right-dark.svg",
+            )
+        ).replace("\\", "/")
         self.setStyleSheet(
             """
             QDialog { background: #17191e; color: #e9ebef; }
@@ -1328,9 +1375,27 @@ class ActionSettingsDialog(QDialog):
                 border: 1px solid #343842;
                 border-radius: 8px;
                 outline: 0;
+                show-decoration-selected: 0;
             }
             QTreeWidget::item { padding: 7px; }
+            QTreeWidget::item:hover:!selected {
+                background: #292e38;
+                color: #ffffff;
+            }
             QTreeWidget::item:selected { background: #304a91; color: white; }
+            QTreeWidget::branch,
+            QTreeWidget::branch:hover,
+            QTreeWidget::branch:selected {
+                background: transparent;
+                border: 0;
+                border-image: none;
+            }
+            QTreeWidget::branch:closed:has-children {
+                image: url("__CHEVRON_RIGHT__");
+            }
+            QTreeWidget::branch:open:has-children {
+                image: url("__CHEVRON_DOWN__");
+            }
             QTabWidget::pane {
                 background: #17191e;
                 border: 1px solid #343842;
@@ -1369,6 +1434,26 @@ class ActionSettingsDialog(QDialog):
                 font-weight: 600;
             }
             QCheckBox { color: #e9ebef; spacing: 8px; }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 1px solid #9ba8ba;
+                border-radius: 3px;
+                background: #20242b;
+            }
+            QCheckBox::indicator:hover {
+                border-color: #9fb2ef;
+                background: #292e38;
+            }
+            QCheckBox::indicator:checked {
+                border-color: #9fb2ef;
+                background: #315ecb;
+                image: url("__CHECKMARK__");
+            }
+            QCheckBox::indicator:disabled {
+                border-color: #59616d;
+                background: #25282e;
+            }
             QGroupBox {
                 color: #aeb4c0;
                 border: 1px solid #343842;
@@ -1382,6 +1467,16 @@ class ActionSettingsDialog(QDialog):
                 padding: 0 4px;
             }
             QFrame { color: #343842; }
-            """
+            """.replace(
+                "__CHECKMARK__",
+                checkmark,
+            ).replace(
+                "__CHEVRON_RIGHT__",
+                chevron_right,
+            ).replace(
+                "__CHEVRON_DOWN__",
+                chevron_down,
+            )
         )
         self._set_instruction_colour()
+        self._update_about_link(light=False)

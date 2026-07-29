@@ -8,6 +8,7 @@ MAIN_EXECUTABLE_NAME = "PromptMeld.exe"
 AUTOMATION_EXECUTABLE_NAME = "PromptMeldAutomation.exe"
 HOTKEY_RECEIVER_TITLE = "PromptMeldHotkeyReceiver"
 SINGLE_INSTANCE_NAME = r"Local\PromptMeld-v1"
+REPOSITORY_URL = "https://github.com/an1uk/promptmeld-windows"
 
 LEGACY_APP_NAME = "Writing Launcher"
 LEGACY_APP_ID = "WritingLauncher"
