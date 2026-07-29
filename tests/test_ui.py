@@ -322,6 +322,10 @@ def test_light_and_dark_appearance_options_apply_to_both_windows(
     assert "color: #202631" in light_dialog.styleSheet()
     assert "QCheckBox::indicator:checked" in light_dialog.styleSheet()
     assert "check-white.svg" in light_dialog.styleSheet()
+    assert "QTreeWidget::item:hover:!selected" in light_dialog.styleSheet()
+    assert "QTreeWidget::branch:hover" in light_dialog.styleSheet()
+    assert "chevron-right-light.svg" in light_dialog.styleSheet()
+    assert "chevron-down-light.svg" in light_dialog.styleSheet()
 
 
 def test_appearance_option_is_saved(qtbot, tmp_path):
@@ -366,9 +370,30 @@ def test_general_preferences_are_separate_from_writing_defaults(
         dialog.theme,
         dialog.most_used_count,
         dialog.primary_language,
+        dialog.start_with_windows,
     ):
         assert general_page.isAncestorOf(control)
         assert not defaults_page.isAncestorOf(control)
+
+
+def test_start_with_windows_option_is_saved(qtbot, tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    paths.settings_file.write_text("{}", encoding="utf-8")
+    settings = load_settings(paths.settings_file)
+    dialog = ActionSettingsDialog(
+        [WritingAction("edit", "Edit", (), "Improve this.")],
+        paths,
+        ActionIconProvider(tmp_path),
+        settings.popup_hotkey,
+        settings,
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.start_with_windows.setChecked(True)
+    dialog._save()
+
+    assert load_settings(paths.settings_file).startup_enabled is True
 
 
 def test_action_settings_saves_most_used_count(qtbot, tmp_path):

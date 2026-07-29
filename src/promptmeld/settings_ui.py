@@ -434,8 +434,16 @@ class ActionSettingsDialog(QDialog):
         launcher_group = QGroupBox("Launcher")
         launcher_layout = QVBoxLayout(launcher_group)
         launcher_layout.addLayout(home_row)
+        startup_group = QGroupBox("Windows")
+        startup_layout = QVBoxLayout(startup_group)
+        self.start_with_windows = QCheckBox(
+            "Start PromptMeld when I sign in to Windows"
+        )
+        self.start_with_windows.setChecked(voice_settings.startup_enabled)
+        startup_layout.addWidget(self.start_with_windows)
         general_layout.addWidget(appearance_group)
         general_layout.addWidget(launcher_group)
+        general_layout.addWidget(startup_group)
         general_layout.addStretch(1)
         defaults_page = QWidget()
         defaults_page.setObjectName("settingsPage")
@@ -496,6 +504,7 @@ class ActionSettingsDialog(QDialog):
             self.natural_voice_instruction.textChanged,
             self.guided_drafting_default.toggled,
             self.theme.currentIndexChanged,
+            self.start_with_windows.toggled,
         ):
             signal.connect(self._mark_unsaved)
 
@@ -895,6 +904,7 @@ class ActionSettingsDialog(QDialog):
                 self.settings = replace(
                     self.settings,
                     theme=str(self.theme.currentData() or "auto"),
+                    startup_enabled=self.start_with_windows.isChecked(),
                     home_most_used_count=self.most_used_count.value(),
                     folder_icons=folder_icons,
                     natural_voice_enabled=(
@@ -1063,6 +1073,20 @@ class ActionSettingsDialog(QDialog):
                     "check-white.svg",
                 )
             ).replace("\\", "/")
+            chevron_down = str(
+                files("promptmeld").joinpath(
+                    "resources",
+                    "icons",
+                    "chevron-down-light.svg",
+                )
+            ).replace("\\", "/")
+            chevron_right = str(
+                files("promptmeld").joinpath(
+                    "resources",
+                    "icons",
+                    "chevron-right-light.svg",
+                )
+            ).replace("\\", "/")
             self.setStyleSheet(
                 """
                 QDialog { background: #f5f7fa; color: #202631; }
@@ -1140,9 +1164,23 @@ class ActionSettingsDialog(QDialog):
                     background: transparent;
                     padding: 7px;
                 }
+                QTreeWidget::item:hover:!selected {
+                    color: #173a87;
+                    background: #edf3ff;
+                }
                 QTreeWidget::item:selected {
                     background: #dce7ff;
                     color: #173a87;
+                }
+                QTreeWidget::branch,
+                QTreeWidget::branch:hover {
+                    background: transparent;
+                }
+                QTreeWidget::branch:closed:has-children {
+                    image: url("__CHEVRON_RIGHT__");
+                }
+                QTreeWidget::branch:open:has-children {
+                    image: url("__CHEVRON_DOWN__");
                 }
                 QTabWidget::pane {
                     background: #f5f7fa;
@@ -1215,7 +1253,16 @@ class ActionSettingsDialog(QDialog):
                     padding: 0 4px;
                 }
                 QFrame { color: #cbd2dc; }
-                """.replace("__CHECKMARK__", checkmark)
+                """.replace(
+                    "__CHECKMARK__",
+                    checkmark,
+                ).replace(
+                    "__CHEVRON_RIGHT__",
+                    chevron_right,
+                ).replace(
+                    "__CHEVRON_DOWN__",
+                    chevron_down,
+                )
             )
             self._set_instruction_colour()
             return

@@ -439,6 +439,7 @@ class PromptMeld:
         if self.icons is not None:
             self.icons.clear_cache()
         self._reload_configuration()
+        self._apply_startup_preference()
 
     def _reload_configuration(self) -> None:
         try:
@@ -468,7 +469,10 @@ class PromptMeld:
             self.paths,
             self._ensure_icons(),
             self.settings.popup_hotkey,
-            self.settings,
+            replace(
+                self.settings,
+                startup_enabled=self.startup.is_enabled(),
+            ),
         )
         self.settings_dialog.actions_saved.connect(
             self.reload_configuration_after_save
@@ -484,10 +488,17 @@ class PromptMeld:
             self.icons.clear_cache()
 
     def toggle_startup(self, enabled: bool) -> None:
+        previous_registration = self.startup.is_enabled()
+        updated = replace(self.settings, startup_enabled=enabled)
         try:
             self.startup.set_enabled(enabled)
+            save_settings(self.paths.settings_file, updated)
         except Exception as exc:
             LOGGER.exception("Could not update startup setting")
+            try:
+                self.startup.set_enabled(previous_registration)
+            except Exception:
+                LOGGER.exception("Could not restore previous startup setting")
             self.startup_action.blockSignals(True)
             self.startup_action.setChecked(self.startup.is_enabled())
             self.startup_action.blockSignals(False)
@@ -496,6 +507,24 @@ class PromptMeld:
                 str(exc),
                 QSystemTrayIcon.MessageIcon.Warning,
             )
+            return
+        self.settings = updated
+
+    def _apply_startup_preference(self) -> None:
+        enabled = self.settings.startup_enabled
+        try:
+            self.startup.set_enabled(enabled)
+        except Exception as exc:
+            LOGGER.exception("Could not apply startup setting")
+            self.notify(
+                "Startup setting failed",
+                str(exc),
+                QSystemTrayIcon.MessageIcon.Warning,
+            )
+            enabled = self.startup.is_enabled()
+        self.startup_action.blockSignals(True)
+        self.startup_action.setChecked(enabled)
+        self.startup_action.blockSignals(False)
 
     def notify(
         self,
