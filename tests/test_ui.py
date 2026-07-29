@@ -309,7 +309,14 @@ def test_light_and_dark_appearance_options_apply_to_both_windows(
         "Ctrl+Alt+Space",
         AppSettings(theme="light"),
     )
-    for widget in (light_popup, dark_popup, light_dialog):
+    dark_dialog = ActionSettingsDialog(
+        [WritingAction("edit", "Edit", (), "Improve this.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+        AppSettings(theme="dark"),
+    )
+    for widget in (light_popup, dark_popup, light_dialog, dark_dialog):
         qtbot.addWidget(widget)
 
     assert "background: #ffffff" in light_popup.styleSheet()
@@ -324,8 +331,22 @@ def test_light_and_dark_appearance_options_apply_to_both_windows(
     assert "check-white.svg" in light_dialog.styleSheet()
     assert "QTreeWidget::item:hover:!selected" in light_dialog.styleSheet()
     assert "QTreeWidget::branch:hover" in light_dialog.styleSheet()
+    assert "QTreeWidget::branch:selected" in light_dialog.styleSheet()
+    assert "show-decoration-selected: 0" in light_dialog.styleSheet()
     assert "chevron-right-light.svg" in light_dialog.styleSheet()
     assert "chevron-down-light.svg" in light_dialog.styleSheet()
+    assert "chevron-right-dark.svg" not in light_dialog.styleSheet()
+    assert "chevron-down-dark.svg" not in light_dialog.styleSheet()
+    assert "background: #20242b" not in light_dialog.styleSheet()
+    assert "QCheckBox::indicator:checked" in dark_dialog.styleSheet()
+    assert "check-white.svg" in dark_dialog.styleSheet()
+    assert "chevron-right-dark.svg" in dark_dialog.styleSheet()
+    assert "chevron-down-dark.svg" in dark_dialog.styleSheet()
+    assert "QTreeWidget::branch:selected" in dark_dialog.styleSheet()
+    assert "show-decoration-selected: 0" in dark_dialog.styleSheet()
+    assert "chevron-right-light.svg" not in dark_dialog.styleSheet()
+    assert "chevron-down-light.svg" not in dark_dialog.styleSheet()
+    assert "background: #ffffff" not in dark_dialog.styleSheet()
 
 
 def test_appearance_option_is_saved(qtbot, tmp_path):
@@ -363,8 +384,8 @@ def test_general_preferences_are_separate_from_writing_defaults(
     assert [
         dialog.tabs.tabText(index)
         for index in range(dialog.tabs.count())
-    ] == ["Writing actions", "General", "Defaults & style"]
-    general_page = dialog.tabs.widget(1)
+    ] == ["General", "Writing actions", "Defaults & style"]
+    general_page = dialog.tabs.widget(0)
     defaults_page = dialog.tabs.widget(2)
     for control in (
         dialog.theme,
@@ -374,6 +395,21 @@ def test_general_preferences_are_separate_from_writing_defaults(
     ):
         assert general_page.isAncestorOf(control)
         assert not defaults_page.isAncestorOf(control)
+
+
+def test_general_tab_shows_about_version_and_github_link(qtbot, tmp_path):
+    dialog = ActionSettingsDialog(
+        [WritingAction("edit", "Edit", (), "Improve this.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.tabs.currentIndex() == 0
+    assert dialog.version_label.text().startswith("Version ")
+    assert "github.com/an1uk/promptmeld-windows" in dialog.github_link.text()
+    assert dialog.github_link.openExternalLinks()
 
 
 def test_start_with_windows_option_is_saved(qtbot, tmp_path):
