@@ -15,6 +15,77 @@ class ChatGPTAutomationError(RuntimeError):
     pass
 
 
+def _click_control_on_virtual_desktop(
+    control,
+    *,
+    win32api_module=None,
+) -> None:
+    """Click a verified UIA rectangle without primary-screen normalization."""
+
+    if win32api_module is None:
+        import win32api as win32api_module
+
+    rectangle = control.rectangle()
+    left = int(rectangle.left)
+    top = int(rectangle.top)
+    right = int(rectangle.right)
+    bottom = int(rectangle.bottom)
+    if right <= left or bottom <= top:
+        raise ChatGPTAutomationError(
+            "The destination control has no clickable screen area."
+        )
+
+    target = (
+        left + ((right - left) // 2),
+        top + ((bottom - top) // 2),
+    )
+    virtual_left = win32api_module.GetSystemMetrics(76)
+    virtual_top = win32api_module.GetSystemMetrics(77)
+    virtual_right = (
+        virtual_left + win32api_module.GetSystemMetrics(78)
+    )
+    virtual_bottom = (
+        virtual_top + win32api_module.GetSystemMetrics(79)
+    )
+    if not (
+        virtual_left <= target[0] < virtual_right
+        and virtual_top <= target[1] < virtual_bottom
+    ):
+        raise ChatGPTAutomationError(
+            "The destination control is outside the Windows virtual desktop."
+        )
+    monitor_from_point = getattr(
+        win32api_module,
+        "MonitorFromPoint",
+        None,
+    )
+    if callable(monitor_from_point) and not monitor_from_point(target, 0):
+        raise ChatGPTAutomationError(
+            "The destination control is not located on an active monitor."
+        )
+
+    original = win32api_module.GetCursorPos()
+    win32api_module.SetCursorPos(target)
+    if win32api_module.GetCursorPos() != target:
+        raise ChatGPTAutomationError(
+            "Windows could not position the pointer over the destination control."
+        )
+    try:
+        # With no MOVE flag, button events occur at the SetCursorPos location.
+        # This avoids pywinauto's primary-screen absolute-coordinate conversion,
+        # which clamps negative virtual-desktop coordinates to a screen edge.
+        win32api_module.mouse_event(0x0002, 0, 0, 0, 0)
+        try:
+            win32api_module.mouse_event(0x0004, 0, 0, 0, 0)
+        except Exception:
+            # Do not leave the primary button held if its first release fails.
+            win32api_module.mouse_event(0x0004, 0, 0, 0, 0)
+            raise
+    finally:
+        if win32api_module.GetCursorPos() == target:
+            win32api_module.SetCursorPos(original)
+
+
 class ChatGPTDesktop:
     """Narrow adapter around ChatGPT's Windows accessibility surface."""
 
@@ -43,6 +114,8 @@ class ChatGPTDesktop:
         clipboard_writer: Callable[[str], None] = write_clipboard_text,
         clipboard_reader: Callable[[], str | None] = read_clipboard_text,
         send_keys: Callable[..., None] | None = None,
+        mouse_clicker: Callable[[object], None] | None = None,
+        progress_callback: Callable[[str, str], None] | None = None,
     ):
         self.timeout_seconds = timeout_seconds
         self.chatgpt_uri = chatgpt_uri
@@ -52,6 +125,8 @@ class ChatGPTDesktop:
         self.clipboard_writer = clipboard_writer
         self.clipboard_reader = clipboard_reader
         self.send_keys = send_keys
+        self.mouse_clicker = mouse_clicker
+        self.progress_callback = progress_callback
         self.timings: list[dict[str, float | str]] = []
 
     def submit(
@@ -69,6 +144,10 @@ class ChatGPTDesktop:
         pythoncom.CoInitialize()
         try:
             stage_started = time.perf_counter()
+            self._report_progress(
+                "locating-chatgpt",
+                "Opening or focusing ChatGPT",
+            )
             window = self._get_or_launch_window()
             window.set_focus()
             self._log_timing("find or launch ChatGPT", stage_started)
@@ -84,6 +163,10 @@ class ChatGPTDesktop:
             self._log_timing("open project chat", stage_started)
 
             stage_started = time.perf_counter()
+            self._report_progress(
+                "finding-composer",
+                "Finding the ChatGPT message box",
+            )
             composer = self._find_composer(window)
             if composer is None:
                 return self._fallback(
@@ -92,15 +175,28 @@ class ChatGPTDesktop:
                     "copied instead of typing into an unknown control.",
                 )
 
-            self.clipboard_writer(prompt)
-            composer.set_focus()
-            self.send_keys("^v", pause=0.02)
+            self._report_progress(
+                "inserting-prompt",
+                "Inserting the generated prompt",
+            )
+            input_method = self._set_composer_prompt(composer, prompt)
             if auto_submit:
+                self._report_progress(
+                    "finishing",
+                    "Submitting the verified prompt",
+                )
+                composer.set_focus()
                 self.send_keys("{ENTER}", pause=0.02)
+            else:
+                self._report_progress(
+                    "finishing",
+                    "Leaving the verified prompt ready for review",
+                )
             if previous_clipboard is not None:
-                time.sleep(0.08)
+                if input_method == "clipboard":
+                    time.sleep(0.08)
                 self.clipboard_writer(previous_clipboard)
-            self._log_timing("paste and submit", stage_started)
+            self._log_timing("insert and submit", stage_started)
             if not auto_submit:
                 LOGGER.info(
                     "Prepared writing prompt in ChatGPT project '%s'",
@@ -110,7 +206,7 @@ class ChatGPTDesktop:
                     submitted=False,
                     prepared=True,
                     message=(
-                        f"Prompt pasted into the '{project_name}' project. "
+                        f"Prompt inserted into the '{project_name}' project. "
                         "Choose the model or reasoning level in ChatGPT, then "
                         "press Enter to submit."
                     ),
@@ -167,8 +263,16 @@ class ChatGPTDesktop:
         return candidates[0] if candidates else None
 
     def _navigate_to_project_chat(self, window, project_name: str) -> bool:
+        self._report_progress(
+            "selecting-mode",
+            "Switching from Codex to ChatGPT when needed",
+        )
         if not self._select_chatgpt_mode(window):
             return False
+        self._report_progress(
+            "opening-project",
+            f"Opening the '{project_name}' Project",
+        )
 
         # Fast path: the sidebar often already exposes the exact project's
         # dedicated new-chat action. It is safe to use directly and avoids a
@@ -679,6 +783,119 @@ class ChatGPTDesktop:
             control_types=("Edit", "Document"),
         )
 
+    def _set_composer_prompt(self, composer, prompt: str) -> str:
+        """Insert and verify a prompt without trusting a blind global paste."""
+
+        for method_name in ("set_edit_text", "set_text"):
+            set_text = getattr(composer, method_name, None)
+            if not callable(set_text):
+                continue
+            try:
+                set_text(prompt)
+                self._report_progress(
+                    "inserting-prompt",
+                    "Verifying the complete prompt in ChatGPT",
+                )
+                if self._wait_for_composer_prompt(composer, prompt):
+                    LOGGER.info(
+                        "Inserted prompt through ChatGPT composer UI Automation"
+                    )
+                    return "uia"
+            except Exception:
+                LOGGER.debug(
+                    "ChatGPT composer UIA text input was unavailable",
+                    exc_info=True,
+                )
+            break
+
+        self.clipboard_writer(prompt)
+        type_keys = getattr(composer, "type_keys", None)
+        if callable(type_keys):
+            try:
+                type_keys(
+                    "^a^v",
+                    pause=0.02,
+                    set_foreground=True,
+                )
+                self._report_progress(
+                    "inserting-prompt",
+                    "Verifying the complete prompt in ChatGPT",
+                )
+                if self._wait_for_composer_prompt(composer, prompt):
+                    LOGGER.info(
+                        "Pasted prompt through the targeted ChatGPT composer"
+                    )
+                    return "clipboard"
+            except Exception:
+                LOGGER.debug(
+                    "Targeted ChatGPT composer paste was unavailable",
+                    exc_info=True,
+                )
+
+        try:
+            composer.set_focus()
+            self.send_keys("^a", pause=0.02)
+            self.send_keys("^v", pause=0.02)
+            self._report_progress(
+                "inserting-prompt",
+                "Verifying the complete prompt in ChatGPT",
+            )
+            if self._wait_for_composer_prompt(composer, prompt):
+                LOGGER.info(
+                    "Pasted and verified prompt through focused keyboard input"
+                )
+                return "clipboard"
+        except Exception:
+            LOGGER.debug(
+                "Focused ChatGPT composer paste was unavailable",
+                exc_info=True,
+            )
+
+        raise ChatGPTAutomationError(
+            "The verified ChatGPT composer did not accept the generated prompt."
+        )
+
+    def _wait_for_composer_prompt(
+        self,
+        composer,
+        prompt: str,
+    ) -> bool:
+        deadline = time.monotonic() + min(self.timeout_seconds, 2.0)
+        while time.monotonic() < deadline:
+            value = self._read_composer_text(composer)
+            if (
+                value is not None
+                and self._normalise_composer_text(value)
+                == self._normalise_composer_text(prompt)
+            ):
+                return True
+            time.sleep(0.05)
+        return False
+
+    @staticmethod
+    def _read_composer_text(composer) -> str | None:
+        for method_name in ("get_value", "window_text", "text_block"):
+            read_text = getattr(composer, method_name, None)
+            if not callable(read_text):
+                continue
+            try:
+                value = read_text()
+            except Exception:
+                continue
+            if isinstance(value, str):
+                return value
+        return None
+
+    @staticmethod
+    def _normalise_composer_text(value: str) -> str:
+        return (
+            value.replace("\r\n", "\n")
+            .replace("\r", "\n")
+            .replace("\u2028", "\n")
+            .replace("\u2029", "\n")
+            .rstrip("\n")
+        )
+
     @staticmethod
     def _descendants(window):
         try:
@@ -742,10 +959,10 @@ class ChatGPTDesktop:
                 partial = partial or control
         return exact or partial
 
-    @staticmethod
-    def _activate_control(control) -> None:
-        """Activate a UIA control without taking the mouse when possible."""
+    def _activate_control(self, control) -> None:
+        """Activate a UIA control, keeping physical input as the last resort."""
 
+        name = getattr(control.element_info, "name", "")
         invoke = getattr(control, "invoke", None)
         if callable(invoke):
             try:
@@ -753,11 +970,58 @@ class ChatGPTDesktop:
                 return
             except Exception:
                 LOGGER.debug(
-                    "UIA Invoke unavailable for control '%s'; using mouse fallback",
-                    getattr(control.element_info, "name", ""),
+                    "UIA Invoke unavailable for control '%s'",
+                    name,
                     exc_info=True,
                 )
-        control.click_input()
+
+        # UIA ButtonWrapper.click() is not a physical click: it tries the
+        # Invoke pattern and then SelectionItem. Other UIA wrappers expose
+        # select() directly, so retain that as a separate fallback.
+        pattern_click = getattr(control, "click", None)
+        if callable(pattern_click):
+            try:
+                pattern_click()
+                return
+            except Exception:
+                LOGGER.debug(
+                    "UIA pattern click unavailable for control '%s'",
+                    name,
+                    exc_info=True,
+                )
+
+        select = getattr(control, "select", None)
+        if callable(select):
+            try:
+                select()
+                return
+            except Exception:
+                LOGGER.debug(
+                    "UIA SelectionItem unavailable for control '%s'",
+                    name,
+                    exc_info=True,
+                )
+
+        set_focus = getattr(control, "set_focus", None)
+        if callable(set_focus):
+            try:
+                set_focus()
+                if self.send_keys is None:
+                    self._ensure_automation_dependencies()
+                self.send_keys("{ENTER}", pause=0.02)
+                return
+            except Exception:
+                LOGGER.debug(
+                    "Keyboard activation unavailable for control '%s'",
+                    name,
+                    exc_info=True,
+                )
+
+        LOGGER.warning(
+            "Using physical-click fallback for control '%s'",
+            name,
+        )
+        (self.mouse_clicker or _click_control_on_virtual_desktop)(control)
 
     def _log_timing(self, stage: str, started: float) -> None:
         elapsed_ms = (time.perf_counter() - started) * 1000
@@ -772,6 +1036,17 @@ class ChatGPTDesktop:
             stage,
             elapsed_ms,
         )
+
+    def _report_progress(self, stage: str, message: str) -> None:
+        if self.progress_callback is None:
+            return
+        try:
+            self.progress_callback(stage, message)
+        except Exception:
+            LOGGER.debug(
+                "Automation progress callback failed",
+                exc_info=True,
+            )
 
     def _fallback(self, prompt: str, message: str) -> SubmissionResult:
         self.clipboard_writer(prompt)

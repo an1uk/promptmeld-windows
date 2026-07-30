@@ -6,6 +6,8 @@ import queue
 import subprocess
 import sys
 import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 from .branding import AUTOMATION_EXECUTABLE_NAME
@@ -70,6 +72,7 @@ class _AutomationHelperSession:
         self,
         payload: dict[str, object],
         timeout_seconds: float,
+        progress_callback: Callable[[str, str], None] | None = None,
     ) -> dict[str, object]:
         if not self.alive or self.process.stdin is None:
             raise RuntimeError("Automation helper is not running.")
@@ -77,20 +80,42 @@ class _AutomationHelperSession:
             json.dumps(payload, ensure_ascii=False) + "\n"
         )
         self.process.stdin.flush()
-        try:
-            response = self.responses.get(timeout=timeout_seconds)
-        except queue.Empty as exc:
-            raise TimeoutError(
-                "Automation helper did not respond before the timeout."
-            ) from exc
-        if response is None:
-            raise RuntimeError("Automation helper stopped unexpectedly.")
-        decoded = json.loads(response)
-        if not isinstance(decoded, dict):
-            raise RuntimeError("Automation helper returned an invalid response.")
-        if error := decoded.get("error"):
-            raise RuntimeError(str(error))
-        return decoded
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    "Automation helper did not respond before the timeout."
+                )
+            try:
+                response = self.responses.get(timeout=remaining)
+            except queue.Empty as exc:
+                raise TimeoutError(
+                    "Automation helper did not respond before the timeout."
+                ) from exc
+            if response is None:
+                raise RuntimeError("Automation helper stopped unexpectedly.")
+            decoded = json.loads(response)
+            if not isinstance(decoded, dict):
+                raise RuntimeError(
+                    "Automation helper returned an invalid response."
+                )
+            if decoded.get("_event") == "progress":
+                if progress_callback is not None:
+                    try:
+                        progress_callback(
+                            str(decoded.get("stage", "")),
+                            str(decoded.get("message", "")),
+                        )
+                    except Exception:
+                        LOGGER.debug(
+                            "Automation progress callback failed",
+                            exc_info=True,
+                        )
+                continue
+            if error := decoded.get("error"):
+                raise RuntimeError(str(error))
+            return decoded
 
     def close(self) -> None:
         if self.alive and self.process.stdin is not None:
@@ -160,6 +185,7 @@ def shutdown_automation_helper() -> None:
 def _request_from_helper(
     payload: dict[str, object],
     timeout_seconds: float,
+    progress_callback: Callable[[str, str], None] | None = None,
 ) -> dict[str, object]:
     global _helper_session
     with _helper_lock:
@@ -170,7 +196,11 @@ def _request_from_helper(
             LOGGER.info("Started warm ChatGPT automation helper")
         session = _helper_session
         try:
-            response = session.request(payload, timeout_seconds)
+            response = session.request(
+                payload,
+                timeout_seconds,
+                progress_callback,
+            )
         except Exception:
             session.close()
             _helper_session = None
@@ -183,6 +213,7 @@ def submit_via_worker(
     prompt: str,
     project_name: str,
     settings: AppSettings,
+    progress_callback: Callable[[str, str], None] | None = None,
 ) -> SubmissionResult:
     payload = {
         "prompt": prompt,
@@ -196,6 +227,7 @@ def submit_via_worker(
         raw = _request_from_helper(
             payload,
             max(20.0, settings.automation_timeout_seconds + 12.0),
+            progress_callback,
         )
         for timing in raw.get("_timings", []):
             if not isinstance(timing, dict):

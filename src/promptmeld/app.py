@@ -47,6 +47,7 @@ from .worker import FunctionWorker
 LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from .automation_progress import AutomationProgressWindow
     from .icons import ActionIconProvider
     from .settings_ui import ActionSettingsDialog
     from .ui import LauncherPopup
@@ -121,6 +122,7 @@ class PromptMeld:
         self.registry = None
         self.capture = None
         self.popup: LauncherPopup | None = None
+        self.automation_progress: AutomationProgressWindow | None = None
         self.icons: ActionIconProvider | None = None
         self.current_selection: CapturedSelection | None = None
         self.prompt_builder = PromptBuilder()
@@ -526,13 +528,50 @@ class PromptMeld:
     ) -> None:
         project_name = project_name or self.settings.project_name
         settings = self.settings
+        progress_window = self._show_automation_progress(project_name)
         worker = FunctionWorker(
-            lambda: submit_via_worker(prompt, project_name, settings)
+            lambda report_progress: submit_via_worker(
+                prompt,
+                project_name,
+                settings,
+                progress_callback=report_progress,
+            ),
+            with_progress=True,
         )
-        worker.signals.finished.connect(self._submission_finished)
+        worker.signals.progress.connect(progress_window.update_stage)
+        worker.signals.finished.connect(
+            lambda result, window=progress_window: self._submission_finished(
+                result,
+                window,
+            )
+        )
         self.thread_pool.start(worker)
 
-    def _submission_finished(self, result: SubmissionResult) -> None:
+    def _show_automation_progress(
+        self,
+        project_name: str,
+    ) -> AutomationProgressWindow:
+        from .automation_progress import AutomationProgressWindow
+
+        if (
+            self.automation_progress is None
+            or self.automation_progress.theme != self.settings.theme
+        ):
+            if self.automation_progress is not None:
+                self.automation_progress.close()
+            self.automation_progress = AutomationProgressWindow(
+                self.settings.theme
+            )
+        self.automation_progress.begin(project_name)
+        return self.automation_progress
+
+    def _submission_finished(
+        self,
+        result: SubmissionResult,
+        progress_window: AutomationProgressWindow | None = None,
+    ) -> None:
+        if progress_window is not None:
+            progress_window.finish(result)
         if result.prepared:
             self.notify(
                 "Prompt ready in ChatGPT",
@@ -671,6 +710,8 @@ class PromptMeld:
     def quit(self) -> None:
         self.hotkeys.unregister_all()
         shutdown_automation_helper()
+        if self.automation_progress is not None:
+            self.automation_progress.close()
         self.tray.hide()
         self.qt_app.quit()
 

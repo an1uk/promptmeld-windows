@@ -7,19 +7,22 @@ own.
 ## The short version
 
 - Avoid selecting personal, confidential, or otherwise sensitive details unless
-  you are comfortable sending them to ChatGPT. Once pasted, ChatGPT may retain,
+  you are comfortable sending them to ChatGPT. Once inserted, ChatGPT may retain,
   store, and record them according to your account settings and OpenAI's
   policies; PromptMeld cannot prevent that.
 - PromptMeld captures text only after you invoke a shortcut or optional Actions
   Ring command.
 - Selected text is transferred through the Windows clipboard and held
   transiently in process memory while PromptMeld assembles the request.
-- The completed prompt is placed on the clipboard and pasted into the ChatGPT
-  desktop app.
+- The completed prompt is inserted into the verified ChatGPT composer through
+  local Windows accessibility controls. The clipboard is used when direct
+  insertion is unavailable and for the manual fallback.
 - PromptMeld does not save selected text, one-off custom instructions,
   completed prompts, or ChatGPT responses to disk.
+- The automation progress window shows stage descriptions only, not the
+  selected text or completed prompt.
 - PromptMeld makes no network requests. The ChatGPT desktop app communicates
-  with OpenAI after text is pasted into it.
+  with OpenAI after text is inserted into it.
 
 ## What happens to selected text
 
@@ -30,20 +33,23 @@ own.
 4. PromptMeld combines the selected text with the chosen action and any enabled
    style options. This completed prompt is held in memory and passed to the
    local automation companion through a local inter-process pipe.
-5. PromptMeld places the completed prompt on the clipboard and pastes it into a
-   verified ChatGPT message composer.
-6. After a successful paste, PromptMeld restores the original selected text to
-   the clipboard.
+5. PromptMeld inserts the completed prompt into a verified ChatGPT message
+   composer through local Windows accessibility controls. If that direct method
+   is unavailable, it places the prompt on the clipboard and performs a
+   control-targeted paste instead.
+6. PromptMeld reads the composer back and continues only after verifying the
+   complete prompt. After successful insertion, it restores the original
+   selected text to the clipboard.
 
 The selected text and completed prompt are used only for this immediate
 operation. PromptMeld does not write them to a temporary file, database,
 configuration file, usage file, or log.
 
-If PromptMeld cannot verify a safe place to paste, it does not type into an
-unknown control. It focuses ChatGPT and leaves the completed prompt on the
-clipboard so you can paste it manually. In that case, the original clipboard
-contents are not restored automatically because doing so would remove the
-fallback prompt.
+If PromptMeld cannot verify a safe place to insert the prompt, it does not type
+into an unknown control. It focuses ChatGPT and leaves the completed prompt on
+the clipboard so you can paste it manually. In that case, the original
+clipboard contents are not restored automatically because doing so would
+remove the fallback prompt.
 
 ## The Windows clipboard
 
@@ -80,14 +86,15 @@ used, but should not be treated as a guarantee that unsent composer text was
 never transmitted.
 
 PromptMeld transfers only the assembled writing request to the ChatGPT desktop
-app. It does this by pasting into the message composer, just as if you had
-copied and pasted the text yourself.
+app. It inserts the text into the verified message composer through Windows
+accessibility controls or a control-targeted clipboard paste.
 
 With **Submit automatically** disabled, PromptMeld does not press Enter. With
-it enabled, PromptMeld presses Enter after the paste. Once text is present in
-the ChatGPT application, its processing, transmission, storage, and use are
-controlled by the ChatGPT application, your OpenAI account settings, and
-OpenAI's policies. PromptMeld cannot control that handling.
+it enabled, PromptMeld presses Enter after verifying the complete composer
+text. Once text is present in the ChatGPT application, its processing,
+transmission, storage, and use are controlled by the ChatGPT application, your
+OpenAI account settings, and OpenAI's policies. PromptMeld cannot control that
+handling.
 
 PromptMeld does not read, record, or export ChatGPT's response.
 
