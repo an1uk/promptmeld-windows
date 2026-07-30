@@ -736,17 +736,22 @@ class ActionSettingsDialog(QDialog):
             QAbstractItemView.EditTrigger.NoEditTriggers
         )
         self.hotkey_table.setAlternatingRowColors(True)
-        self.hotkey_table.horizontalHeader().setSectionResizeMode(
+        hotkey_header = self.hotkey_table.horizontalHeader()
+        hotkey_header.setSectionResizeMode(
             0,
             QHeaderView.ResizeMode.Stretch,
         )
-        self.hotkey_table.horizontalHeader().setSectionResizeMode(
+        hotkey_header.setSectionResizeMode(
             1,
             QHeaderView.ResizeMode.ResizeToContents,
         )
-        self.hotkey_table.horizontalHeader().setSectionResizeMode(
+        hotkey_header.setSectionResizeMode(
             2,
-            QHeaderView.ResizeMode.Stretch,
+            QHeaderView.ResizeMode.Fixed,
+        )
+        hotkey_header.resizeSection(2, 150)
+        self.hotkey_table.horizontalHeaderItem(2).setTextAlignment(
+            Qt.AlignmentFlag.AlignCenter
         )
         self.hotkey_table.setMinimumWidth(760)
         hotkeys_layout.addWidget(self.hotkey_table, 1)
@@ -1040,6 +1045,7 @@ class ActionSettingsDialog(QDialog):
             status = QLabel()
             status.setObjectName("hotkeyStatus")
             status.setWordWrap(True)
+            status.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.hotkey_table.setCellWidget(row, 2, status)
             self.hotkey_editors[command_id] = editor
             self.hotkey_status_labels[command_id] = status
@@ -1797,6 +1803,9 @@ class ActionSettingsDialog(QDialog):
                     gridline-color: #d8dee8;
                     border: 1px solid #cbd2dc;
                     border-radius: 8px;
+                }
+                QTableWidget#hotkeyTable::item {
+                    color: #000000;
                 }
                 QHeaderView::section {
                     color: #344052;

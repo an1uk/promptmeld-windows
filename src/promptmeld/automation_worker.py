@@ -2,9 +2,41 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
 from dataclasses import asdict
 
 from .chatgpt import ChatGPTDesktop
+
+PER_MONITOR_AWARE_V2 = -4
+
+
+def _enable_per_monitor_dpi_awareness(
+    set_awareness: Callable[[int], bool] | None = None,
+) -> bool:
+    """Use physical screen coordinates across differently scaled monitors."""
+
+    if sys.platform != "win32":
+        return False
+    try:
+        if set_awareness is None:
+            import ctypes
+            from ctypes import wintypes
+
+            native_set_awareness = ctypes.WinDLL(
+                "user32",
+                use_last_error=True,
+            ).SetProcessDpiAwarenessContext
+            native_set_awareness.argtypes = [ctypes.c_void_p]
+            native_set_awareness.restype = wintypes.BOOL
+            set_awareness = lambda value: bool(
+                native_set_awareness(ctypes.c_void_p(value))
+            )
+        return bool(set_awareness(PER_MONITOR_AWARE_V2))
+    except (AttributeError, OSError):
+        # A packaged build declares this in its manifest. This fallback is for
+        # source runs and must not prevent the guarded clipboard fallback if
+        # Windows has already fixed the process awareness context.
+        return False
 
 
 def _run_self_test() -> int:
@@ -61,6 +93,7 @@ def _run_server() -> int:
 
 
 def main() -> int:
+    _enable_per_monitor_dpi_awareness()
     try:
         if "--self-test" in sys.argv[1:]:
             return _run_self_test()

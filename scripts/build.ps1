@@ -100,6 +100,7 @@ try {
         --contents-directory "." `
         --name "PromptMeldAutomation" `
         --version-file $versionInfoPath `
+        --manifest "assets\windows\promptmeld-automation.manifest" `
         --icon "src\promptmeld\resources\branding\promptmeld.ico" `
         --collect-all pywinauto `
         "tools\entrypoints\promptmeld_automation.py"
@@ -110,6 +111,16 @@ try {
     $mainOutput = Join-Path $projectRoot "dist\PromptMeld"
     $mainInternal = Join-Path $mainOutput "_internal"
     $helperOutput = Join-Path $projectRoot "dist\PromptMeldAutomation"
+
+    $helperSmokeTest = Start-Process `
+        -FilePath (Join-Path $helperOutput "PromptMeldAutomation.exe") `
+        -ArgumentList "--self-test" `
+        -WindowStyle Hidden `
+        -Wait `
+        -PassThru
+    if ($helperSmokeTest.ExitCode -ne 0) {
+        throw "The packaged automation helper failed its startup smoke test."
+    }
 
     Set-Content `
         -LiteralPath (Join-Path $mainOutput "VERSION") `
