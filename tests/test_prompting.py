@@ -22,6 +22,9 @@ def test_prompt_contains_instruction_text_and_output_constraint():
     assert selection.text in prompt
     assert "<<<SOURCE>>>" in prompt
     assert "Use English (UK) spelling" in prompt
+    assert "Resulting text length:" not in prompt
+    assert "Output presentation:" not in prompt
+    assert "Resulting text formatting:" not in prompt
 
 
 def test_natural_voice_modifier_follows_global_setting():
@@ -144,3 +147,69 @@ def test_guided_drafting_requires_both_global_and_action_switches():
 
     assert "Guided drafting is enabled" not in globally_off
     assert "Guided drafting is enabled" not in action_off
+
+
+def test_non_default_resulting_text_lengths_add_prompt_requirements():
+    action = WritingAction("edit", "Edit", (), "Improve this.")
+    selection = CapturedSelection("Draft.", 1, "Editor")
+    expected_phrases = {
+        "extra_short": "extremely concise",
+        "short": "concise and relatively brief",
+        "medium": "moderate, balanced amount of detail",
+        "long": "detailed result",
+        "extra_long": "very detailed and comprehensive result",
+    }
+
+    for value, phrase in expected_phrases.items():
+        prompt = PromptBuilder().build(
+            action,
+            selection,
+            resulting_text_length=value,
+        )
+
+        assert "Resulting text length:" in prompt
+        assert phrase in prompt
+
+
+def test_custom_prompt_default_length_adds_no_requirement():
+    prompt = PromptBuilder().build_custom(
+        "Improve this.",
+        CapturedSelection("Draft.", 1, "Editor"),
+        resulting_text_length="default",
+    )
+
+    assert "Resulting text length:" not in prompt
+
+
+def test_writing_block_option_requests_only_the_finished_result_in_block():
+    prompt = PromptBuilder().build_custom(
+        "Draft a reply.",
+        CapturedSelection("Can you attend?", 1, "Mail"),
+        writing_block_enabled=True,
+    )
+
+    assert "Output presentation:" in prompt
+    assert "single editable writing block" in prompt
+    assert "add no commentary outside it" in prompt
+    assert "use the writing block only for the final result" in prompt
+
+
+def test_resulting_text_formatting_options_add_prompt_requirements():
+    selection = CapturedSelection("Draft.", 1, "Editor")
+    builder = PromptBuilder()
+
+    plain = builder.build_custom(
+        "Improve this.",
+        selection,
+        resulting_text_formatting="plain",
+    )
+    formatted = builder.build_custom(
+        "Improve this.",
+        selection,
+        resulting_text_formatting="formatted",
+    )
+
+    assert "Resulting text formatting:" in plain
+    assert "Do not add new Markdown" in plain
+    assert "Resulting text formatting:" in formatted
+    assert "Use restrained Markdown formatting" in formatted

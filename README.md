@@ -30,7 +30,8 @@ ChatGPT and pastes the combined request into a fresh chat.
 - Searches actions across configurable folders and ranks frequently used
   actions first.
 - Supports custom instructions, action-specific hotkeys, and imported icons.
-- Offers optional natural-voice and guided-drafting controls.
+- Offers optional natural-voice, guided-drafting, length, formatting, and
+  copyable-writing-block controls.
 - Leaves prompts unsubmitted by default, giving you time to choose the model or
   reasoning level in ChatGPT.
 - Uses Windows accessibility controls instead of relying on fixed screen
@@ -45,6 +46,13 @@ ChatGPT and pastes the combined request into a fresh chat.
 
 PromptMeld requires Windows 10 or 11 and the current ChatGPT desktop app,
 signed in to your account.
+
+> [!NOTE]
+> PromptMeld does not require a paid subscription or an OpenAI API key.
+> However, many features work best with a paid ChatGPT subscription. Available
+> models, reasoning controls, Projects, writing blocks, and related features
+> depend on your ChatGPT account and plan, so some PromptMeld options may be
+> unavailable or have a more limited effect on free accounts.
 
 ### Current compatibility
 
@@ -128,7 +136,8 @@ what is stored locally and how to remove it.
 Choose **Configuration…** from the notification-area menu to add,
 organise, edit, duplicate, disable, or delete actions. The same window controls
 folder icons, natural-voice wording, primary language, guided drafting, and
-automatic submission.
+automatic submission, along with output length, formatting, and writing-block
+preferences.
 
 PromptMeld keeps its editable configuration under:
 

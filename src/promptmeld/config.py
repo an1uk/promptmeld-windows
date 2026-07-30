@@ -11,6 +11,8 @@ from .branding import DEFAULT_PROJECT_NAME
 from .models import (
     DEFAULT_NATURAL_VOICE_INSTRUCTION,
     NATURAL_VOICE_MODES,
+    RESULTING_TEXT_FORMATTING_VALUES,
+    RESULTING_TEXT_LENGTH_VALUES,
     AppSettings,
     WritingAction,
 )
@@ -394,6 +396,39 @@ def load_settings(path: Path) -> AppSettings:
         raise ConfigurationError(
             "guided_drafting_enabled must be true or false."
         )
+    resulting_text_length_value = raw.get(
+        "resulting_text_length",
+        "default",
+    )
+    if not isinstance(resulting_text_length_value, str):
+        raise ConfigurationError("resulting_text_length must be text.")
+    resulting_text_length = (
+        resulting_text_length_value.strip().casefold().replace(" ", "_")
+    )
+    if resulting_text_length not in RESULTING_TEXT_LENGTH_VALUES:
+        raise ConfigurationError(
+            "resulting_text_length must be one of: "
+            f"{', '.join(RESULTING_TEXT_LENGTH_VALUES)}."
+        )
+    writing_block_enabled = raw.get("writing_block_enabled", False)
+    if not isinstance(writing_block_enabled, bool):
+        raise ConfigurationError(
+            "writing_block_enabled must be true or false."
+        )
+    resulting_text_formatting_value = raw.get(
+        "resulting_text_formatting",
+        "default",
+    )
+    if not isinstance(resulting_text_formatting_value, str):
+        raise ConfigurationError("resulting_text_formatting must be text.")
+    resulting_text_formatting = (
+        resulting_text_formatting_value.strip().casefold().replace(" ", "_")
+    )
+    if resulting_text_formatting not in RESULTING_TEXT_FORMATTING_VALUES:
+        raise ConfigurationError(
+            "resulting_text_formatting must be one of: "
+            f"{', '.join(RESULTING_TEXT_FORMATTING_VALUES)}."
+        )
     try:
         starter_action_version = int(raw.get("starter_action_version", 1))
     except (TypeError, ValueError) as exc:
@@ -422,6 +457,9 @@ def load_settings(path: Path) -> AppSettings:
         "auto_submit_enabled",
         "primary_language",
         "guided_drafting_enabled",
+        "resulting_text_length",
+        "writing_block_enabled",
+        "resulting_text_formatting",
         "starter_action_version",
     }
     return AppSettings(
@@ -445,6 +483,9 @@ def load_settings(path: Path) -> AppSettings:
         auto_submit_enabled=auto_submit_enabled,
         primary_language=primary_language,
         guided_drafting_enabled=guided_drafting_enabled,
+        resulting_text_length=resulting_text_length,
+        writing_block_enabled=writing_block_enabled,
+        resulting_text_formatting=resulting_text_formatting,
         starter_action_version=starter_action_version,
         extra={key: value for key, value in raw.items() if key not in known},
     )
@@ -469,6 +510,9 @@ def settings_to_dict(settings: AppSettings) -> dict[str, object]:
         "auto_submit_enabled": settings.auto_submit_enabled,
         "primary_language": settings.primary_language,
         "guided_drafting_enabled": settings.guided_drafting_enabled,
+        "resulting_text_length": settings.resulting_text_length,
+        "writing_block_enabled": settings.writing_block_enabled,
+        "resulting_text_formatting": settings.resulting_text_formatting,
         "starter_action_version": settings.starter_action_version,
     }
 

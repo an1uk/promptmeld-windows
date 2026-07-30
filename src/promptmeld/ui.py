@@ -2,17 +2,19 @@ from __future__ import annotations
 
 from importlib.resources import files
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor, QCursor, QKeyEvent
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
+from PySide6.QtGui import QActionGroup, QColor, QCursor, QKeyEvent
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QStyle,
     QVBoxLayout,
@@ -22,6 +24,10 @@ from PySide6.QtWidgets import (
 from .actions import ActionRegistry
 from .branding import APP_NAME, TAGLINE
 from .icons import ActionIconProvider
+from .models import (
+    RESULTING_TEXT_FORMATTING_OPTIONS,
+    RESULTING_TEXT_LENGTH_OPTIONS,
+)
 from .theme import resolve_theme
 
 
@@ -30,6 +36,10 @@ class LauncherPopup(QWidget):
     custom_requested = Signal(str)
     natural_voice_changed = Signal(bool)
     auto_submit_changed = Signal(bool)
+    guided_drafting_changed = Signal(bool)
+    resulting_text_length_changed = Signal(str)
+    writing_block_changed = Signal(bool)
+    resulting_text_formatting_changed = Signal(str)
     ITEM_KIND_ROLE = Qt.ItemDataRole.UserRole + 1
 
     def __init__(
@@ -41,6 +51,10 @@ class LauncherPopup(QWidget):
         natural_voice_enabled: bool = False,
         auto_submit_enabled: bool = False,
         theme: str = "auto",
+        guided_drafting_enabled: bool = False,
+        resulting_text_length: str = "default",
+        writing_block_enabled: bool = False,
+        resulting_text_formatting: str = "default",
     ):
         super().__init__()
         self.registry = registry
@@ -49,6 +63,10 @@ class LauncherPopup(QWidget):
         self.folder_icons = dict(folder_icons or {})
         self.natural_voice_enabled = natural_voice_enabled
         self.auto_submit_enabled = auto_submit_enabled
+        self.guided_drafting_enabled = guided_drafting_enabled
+        self.resulting_text_length_value = resulting_text_length
+        self.writing_block_enabled = writing_block_enabled
+        self.resulting_text_formatting_value = resulting_text_formatting
         self.theme = theme
         self.current_folder = ""
         self.setWindowTitle(APP_NAME)
@@ -69,19 +87,34 @@ class LauncherPopup(QWidget):
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(10)
 
-        title_row = QHBoxLayout()
+        title_row = QGridLayout()
         self.title = QLabel(APP_NAME)
         self.title.setObjectName("title")
         self.tagline = QLabel(TAGLINE)
         self.tagline.setObjectName("tagline")
         hint = QLabel("Enter to run  •  Esc to close")
         hint.setObjectName("hint")
+        self.title.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setAlignment(Qt.AlignmentFlag.AlignRight)
-        title_row.addWidget(self.title)
-        title_row.addStretch(1)
-        title_row.addWidget(self.tagline)
-        title_row.addSpacing(12)
-        title_row.addWidget(hint)
+        title_row.addWidget(
+            self.title,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+        )
+        title_row.addWidget(
+            self.tagline,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+        )
+        title_row.addWidget(
+            hint,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
+        )
         layout.addLayout(title_row)
 
 
@@ -99,6 +132,7 @@ class LauncherPopup(QWidget):
         self.list.setUniformItemSizes(False)
         self.list.setSpacing(2)
         self.list.setIconSize(QSize(36, 36))
+        self.list.installEventFilter(self)
         layout.addWidget(self.list, 1)
 
         self.natural_voice = QCheckBox("Preserve my natural voice")
@@ -113,11 +147,78 @@ class LauncherPopup(QWidget):
             "When off, the prompt is pasted into ChatGPT but left unsent so you "
             "can choose the model or reasoning level before pressing Enter."
         )
+        self.guided_drafting = QCheckBox("Guided questions")
+        self.guided_drafting.setChecked(self.guided_drafting_enabled)
+        self.guided_drafting.setToolTip(
+            "Allow supported writing actions to ask concise questions when "
+            "important context is missing."
+        )
         option_row = QHBoxLayout()
         option_row.addWidget(self.natural_voice)
         option_row.addStretch(1)
+        option_row.addWidget(self.guided_drafting)
+        option_row.addStretch(1)
         option_row.addWidget(self.auto_submit)
         layout.addLayout(option_row)
+
+        self.output_menu = QMenu(self)
+        length_menu = self.output_menu.addMenu("Resulting text length")
+        self.length_action_group = QActionGroup(self)
+        self.length_action_group.setExclusive(True)
+        self.length_actions = {}
+        for value, label in RESULTING_TEXT_LENGTH_OPTIONS:
+            action = length_menu.addAction(label)
+            action.setCheckable(True)
+            action.setData(value)
+            self.length_action_group.addAction(action)
+            action.triggered.connect(
+                lambda _checked=False, selected=value: (
+                    self._resulting_text_length_selected(selected)
+                )
+            )
+            self.length_actions[value] = action
+
+        formatting_menu = self.output_menu.addMenu("Formatting")
+        self.formatting_action_group = QActionGroup(self)
+        self.formatting_action_group.setExclusive(True)
+        self.formatting_actions = {}
+        for value, label in RESULTING_TEXT_FORMATTING_OPTIONS:
+            action = formatting_menu.addAction(label)
+            action.setCheckable(True)
+            action.setData(value)
+            self.formatting_action_group.addAction(action)
+            action.triggered.connect(
+                lambda _checked=False, selected=value: (
+                    self._resulting_text_formatting_selected(selected)
+                )
+            )
+            self.formatting_actions[value] = action
+
+        self.output_menu.addSeparator()
+        self.writing_block_action = self.output_menu.addAction(
+            "Copyable writing block"
+        )
+        self.writing_block_action.setCheckable(True)
+        self.writing_block_action.toggled.connect(
+            self._writing_block_toggled
+        )
+        self.output_summary = QLabel()
+        self.output_summary.setObjectName("hint")
+        self.output_button = QPushButton("Output options")
+        self.output_button.setMenu(self.output_menu)
+        self.output_button.setToolTip(
+            "Configure resulting text length, formatting, and writing blocks."
+        )
+        self.set_resulting_text_length(self.resulting_text_length_value)
+        self.set_resulting_text_formatting(
+            self.resulting_text_formatting_value
+        )
+        self.set_writing_block_enabled(self.writing_block_enabled)
+        output_row = QHBoxLayout()
+        output_row.addWidget(self.output_summary)
+        output_row.addStretch(1)
+        output_row.addWidget(self.output_button)
+        layout.addLayout(output_row)
 
         custom_label = QLabel("Or use a one-off instruction")
         custom_label.setObjectName("hint")
@@ -136,10 +237,11 @@ class LauncherPopup(QWidget):
         self.search.returnPressed.connect(self._run_current)
         self.custom.returnPressed.connect(self._run_custom)
         self.custom_send.clicked.connect(self._run_custom)
-        self.list.itemActivated.connect(self._run_item)
-        self.list.itemDoubleClicked.connect(self._run_item)
+        self.list.itemClicked.connect(self._open_folder_item)
+        self.list.itemDoubleClicked.connect(self._run_action_item)
         self.natural_voice.toggled.connect(self._natural_voice_toggled)
         self.auto_submit.toggled.connect(self._auto_submit_toggled)
+        self.guided_drafting.toggled.connect(self._guided_drafting_toggled)
         app = QApplication.instance()
         if app is not None:
             app.styleHints().colorSchemeChanged.connect(
@@ -155,6 +257,10 @@ class LauncherPopup(QWidget):
         folder_icons: dict[str, str] | None = None,
         natural_voice_enabled: bool | None = None,
         auto_submit_enabled: bool | None = None,
+        guided_drafting_enabled: bool | None = None,
+        resulting_text_length: str | None = None,
+        writing_block_enabled: bool | None = None,
+        resulting_text_formatting: str | None = None,
     ) -> None:
         self.registry = registry
         if home_most_used_count is not None:
@@ -165,6 +271,14 @@ class LauncherPopup(QWidget):
             self.set_natural_voice_enabled(natural_voice_enabled)
         if auto_submit_enabled is not None:
             self.set_auto_submit_enabled(auto_submit_enabled)
+        if guided_drafting_enabled is not None:
+            self.set_guided_drafting_enabled(guided_drafting_enabled)
+        if resulting_text_length is not None:
+            self.set_resulting_text_length(resulting_text_length)
+        if writing_block_enabled is not None:
+            self.set_writing_block_enabled(writing_block_enabled)
+        if resulting_text_formatting is not None:
+            self.set_resulting_text_formatting(resulting_text_formatting)
         self.refresh()
 
     def set_natural_voice_enabled(self, enabled: bool) -> None:
@@ -183,6 +297,31 @@ class LauncherPopup(QWidget):
         self.auto_submit.setChecked(enabled)
         self.auto_submit.blockSignals(False)
 
+    def set_guided_drafting_enabled(self, enabled: bool) -> None:
+        self.guided_drafting_enabled = enabled
+        self.guided_drafting.blockSignals(True)
+        self.guided_drafting.setChecked(enabled)
+        self.guided_drafting.blockSignals(False)
+
+    def set_resulting_text_length(self, value: str) -> None:
+        selected = value if value in self.length_actions else "default"
+        self.resulting_text_length_value = selected
+        self.length_actions[selected].setChecked(True)
+        self._update_output_summary()
+
+    def set_writing_block_enabled(self, enabled: bool) -> None:
+        self.writing_block_enabled = enabled
+        self.writing_block_action.blockSignals(True)
+        self.writing_block_action.setChecked(enabled)
+        self.writing_block_action.blockSignals(False)
+        self._update_output_summary()
+
+    def set_resulting_text_formatting(self, value: str) -> None:
+        selected = value if value in self.formatting_actions else "default"
+        self.resulting_text_formatting_value = selected
+        self.formatting_actions[selected].setChecked(True)
+        self._update_output_summary()
+
     def set_theme(self, theme: str) -> None:
         self.theme = theme
         self._apply_style()
@@ -194,6 +333,47 @@ class LauncherPopup(QWidget):
     def _auto_submit_toggled(self, enabled: bool) -> None:
         self.auto_submit_enabled = enabled
         self.auto_submit_changed.emit(enabled)
+
+    def _guided_drafting_toggled(self, enabled: bool) -> None:
+        self.guided_drafting_enabled = enabled
+        self.guided_drafting_changed.emit(enabled)
+
+    def _resulting_text_length_selected(self, value: str) -> None:
+        self.resulting_text_length_value = value
+        self._update_output_summary()
+        self.resulting_text_length_changed.emit(value)
+
+    def _writing_block_toggled(self, enabled: bool) -> None:
+        self.writing_block_enabled = enabled
+        self._update_output_summary()
+        self.writing_block_changed.emit(enabled)
+
+    def _resulting_text_formatting_selected(self, value: str) -> None:
+        self.resulting_text_formatting_value = value
+        self._update_output_summary()
+        self.resulting_text_formatting_changed.emit(value)
+
+    def _update_output_summary(self) -> None:
+        parts: list[str] = []
+        if self.resulting_text_length_value != "default":
+            parts.append(
+                dict(RESULTING_TEXT_LENGTH_OPTIONS)[
+                    self.resulting_text_length_value
+                ]
+            )
+        formatting_labels = {
+            "plain": "No added formatting",
+            "formatted": "Helpful formatting",
+        }
+        formatting = formatting_labels.get(
+            self.resulting_text_formatting_value
+        )
+        if formatting:
+            parts.append(formatting)
+        if self.writing_block_enabled:
+            parts.append("Writing block")
+        summary = " · ".join(parts) if parts else "ChatGPT defaults"
+        self.output_summary.setText(f"Output: {summary}")
 
     def show_at_cursor(self) -> None:
         self.current_folder = ""
@@ -411,6 +591,16 @@ class LauncherPopup(QWidget):
             return
         super().keyPressEvent(event)
 
+    def eventFilter(self, watched, event) -> bool:
+        if (
+            watched is self.list
+            and event.type() == QEvent.Type.KeyPress
+            and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        ):
+            self._run_current()
+            return True
+        return super().eventFilter(watched, event)
+
     def focusOutEvent(self, event) -> None:
         super().focusOutEvent(event)
         if not self.isActiveWindow():
@@ -432,6 +622,14 @@ class LauncherPopup(QWidget):
         if kind == "action" and value:
             self.hide()
             self.action_requested.emit(str(value))
+
+    def _open_folder_item(self, item: QListWidgetItem) -> None:
+        if item.data(self.ITEM_KIND_ROLE) in {"folder", "back"}:
+            self._run_item(item)
+
+    def _run_action_item(self, item: QListWidgetItem) -> None:
+        if item.data(self.ITEM_KIND_ROLE) == "action":
+            self._run_item(item)
 
     def _run_custom(self) -> None:
         instruction = self.custom.text().strip()
@@ -477,6 +675,30 @@ class LauncherPopup(QWidget):
                     selection-background-color: #b9ceff;
                 }
                 QLineEdit:focus { border-color: #4d72d8; }
+                QMenu {
+                    color: #202631;
+                    background: #ffffff;
+                    border: 1px solid #c5ccd6;
+                    padding: 5px;
+                }
+                QMenu::item {
+                    padding: 7px 24px 7px 28px;
+                    border-radius: 4px;
+                }
+                QMenu::item:selected {
+                    color: #173a87;
+                    background: #dce7ff;
+                }
+                QMenu::indicator {
+                    width: 16px;
+                    height: 16px;
+                }
+                QMenu::indicator:checked {
+                    border: 1px solid #244fae;
+                    border-radius: 3px;
+                    background: #315ecb;
+                    image: url("__CHECKMARK__");
+                }
                 QListWidget {
                     color: #202631;
                     background: transparent;
@@ -528,6 +750,13 @@ class LauncherPopup(QWidget):
                 """.replace("__CHECKMARK__", checkmark)
             )
             return
+        checkmark = str(
+            files("promptmeld").joinpath(
+                "resources",
+                "icons",
+                "check-white.svg",
+            )
+        ).replace("\\", "/")
         self.setStyleSheet(
             """
             QFrame#launcherFrame {
@@ -557,6 +786,30 @@ class LauncherPopup(QWidget):
                 selection-background-color: #3e6ae1;
             }
             QLineEdit:focus { border-color: #6d8df2; }
+            QMenu {
+                color: #f4f5f7;
+                background: #22252c;
+                border: 1px solid #3a3f4a;
+                padding: 5px;
+            }
+            QMenu::item {
+                padding: 7px 24px 7px 28px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                color: #ffffff;
+                background: #304a91;
+            }
+            QMenu::indicator {
+                width: 16px;
+                height: 16px;
+            }
+            QMenu::indicator:checked {
+                border: 2px solid #ffffff;
+                border-radius: 3px;
+                background: #4f7cff;
+                image: url("__CHECKMARK__");
+            }
             QListWidget {
                 color: #e8eaf0;
                 background: transparent;
@@ -581,9 +834,33 @@ class LauncherPopup(QWidget):
             }
             QPushButton:hover { background: #3d6ede; }
             QCheckBox {
-                color: #d9dce3;
+                color: #e9ebef;
                 spacing: 8px;
                 padding: 2px 1px;
             }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 1px solid #9ba8ba;
+                border-radius: 3px;
+                background: #20242b;
+            }
+            QCheckBox::indicator:hover {
+                border-color: #9fb2ef;
+                background: #292e38;
+            }
+            QCheckBox::indicator:checked {
+                border: 2px solid #ffffff;
+                background: #4f7cff;
+                image: url("__CHECKMARK__");
+            }
+            QCheckBox::indicator:checked:hover {
+                background: #638cff;
+            }
+            QCheckBox::indicator:disabled {
+                border-color: #59616d;
+                background: #25282e;
+            }
             """
+            .replace("__CHECKMARK__", checkmark)
         )

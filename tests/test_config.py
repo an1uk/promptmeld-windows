@@ -139,6 +139,9 @@ def test_load_settings_includes_home_and_folder_display_defaults(tmp_path):
     assert "individual voice" in settings.natural_voice_instruction
     assert settings.primary_language == "English (UK)"
     assert settings.guided_drafting_enabled is False
+    assert settings.resulting_text_length == "default"
+    assert settings.writing_block_enabled is False
+    assert settings.resulting_text_formatting == "default"
     assert settings.starter_action_version == 1
 
 
@@ -150,6 +153,39 @@ def test_load_settings_rejects_invalid_auto_submit_value(tmp_path):
     )
 
     with pytest.raises(ConfigurationError, match="auto_submit_enabled"):
+        load_settings(path)
+
+
+def test_load_settings_validates_resulting_text_length(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"resulting_text_length": "enormous"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="resulting_text_length"):
+        load_settings(path)
+
+
+def test_load_settings_rejects_invalid_writing_block_value(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"writing_block_enabled": "sometimes"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="writing_block_enabled"):
+        load_settings(path)
+
+
+def test_load_settings_validates_resulting_text_formatting(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"resulting_text_formatting": "elaborate"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="resulting_text_formatting"):
         load_settings(path)
 
 
