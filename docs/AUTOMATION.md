@@ -51,6 +51,10 @@ installed with PromptMeld. It starts on the first submission, is reused for
 consecutive submissions, and exits after 45 seconds without another request.
 It is an internal component and should not be launched manually.
 
+The companion is Per-Monitor V2 DPI aware so its guarded physical-click
+fallback uses the correct coordinates when ChatGPT opens on a display with a
+different scale setting.
+
 Prompt data is passed to the companion through a local pipe and is not written
 to disk. Operational stage timings and errors are written to `promptmeld.log`,
 but selected text and prompt contents are excluded. See

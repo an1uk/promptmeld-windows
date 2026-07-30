@@ -22,6 +22,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import (
     QDialogButtonBox,
+    QHeaderView,
     QLabel,
     QMessageBox,
 )
@@ -537,6 +538,8 @@ def test_light_and_dark_appearance_options_apply_to_both_windows(
     assert isinstance(light_dialog.branch_arrow_style, BranchArrowStyle)
     assert "QTreeWidget::branch" not in light_dialog.styleSheet()
     assert "background: #20242b" not in light_dialog.styleSheet()
+    assert "QTableWidget#hotkeyTable::item" in light_dialog.styleSheet()
+    assert "color: #000000" in light_dialog.styleSheet()
     assert "QCheckBox::indicator:checked" in dark_dialog.styleSheet()
     assert "check-white.svg" in dark_dialog.styleSheet()
     assert "border: 2px solid #ffffff" in dark_dialog.styleSheet()
@@ -546,6 +549,7 @@ def test_light_and_dark_appearance_options_apply_to_both_windows(
     assert "QTreeWidget::branch" not in dark_dialog.styleSheet()
     assert "QTableWidget::item" in dark_dialog.styleSheet()
     assert "color: #f6f7fa" in dark_dialog.styleSheet()
+    assert "color: #000000" not in dark_dialog.styleSheet()
     assert "background: #ffffff" not in dark_dialog.styleSheet()
 
 
@@ -900,6 +904,24 @@ def test_hotkeys_tab_edits_clears_and_reports_clashes(qtbot, tmp_path):
         dialog.hotkey_table.item(row, 0).text()
         for row in range(dialog.hotkey_table.rowCount())
     ] == ["One", "Three", "Two"]
+    hotkey_header = dialog.hotkey_table.horizontalHeader()
+    assert (
+        hotkey_header.sectionResizeMode(0)
+        == QHeaderView.ResizeMode.Stretch
+    )
+    assert (
+        hotkey_header.sectionResizeMode(2)
+        == QHeaderView.ResizeMode.Fixed
+    )
+    assert hotkey_header.sectionSize(2) == 150
+    assert (
+        dialog.hotkey_table.horizontalHeaderItem(2).textAlignment()
+        & Qt.AlignmentFlag.AlignHCenter
+    )
+    assert (
+        dialog.hotkey_status_labels["one"].alignment()
+        & Qt.AlignmentFlag.AlignHCenter
+    )
     two = dialog.hotkey_editors["two"]
     two.setFocus()
     qtbot.keyClick(

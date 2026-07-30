@@ -6,6 +6,18 @@ import json
 from promptmeld import automation_worker
 
 
+def test_worker_requests_per_monitor_v2_dpi_awareness(monkeypatch):
+    requested = []
+    monkeypatch.setattr(automation_worker.sys, "platform", "win32")
+
+    enabled = automation_worker._enable_per_monitor_dpi_awareness(
+        lambda value: requested.append(value) or True
+    )
+
+    assert enabled is True
+    assert requested == [automation_worker.PER_MONITOR_AWARE_V2]
+
+
 def test_server_processes_multiple_requests_before_shutdown(monkeypatch):
     stdin = io.StringIO(
         '{"prompt":"one"}\n'
