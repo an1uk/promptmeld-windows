@@ -55,11 +55,15 @@ def _run_self_test() -> int:
     return 0
 
 
-def _process_payload(payload: dict[str, object]) -> dict[str, object]:
+def _process_payload(
+    payload: dict[str, object],
+    progress_callback: Callable[[str, str], None] | None = None,
+) -> dict[str, object]:
     adapter = ChatGPTDesktop(
         timeout_seconds=float(payload.get("timeout_seconds", 8.0)),
         chatgpt_uri=str(payload.get("chatgpt_uri", "chatgpt:")),
         project_uri=str(payload.get("project_uri", "")),
+        progress_callback=progress_callback,
     )
     result = adapter.submit(
         str(payload["prompt"]),
@@ -79,7 +83,25 @@ def _run_server() -> int:
             payload = json.loads(line)
             if payload.get("_command") == "shutdown":
                 return 0
-            response = _process_payload(payload)
+
+            def report_progress(stage: str, message: str) -> None:
+                sys.stdout.write(
+                    json.dumps(
+                        {
+                            "_event": "progress",
+                            "stage": stage,
+                            "message": message,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+                sys.stdout.flush()
+
+            response = _process_payload(
+                payload,
+                progress_callback=report_progress,
+            )
         except Exception as exc:
             response = {
                 "error": (

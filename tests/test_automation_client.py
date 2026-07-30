@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import io
+import json
+import queue
 import sys
 
 import pytest
@@ -18,7 +21,11 @@ def reset_helper_session():
 def test_automation_client_sends_prompt_to_helper(monkeypatch):
     calls = []
 
-    def fake_request(payload, timeout_seconds):
+    def fake_request(
+        payload,
+        timeout_seconds,
+        progress_callback=None,
+    ):
         calls.append((payload, timeout_seconds))
         return {
             "submitted": True,
@@ -118,7 +125,12 @@ def test_helper_session_is_reused_until_idle(monkeypatch):
             self.requests = []
             created.append(self)
 
-        def request(self, payload, timeout_seconds):
+        def request(
+            self,
+            payload,
+            timeout_seconds,
+            progress_callback=None,
+        ):
             self.requests.append((payload, timeout_seconds))
             return {"submitted": True}
 
@@ -146,3 +158,43 @@ def test_helper_session_is_reused_until_idle(monkeypatch):
         "one",
         "two",
     ]
+
+
+def test_helper_session_streams_progress_before_final_response():
+    class FakeProcess:
+        def __init__(self):
+            self.stdin = io.StringIO()
+
+        def poll(self):
+            return None
+
+    session = object.__new__(automation_client._AutomationHelperSession)
+    session.process = FakeProcess()
+    session.responses = queue.Queue()
+    session.responses.put(
+        json.dumps(
+            {
+                "_event": "progress",
+                "stage": "opening-project",
+                "message": "Opening the project",
+            }
+        )
+    )
+    session.responses.put(
+        json.dumps(
+            {
+                "submitted": True,
+                "message": "Submitted.",
+            }
+        )
+    )
+    progress = []
+
+    response = session.request(
+        {"prompt": "private prompt"},
+        1.0,
+        lambda stage, message: progress.append((stage, message)),
+    )
+
+    assert progress == [("opening-project", "Opening the project")]
+    assert response["submitted"] is True

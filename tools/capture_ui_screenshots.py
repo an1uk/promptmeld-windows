@@ -7,9 +7,12 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QImage, QPainter
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from promptmeld.actions import ActionRegistry
+from promptmeld.automation_progress import AutomationProgressWindow
 from promptmeld.config import ensure_user_configuration, load_actions, load_settings
 from promptmeld.icons import ActionIconProvider
 from promptmeld.paths import AppPaths
@@ -23,6 +26,15 @@ def main() -> int:
     docs = project_root / "docs"
     docs.mkdir(exist_ok=True)
     app = QApplication.instance() or QApplication(sys.argv)
+    windows_fonts = Path(
+        os.environ.get("WINDIR", r"C:\Windows")
+    ) / "Fonts"
+    segoe_ui = windows_fonts / "segoeui.ttf"
+    for font_file in (segoe_ui, windows_fonts / "seguisym.ttf"):
+        if font_file.exists():
+            QFontDatabase.addApplicationFont(str(font_file))
+    if segoe_ui.exists():
+        app.setFont(QFont("Segoe UI", 9))
 
     with tempfile.TemporaryDirectory(prefix="promptmeld-screenshots-") as data:
         paths = AppPaths.discover(Path(data))
@@ -36,11 +48,56 @@ def main() -> int:
             icons,
             settings.home_most_used_count,
             settings.folder_icons,
+            settings.natural_voice_enabled,
+            settings.auto_submit_enabled,
+            "dark",
+            settings.guided_drafting_enabled,
+            settings.resulting_text_length,
+            settings.writing_block_enabled,
+            settings.resulting_text_formatting,
         )
         popup.show()
         app.processEvents()
-        popup.grab().save(str(docs / "launcher-popup.png"))
+        popup_image = popup.grab().toImage()
+        popup_image.save(str(docs / "launcher-popup.png"))
         popup.close()
+
+        progress = AutomationProgressWindow("dark")
+        progress.begin("PromptMeld - Editing")
+        for stage, message in (
+            ("locating-chatgpt", "Opening or focusing ChatGPT"),
+            (
+                "selecting-mode",
+                "Switching from Codex to ChatGPT when needed",
+            ),
+            (
+                "opening-project",
+                "Opening the 'PromptMeld - Editing' Project",
+            ),
+            ("finding-composer", "Finding the ChatGPT message box"),
+            ("inserting-prompt", "Inserting the generated prompt"),
+        ):
+            progress.update_stage(stage, message)
+        QTest.qWait(750)
+        progress_image = progress.grab().toImage()
+        progress.close()
+
+        gap = 32
+        overview = QImage(
+            popup_image.width() + gap + progress_image.width(),
+            max(popup_image.height(), progress_image.height()),
+            QImage.Format.Format_ARGB32,
+        )
+        overview.fill(QColor("#0f1117"))
+        painter = QPainter(overview)
+        painter.drawImage(0, 0, popup_image)
+        painter.drawImage(
+            popup_image.width() + gap,
+            (overview.height() - progress_image.height()) // 2,
+            progress_image,
+        )
+        painter.end()
+        overview.save(str(docs / "promptmeld-overview.png"))
 
         dialog = ActionSettingsDialog(
             actions,

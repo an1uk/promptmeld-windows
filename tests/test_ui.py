@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from promptmeld.actions import ActionRegistry
 from promptmeld.app import PromptMeld, make_tray_icon
+from promptmeld.automation_progress import AutomationProgressWindow
 from promptmeld.config import load_actions, load_settings
 from promptmeld.icons import ActionIconProvider
 from promptmeld.models import (
     AppSettings,
     DEFAULT_NATURAL_VOICE_INSTRUCTION,
+    SubmissionResult,
     WritingAction,
 )
 from promptmeld.paths import AppPaths
@@ -30,6 +32,60 @@ from PySide6.QtWidgets import (
 
 def test_promptmeld_application_icon_is_available(qtbot):
     assert not make_tray_icon().isNull()
+
+
+def test_automation_progress_appends_and_centres_operations(qtbot):
+    window = AutomationProgressWindow("light")
+    qtbot.addWidget(window)
+
+    window.begin("PromptMeld - Editing")
+    operations = [
+        ("locating-chatgpt", "Opening or focusing ChatGPT"),
+        ("selecting-mode", "Switching to ChatGPT"),
+        ("opening-project", "Opening the Editing project"),
+        ("finding-composer", "Finding the message box"),
+        ("inserting-prompt", "Inserting the generated prompt"),
+        ("finishing", "Leaving the prompt ready for review"),
+    ]
+    for stage, message in operations:
+        window.update_stage(stage, message)
+    window.update_stage(*operations[-1])
+    qtbot.wait(350)
+
+    assert len(window.operation_labels) == len(operations) + 1
+    assert all(
+        label.property("state") == "complete"
+        for label in window.operation_labels[:-1]
+    )
+    assert window.operation_labels[-1].property("state") == "current"
+    assert window.scroll_animation is not None
+    assert window.scroll_animation.duration() == 280
+    current_centre = window.current_operation.mapTo(
+        window.history.viewport(),
+        window.current_operation.rect().center(),
+    ).y()
+    viewport_centre = window.history.viewport().height() // 2
+    assert abs(current_centre - viewport_centre) <= 20
+
+
+def test_automation_progress_keeps_final_result_in_history(qtbot):
+    window = AutomationProgressWindow("dark")
+    qtbot.addWidget(window)
+    window.begin("PromptMeld")
+    window.update_stage("finding-composer", "Finding the message box")
+
+    window.finish(
+        SubmissionResult(
+            submitted=False,
+            prepared=True,
+            message="Prompt ready.",
+        )
+    )
+
+    assert window.title.text() == "Ready in ChatGPT"
+    assert window.operation_labels[-1].property("state") == "success"
+    assert "ready for your review" in window.operation_labels[-1].text()
+    assert window.close_button.isVisible()
 
 
 def test_promptmeld_tagline_is_shown_in_launcher_and_configuration(

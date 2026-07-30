@@ -9,7 +9,7 @@
 PromptMeld is a Windows companion for turning selected text into focused
 ChatGPT writing requests. Highlight text in almost any application, choose a
 writing action, and PromptMeld opens a fresh chat in an organised ChatGPT
-Project and pastes the completed prompt.
+Project and inserts the completed prompt.
 
 It is designed to remove repetitive copying, prompt-writing, and navigation
 while keeping you in control of what reaches ChatGPT and when it is submitted.
@@ -23,7 +23,7 @@ while keeping you in control of what reaches ChatGPT and when it is submitted.
 ## What it does
 
 PromptMeld melds your selected text with a reusable writing prompt, then opens
-ChatGPT and pastes the combined request into a fresh chat.
+ChatGPT and inserts the combined request into a fresh chat.
 
 - Includes 26 starter actions for editing, replies, tone, technical help, and
   correspondence.
@@ -40,7 +40,7 @@ ChatGPT and pastes the combined request into a fresh chat.
 - Can optionally be launched from a compatible Logitech Options+ Actions Ring;
   Logitech hardware and software are not required.
 
-![PromptMeld launcher showing writing actions](docs/launcher-popup.png)
+![PromptMeld launcher and stacked ChatGPT automation progress](docs/promptmeld-overview.png)
 
 ## Install
 
@@ -85,7 +85,7 @@ repository.
 3. Choose a writing action.
 
 PromptMeld builds the instruction, opens ChatGPT, selects or creates the
-appropriate PromptMeld Project, starts a fresh chat, and pastes the prompt.
+appropriate PromptMeld Project, starts a fresh chat, and inserts the prompt.
 Automatic submission is off by default, so you can review the prompt and
 choose ChatGPT settings before sending it.
 
@@ -114,17 +114,19 @@ another application.
 
 PromptMeld runs locally and does not create a stored copy of selected text.
 Text is captured only when you invoke an action: it enters through the Windows
-clipboard, is held briefly in memory while the prompt is assembled, and is
-placed on the clipboard so it can be pasted into ChatGPT.
+clipboard and is held briefly in memory while the prompt is assembled.
+PromptMeld inserts the completed prompt through verified local accessibility
+controls, using a targeted clipboard paste only when direct insertion is
+unavailable.
 
 Selected text, one-off custom instructions, and completed prompts are not
-written to PromptMeld's settings, usage data, or logs. After a successful
-paste, the original selected text is restored to the clipboard. If safe
+written to PromptMeld's settings, usage data, or logs. After successful
+insertion, the original selected text is restored to the clipboard. If safe
 automation is not possible, the completed prompt remains there for manual
 pasting.
 
 Clipboard-history tools, including Windows Clipboard History and third-party
-clipboard managers, may independently retain copied text. Once text is pasted
+clipboard managers, may independently retain copied text. Once text is inserted
 into ChatGPT, its handling is governed by your ChatGPT account settings and
 OpenAI's policies.
 

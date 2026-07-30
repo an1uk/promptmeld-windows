@@ -19,8 +19,11 @@ For each writing action, PromptMeld:
 7. Starts a fresh chat in that Project.
 8. Verifies the active Project and message composer through Windows UI
    Automation.
-9. Pastes the prompt only after the destination is verified.
-10. Presses Enter only when **Submit automatically** is enabled.
+9. Inserts the prompt through the composer's UI Automation text pattern when
+   supported, otherwise uses a control-targeted clipboard paste.
+10. Reads the composer back and continues only after the complete prompt is
+    verified.
+11. Presses Enter only when **Submit automatically** is enabled.
 
 Root-level actions and custom instructions use the base Project name
 `PromptMeld`. Nested action folders produce names such as
@@ -31,18 +34,35 @@ You may find this Project instruction useful:
 > Treat every chat as an independent writing request. Use only the text
 > supplied in the current chat unless explicitly instructed otherwise.
 
+## Automation progress
+
+While PromptMeld works, a small non-focus-stealing window shows each operation
+as a stacked history. New operations appear below completed ones, and the
+current operation is highlighted near the centre while the history scrolls
+up smoothly. A successful result is added as the final entry; a problem stays
+visible so it can be acted on.
+
+The window shows operational stage names only. It does not display the selected
+text or assembled prompt, and it does not take focus away from ChatGPT.
+
 ## Safety and fallback
 
 PromptMeld uses Windows accessibility controls rather than fixed screen
-coordinates. Buttons are activated with UI Automation's Invoke pattern where
-ChatGPT exposes it. A physical click is retained only as a compatibility
-fallback for controls that do not expose that pattern.
+coordinates. It first tries UI Automation's Invoke and SelectionItem patterns,
+then focused keyboard activation. A physical click is retained only as a final
+compatibility fallback for controls that expose none of those methods.
+
+That final fallback validates the control against the complete Windows virtual
+desktop, supports negative coordinates used by monitors positioned above or to
+the left of the primary display, and restores the pointer after clicking. It
+does not use pywinauto's primary-screen coordinate conversion.
 
 The ChatGPT desktop app may expose only its outer frame on some installations
 or after an interface update. If PromptMeld cannot verify the required
-controls, it does not paste blindly. Instead, it focuses ChatGPT and leaves the
-completed prompt on the clipboard. Open the intended Project, start a new chat,
-and paste manually.
+controls or cannot confirm that the composer received the complete prompt, it
+does not submit blindly. Instead, it focuses ChatGPT and leaves the completed
+prompt on the clipboard. Open the intended Project, start a new chat, and paste
+manually.
 
 ## Automation companion
 
