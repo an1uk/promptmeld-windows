@@ -58,9 +58,27 @@ advance.
 The **Defaults & style** tab controls:
 
 - Automatic submission, which is off by default.
+- Resulting text length, with qualitative choices from **Extra short** to
+  **Extra long**. **Default** adds no length instruction to the prompt.
+- Result formatting: use ChatGPT's default behaviour, prevent newly added
+  formatting, or request restrained formatting where it improves readability.
+- A best-effort request for ChatGPT to place the finished result in an editable,
+  copyable writing block. Availability depends on the current ChatGPT plan,
+  device, workspace settings, model, and rollout.
 - The default state and wording of **Preserve my natural voice**.
 - Guided drafting, which allows supported actions to ask up to three concise
   questions when essential context is missing.
+
+These settings provide the initial remembered states of the corresponding
+launcher checkboxes. Changing **Preserve my natural voice**, **Guided
+questions** and **Submit automatically** in the launcher updates that remembered
+setting for the next use. Less frequently changed length, formatting, and
+writing-block settings are grouped under the launcher's **Output options** menu
+and are remembered in the same way.
+
+See OpenAI's guide to
+[writing blocks](https://help.openai.com/en/articles/20001246-working-with-writing-blocks-and-code-blocks-in-chatgpt)
+for current availability and supported actions.
 
 PromptMeld deliberately does not automate ChatGPT's model picker because model
 names, availability, and layout can change by account and application version.

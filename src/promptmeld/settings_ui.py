@@ -58,6 +58,8 @@ from .icons import ActionIconProvider
 from .models import (
     DEFAULT_NATURAL_VOICE_INSTRUCTION,
     PRIMARY_LANGUAGE_OPTIONS,
+    RESULTING_TEXT_FORMATTING_OPTIONS,
+    RESULTING_TEXT_LENGTH_OPTIONS,
     AppSettings,
     WritingAction,
 )
@@ -340,6 +342,65 @@ class ActionSettingsDialog(QDialog):
         )
         home_row.addWidget(language_label)
         home_row.addWidget(self.primary_language)
+
+        output_group = QGroupBox("Output")
+        output_layout = QVBoxLayout(output_group)
+        length_row = QHBoxLayout()
+        length_label = QLabel("Resulting text length")
+        length_label.setObjectName("formLabel")
+        self.resulting_text_length = NoWheelComboBox()
+        for value, label in RESULTING_TEXT_LENGTH_OPTIONS:
+            self.resulting_text_length.addItem(label, value)
+        selected_length = self.resulting_text_length.findData(
+            voice_settings.resulting_text_length
+        )
+        self.resulting_text_length.setCurrentIndex(max(0, selected_length))
+        self.resulting_text_length.setMinimumWidth(140)
+        self.resulting_text_length.setToolTip(
+            "This is also the remembered selection in the launcher. Default "
+            "adds no text-length instruction to the prompt."
+        )
+        length_row.addWidget(length_label)
+        length_row.addWidget(self.resulting_text_length)
+        length_row.addSpacing(20)
+        formatting_label = QLabel("Formatting")
+        formatting_label.setObjectName("formLabel")
+        self.resulting_text_formatting = NoWheelComboBox()
+        for value, label in RESULTING_TEXT_FORMATTING_OPTIONS:
+            self.resulting_text_formatting.addItem(label, value)
+        selected_formatting = self.resulting_text_formatting.findData(
+            voice_settings.resulting_text_formatting
+        )
+        self.resulting_text_formatting.setCurrentIndex(
+            max(0, selected_formatting)
+        )
+        self.resulting_text_formatting.setMinimumWidth(190)
+        self.resulting_text_formatting.setToolTip(
+            "Default adds no formatting instruction. The other choices either "
+            "prevent new formatting or request restrained helpful formatting."
+        )
+        length_row.addWidget(formatting_label)
+        length_row.addWidget(self.resulting_text_formatting)
+        length_row.addStretch(1)
+        self.writing_block_default = QCheckBox(
+            "Request a copyable writing block when available"
+        )
+        self.writing_block_default.setChecked(
+            voice_settings.writing_block_enabled
+        )
+        self.writing_block_default.setToolTip(
+            "This is also the remembered state of the checkbox in the launcher."
+        )
+        output_description = QLabel(
+            "Length choices add qualitative guidance; Default adds none. "
+            "Writing blocks are editable and copyable in ChatGPT, but their "
+            "availability depends on ChatGPT."
+        )
+        output_description.setObjectName("muted")
+        output_description.setWordWrap(True)
+        output_layout.addLayout(length_row)
+        output_layout.addWidget(self.writing_block_default)
+        output_layout.addWidget(output_description)
 
         submission_group = QGroupBox("Submission")
         submission_layout = QVBoxLayout(submission_group)
@@ -746,7 +807,8 @@ class ActionSettingsDialog(QDialog):
         defaults_page.setObjectName("settingsPage")
         defaults_layout = QVBoxLayout(defaults_page)
         defaults_layout.setContentsMargins(22, 18, 22, 18)
-        defaults_layout.setSpacing(16)
+        defaults_layout.setSpacing(12)
+        defaults_layout.addWidget(output_group)
         defaults_layout.addWidget(submission_group)
         defaults_layout.addWidget(voice_group)
         defaults_layout.addWidget(guided_group)
@@ -762,13 +824,10 @@ class ActionSettingsDialog(QDialog):
             QDialogButtonBox.StandardButton.Save
             | QDialogButtonBox.StandardButton.Close
         )
-        close_button = self.buttons.button(
+        self.close_button = self.buttons.button(
             QDialogButtonBox.StandardButton.Close
         )
-        close_button.setText("Close without saving")
-        close_button.setToolTip(
-            "Discard changes made since the last time you chose Save."
-        )
+        self._set_close_button_dirty(False)
         self.buttons.accepted.connect(self._save)
         self.buttons.rejected.connect(self.reject)
         footer = QHBoxLayout()
@@ -804,6 +863,9 @@ class ActionSettingsDialog(QDialog):
             self.instruction.textChanged,
             self.most_used_count.valueChanged,
             self.primary_language.currentTextChanged,
+            self.resulting_text_length.currentIndexChanged,
+            self.resulting_text_formatting.currentIndexChanged,
+            self.writing_block_default.toggled,
             self.auto_submit_default.toggled,
             self.natural_voice_default.toggled,
             self.natural_voice_instruction.textChanged,
@@ -1253,10 +1315,22 @@ class ActionSettingsDialog(QDialog):
     def _mark_unsaved(self, *args) -> None:
         if self._loading or self._saved_state is None:
             return
-        if self._configuration_state() == self._saved_state:
+        is_dirty = self._configuration_state() != self._saved_state
+        self._set_close_button_dirty(is_dirty)
+        if not is_dirty:
             self._set_save_status("")
         else:
             self._set_save_status("Unsaved changes", saved=False)
+
+    def _set_close_button_dirty(self, is_dirty: bool) -> None:
+        if is_dirty:
+            self.close_button.setText("Discard changes and close")
+            self.close_button.setToolTip(
+                "Discard changes made since the last time you chose Save."
+            )
+        else:
+            self.close_button.setText("Close")
+            self.close_button.setToolTip("Close configuration.")
 
     def _configuration_state(self) -> tuple:
         self._commit_current()
@@ -1268,6 +1342,9 @@ class ActionSettingsDialog(QDialog):
             self.start_with_windows.isChecked(),
             self.most_used_count.value(),
             self.primary_language.currentText().strip(),
+            str(self.resulting_text_length.currentData() or "default"),
+            str(self.resulting_text_formatting.currentData() or "default"),
+            self.writing_block_default.isChecked(),
             self.auto_submit_default.isChecked(),
             self.natural_voice_default.isChecked(),
             self.natural_voice_instruction.toPlainText().strip(),
@@ -1448,6 +1525,16 @@ class ActionSettingsDialog(QDialog):
                     primary_language=(
                         self.primary_language.currentText().strip()
                     ),
+                    resulting_text_length=str(
+                        self.resulting_text_length.currentData() or "default"
+                    ),
+                    resulting_text_formatting=str(
+                        self.resulting_text_formatting.currentData()
+                        or "default"
+                    ),
+                    writing_block_enabled=(
+                        self.writing_block_default.isChecked()
+                    ),
                     guided_drafting_enabled=(
                         self.guided_drafting_default.isChecked()
                     ),
@@ -1460,6 +1547,7 @@ class ActionSettingsDialog(QDialog):
         self.actions = actions
         self.folder_icons = folder_icons
         self._saved_state = self._configuration_state()
+        self._set_close_button_dirty(False)
         self.actions_saved.emit()
         self._set_save_status("Changes saved", saved=True)
 

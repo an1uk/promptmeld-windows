@@ -27,6 +27,42 @@ class PromptBuilder:
         "requested text without further questions unless it would be unsafe or "
         "impossible to proceed."
     )
+    RESULTING_TEXT_LENGTH_RULES = {
+        "default": "",
+        "extra_short": (
+            "Make the result extremely concise. Use only the minimum text "
+            "needed to complete the writing task."
+        ),
+        "short": (
+            "Keep the result concise and relatively brief. Prioritise the "
+            "essential content."
+        ),
+        "medium": (
+            "Use a moderate, balanced amount of detail: neither terse nor "
+            "expansive."
+        ),
+        "long": (
+            "Produce a detailed result, developing relevant points more fully "
+            "where useful."
+        ),
+        "extra_long": (
+            "Produce a very detailed and comprehensive result, extensively "
+            "developing relevant points where useful."
+        ),
+    }
+    RESULTING_TEXT_FORMATTING_RULES = {
+        "default": "",
+        "plain": (
+            "Do not add new Markdown or decorative formatting. Use plain text "
+            "while retaining paragraph breaks and any source structure needed "
+            "to preserve meaning."
+        ),
+        "formatted": (
+            "Use restrained Markdown formatting, such as headings, lists, or "
+            "emphasis, where it materially improves readability. Do not "
+            "over-format the result."
+        ),
+    }
 
     def build(
         self,
@@ -36,6 +72,9 @@ class PromptBuilder:
         natural_voice_instruction: str = "",
         primary_language: str = "English (UK)",
         guided_drafting_enabled: bool = False,
+        resulting_text_length: str = "default",
+        writing_block_enabled: bool = False,
+        resulting_text_formatting: str = "default",
     ) -> str:
         apply_natural_voice = (
             action.natural_voice == "always"
@@ -50,6 +89,9 @@ class PromptBuilder:
             natural_voice_enabled=apply_natural_voice,
             natural_voice_instruction=natural_voice_instruction,
             primary_language=primary_language,
+            resulting_text_length=resulting_text_length,
+            writing_block_enabled=writing_block_enabled,
+            resulting_text_formatting=resulting_text_formatting,
         )
         if guided_drafting_enabled and action.guided_drafting:
             prompt = prompt.replace(
@@ -70,6 +112,9 @@ class PromptBuilder:
         natural_voice_enabled: bool = False,
         natural_voice_instruction: str = "",
         primary_language: str = "English (UK)",
+        resulting_text_length: str = "default",
+        writing_block_enabled: bool = False,
+        resulting_text_formatting: str = "default",
     ) -> str:
         clean_instruction = instruction.strip()
         if not clean_instruction:
@@ -78,6 +123,30 @@ class PromptBuilder:
             f"{self.OUTPUT_RULES}\n"
             f"{self._language_rule(primary_language)}"
         )
+        length_rule = self._resulting_text_length_rule(resulting_text_length)
+        if length_rule:
+            requirements = (
+                f"{requirements}\n\n"
+                f"Resulting text length:\n{length_rule}"
+            )
+        formatting_rule = self._resulting_text_formatting_rule(
+            resulting_text_formatting
+        )
+        if formatting_rule:
+            requirements = (
+                f"{requirements}\n\n"
+                f"Resulting text formatting:\n{formatting_rule}"
+            )
+        if writing_block_enabled:
+            requirements = (
+                f"{requirements}\n\n"
+                "Output presentation:\n"
+                "When producing the finished result, place it in a single "
+                "editable writing block so it can be copied directly. Put only "
+                "the finished text in that block and add no commentary outside "
+                "it. If guided questions are needed first, ask them normally "
+                "and use the writing block only for the final result."
+            )
         clean_voice_instruction = natural_voice_instruction.strip()
         if natural_voice_enabled and clean_voice_instruction:
             requirements = (
@@ -111,3 +180,23 @@ class PromptBuilder:
             f"Write in {language} unless the writing task explicitly requests "
             "translation or another language."
         )
+
+    @classmethod
+    def _resulting_text_length_rule(cls, value: str) -> str:
+        normalized = value.strip().casefold().replace(" ", "_")
+        try:
+            return cls.RESULTING_TEXT_LENGTH_RULES[normalized]
+        except KeyError as exc:
+            raise ValueError(
+                f"Unknown resulting text length: {value}"
+            ) from exc
+
+    @classmethod
+    def _resulting_text_formatting_rule(cls, value: str) -> str:
+        normalized = value.strip().casefold().replace(" ", "_")
+        try:
+            return cls.RESULTING_TEXT_FORMATTING_RULES[normalized]
+        except KeyError as exc:
+            raise ValueError(
+                f"Unknown resulting text formatting: {value}"
+            ) from exc

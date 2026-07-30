@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from promptmeld.actions import ActionRegistry
-from promptmeld.app import make_tray_icon
+from promptmeld.app import PromptMeld, make_tray_icon
 from promptmeld.config import load_actions, load_settings
 from promptmeld.icons import ActionIconProvider
 from promptmeld.models import (
@@ -19,6 +19,7 @@ from promptmeld.settings_ui import (
 from promptmeld.ui import LauncherPopup
 from promptmeld.usage import UsageTracker
 from PySide6.QtCore import Qt
+from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import (
     QDialogButtonBox,
     QLabel,
@@ -55,9 +56,18 @@ def test_promptmeld_tagline_is_shown_in_launcher_and_configuration(
     assert "Write well and prosper" in {
         label.text() for label in dialog.findChildren(QLabel)
     }
+    popup.show()
+    qtbot.wait(0)
     popup.layout().activate()
     dialog.layout().activate()
     assert popup.tagline.geometry().top() == popup.title.geometry().top()
+    assert (
+        abs(
+            popup.tagline.mapTo(popup, popup.tagline.rect().center()).x()
+            - popup.rect().center().x()
+        )
+        <= 2
+    )
     heading = dialog.findChild(QLabel, "settingsTitle")
     assert heading is not None
     assert dialog.tagline.geometry().top() == heading.geometry().top()
@@ -113,6 +123,153 @@ def test_popup_exposes_remembered_auto_submit_toggle(qtbot, tmp_path):
 
     assert signal.args == [True]
     assert popup.auto_submit_enabled is True
+
+
+def test_popup_exposes_remembered_guided_questions_toggle(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("reply", "Reply", (), "Write a reply.")],
+            UsageTracker(tmp_path / "usage.json"),
+        ),
+        guided_drafting_enabled=True,
+    )
+    qtbot.addWidget(popup)
+
+    assert popup.guided_drafting.isChecked() is True
+    with qtbot.waitSignal(popup.guided_drafting_changed) as signal:
+        popup.guided_drafting.setChecked(False)
+
+    assert signal.args == [False]
+    assert popup.guided_drafting_enabled is False
+
+
+def test_launcher_guided_questions_toggle_is_saved(qtbot, tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    settings = AppSettings(guided_drafting_enabled=False)
+    app = object.__new__(PromptMeld)
+    app.settings = settings
+    app.paths = paths
+    app.popup = None
+    app.notify = lambda *args: None
+
+    app.set_guided_drafting_enabled(True)
+
+    assert load_settings(paths.settings_file).guided_drafting_enabled is True
+
+
+def test_popup_exposes_remembered_resulting_text_length(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        ),
+        resulting_text_length="long",
+    )
+    qtbot.addWidget(popup)
+
+    assert list(popup.length_actions) == [
+        "default",
+        "extra_short",
+        "short",
+        "medium",
+        "long",
+        "extra_long",
+    ]
+    assert popup.length_actions["long"].isChecked() is True
+    with qtbot.waitSignal(popup.resulting_text_length_changed) as signal:
+        popup.length_actions["extra_short"].trigger()
+
+    assert signal.args == ["extra_short"]
+    assert popup.resulting_text_length_value == "extra_short"
+
+
+def test_launcher_resulting_text_length_is_saved(qtbot, tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    app = object.__new__(PromptMeld)
+    app.settings = AppSettings(resulting_text_length="default")
+    app.paths = paths
+    app.popup = None
+    app.notify = lambda *args: None
+
+    app.set_resulting_text_length("extra_long")
+
+    assert load_settings(paths.settings_file).resulting_text_length == "extra_long"
+
+
+def test_popup_exposes_remembered_writing_block_toggle(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        ),
+        writing_block_enabled=True,
+    )
+    qtbot.addWidget(popup)
+
+    assert popup.writing_block_action.isChecked() is True
+    with qtbot.waitSignal(popup.writing_block_changed) as signal:
+        popup.writing_block_action.trigger()
+
+    assert signal.args == [False]
+    assert popup.writing_block_enabled is False
+
+
+def test_launcher_writing_block_toggle_is_saved(qtbot, tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    app = object.__new__(PromptMeld)
+    app.settings = AppSettings(writing_block_enabled=False)
+    app.paths = paths
+    app.popup = None
+    app.notify = lambda *args: None
+
+    app.set_writing_block_enabled(True)
+
+    assert load_settings(paths.settings_file).writing_block_enabled is True
+
+
+def test_popup_exposes_resulting_text_formatting_in_output_menu(
+    qtbot,
+    tmp_path,
+):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        ),
+        resulting_text_formatting="plain",
+    )
+    qtbot.addWidget(popup)
+
+    assert popup.formatting_actions["plain"].isChecked() is True
+    assert "No added formatting" in popup.output_summary.text()
+    with qtbot.waitSignal(
+        popup.resulting_text_formatting_changed
+    ) as signal:
+        popup.formatting_actions["formatted"].trigger()
+
+    assert signal.args == ["formatted"]
+    assert popup.resulting_text_formatting_value == "formatted"
+    assert "Helpful formatting" in popup.output_summary.text()
+
+
+def test_launcher_resulting_text_formatting_is_saved(qtbot, tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    app = object.__new__(PromptMeld)
+    app.settings = AppSettings(resulting_text_formatting="default")
+    app.paths = paths
+    app.popup = None
+    app.notify = lambda *args: None
+
+    app.set_resulting_text_formatting("formatted")
+
+    assert (
+        load_settings(paths.settings_file).resulting_text_formatting
+        == "formatted"
+    )
 
 
 def test_closed_dropdown_ignores_mouse_wheel(qtbot):
@@ -180,6 +337,39 @@ def test_popup_browses_folders_and_subfolders(qtbot, tmp_path):
     popup._run_item(popup.list.item(1))
     assert popup.current_folder == "Editing/Reviews"
     assert popup.list.item(1).text() == "Review"
+
+
+def test_popup_single_clicks_folders_but_not_actions(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [
+                WritingAction(
+                    "edit",
+                    "Edit",
+                    (),
+                    "Edit it.",
+                    folder="Editing",
+                )
+            ],
+            UsageTracker(tmp_path / "usage.json"),
+        ),
+        ActionIconProvider(tmp_path),
+    )
+    qtbot.addWidget(popup)
+    requested = QSignalSpy(popup.action_requested)
+
+    popup.list.itemClicked.emit(popup.list.item(1))
+
+    assert popup.current_folder == "Editing"
+    assert requested.count() == 0
+    action_item = popup.list.item(1)
+    popup.list.itemClicked.emit(action_item)
+    assert requested.count() == 0
+
+    popup.list.itemDoubleClicked.emit(action_item)
+
+    assert requested.count() == 1
+    assert requested.at(0) == ["edit"]
 
 
 def test_popup_shows_direct_and_real_most_used_actions(qtbot, tmp_path):
@@ -271,6 +461,7 @@ def test_action_settings_edits_and_saves_an_action(qtbot, tmp_path):
         dialog.icon_combo.findData("lucide:shrink")
     )
     assert dialog.save_status.text() == "Unsaved changes"
+    assert dialog.close_button.text() == "Discard changes and close"
     dialog._save()
 
     saved = paths.actions_file.read_text(encoding="utf-8")
@@ -279,6 +470,7 @@ def test_action_settings_edits_and_saves_an_action(qtbot, tmp_path):
     assert '"folder": "Editing/Quick actions"' in saved
     assert '"show_on_home": true' in saved
     assert dialog.save_status.text() == "Changes saved"
+    assert dialog.close_button.text() == "Close"
 
 
 def test_action_instruction_editor_has_high_contrast_style(
@@ -330,6 +522,10 @@ def test_light_and_dark_appearance_options_apply_to_both_windows(
     assert "background: #16181d" in dark_popup.styleSheet()
     assert "QCheckBox::indicator:checked" in light_popup.styleSheet()
     assert "check-white.svg" in light_popup.styleSheet()
+    assert "QCheckBox::indicator:checked" in dark_popup.styleSheet()
+    assert "check-white.svg" in dark_popup.styleSheet()
+    assert "border: 2px solid #ffffff" in dark_popup.styleSheet()
+    assert "background: #4f7cff" in dark_popup.styleSheet()
     assert light_dialog.theme.currentData() == "light"
     assert "QDialog { background: #f5f7fa" in light_dialog.styleSheet()
     assert "QTabBar::tab" in light_dialog.styleSheet()
@@ -416,7 +612,7 @@ def test_general_tab_shows_about_version_and_github_link(qtbot, tmp_path):
     assert dialog.github_link.openExternalLinks()
     assert (
         dialog.buttons.button(QDialogButtonBox.StandardButton.Close).text()
-        == "Close without saving"
+        == "Close"
     )
 
 
@@ -432,12 +628,35 @@ def test_unsaved_status_clears_when_changes_are_reverted(qtbot, tmp_path):
     assert dialog.save_status.text() == ""
     dialog.start_with_windows.setChecked(True)
     assert dialog.save_status.text() == "Unsaved changes"
+    assert dialog.close_button.text() == "Discard changes and close"
     dialog.start_with_windows.setChecked(False)
     assert dialog.save_status.text() == ""
+    assert dialog.close_button.text() == "Close"
 
     dialog.name.setText("Changed")
     assert dialog.save_status.text() == "Unsaved changes"
+    assert dialog.close_button.text() == "Discard changes and close"
     dialog.name.setText("Edit")
+    assert dialog.save_status.text() == ""
+    assert dialog.close_button.text() == "Close"
+
+    long_index = dialog.resulting_text_length.findData("long")
+    default_index = dialog.resulting_text_length.findData("default")
+    dialog.resulting_text_length.setCurrentIndex(long_index)
+    assert dialog.save_status.text() == "Unsaved changes"
+    dialog.resulting_text_length.setCurrentIndex(default_index)
+    assert dialog.save_status.text() == ""
+
+    dialog.writing_block_default.setChecked(True)
+    assert dialog.save_status.text() == "Unsaved changes"
+    dialog.writing_block_default.setChecked(False)
+    assert dialog.save_status.text() == ""
+
+    formatted_index = dialog.resulting_text_formatting.findData("formatted")
+    default_formatting = dialog.resulting_text_formatting.findData("default")
+    dialog.resulting_text_formatting.setCurrentIndex(formatted_index)
+    assert dialog.save_status.text() == "Unsaved changes"
+    dialog.resulting_text_formatting.setCurrentIndex(default_formatting)
     assert dialog.save_status.text() == ""
 
 
@@ -507,6 +726,13 @@ def test_action_settings_saves_natural_voice_configuration(qtbot, tmp_path):
     )
     dialog.guided_drafting_default.setChecked(True)
     dialog.guided_drafting.setChecked(True)
+    dialog.resulting_text_length.setCurrentIndex(
+        dialog.resulting_text_length.findData("extra_long")
+    )
+    dialog.writing_block_default.setChecked(True)
+    dialog.resulting_text_formatting.setCurrentIndex(
+        dialog.resulting_text_formatting.findData("formatted")
+    )
     dialog._save()
 
     saved_settings = load_settings(paths.settings_file)
@@ -518,6 +744,9 @@ def test_action_settings_saves_natural_voice_configuration(qtbot, tmp_path):
     )
     assert saved_settings.primary_language == "English (US)"
     assert saved_settings.guided_drafting_enabled is True
+    assert saved_settings.resulting_text_length == "extra_long"
+    assert saved_settings.writing_block_enabled is True
+    assert saved_settings.resulting_text_formatting == "formatted"
     assert load_actions(paths.actions_file)[0].natural_voice == "never"
     assert load_actions(paths.actions_file)[0].guided_drafting is True
 

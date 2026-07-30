@@ -19,6 +19,25 @@ PRIMARY_LANGUAGE_OPTIONS = (
     "English (US)",
     "Preserve source language",
 )
+RESULTING_TEXT_LENGTH_OPTIONS = (
+    ("default", "Default"),
+    ("extra_short", "Extra short"),
+    ("short", "Short"),
+    ("medium", "Medium"),
+    ("long", "Long"),
+    ("extra_long", "Extra long"),
+)
+RESULTING_TEXT_LENGTH_VALUES = tuple(
+    value for value, _label in RESULTING_TEXT_LENGTH_OPTIONS
+)
+RESULTING_TEXT_FORMATTING_OPTIONS = (
+    ("default", "Default"),
+    ("plain", "Do not add formatting"),
+    ("formatted", "Add helpful formatting"),
+)
+RESULTING_TEXT_FORMATTING_VALUES = tuple(
+    value for value, _label in RESULTING_TEXT_FORMATTING_OPTIONS
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,5 +94,8 @@ class AppSettings:
     auto_submit_enabled: bool = False
     primary_language: str = "English (UK)"
     guided_drafting_enabled: bool = False
+    resulting_text_length: str = "default"
+    writing_block_enabled: bool = False
+    resulting_text_formatting: str = "default"
     starter_action_version: int = 2
     extra: dict[str, object] = field(default_factory=dict)

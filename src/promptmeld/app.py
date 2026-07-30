@@ -173,6 +173,10 @@ class PromptMeld:
                 self.settings.folder_icons,
                 self.settings.natural_voice_enabled,
                 self.settings.auto_submit_enabled,
+                self.settings.guided_drafting_enabled,
+                self.settings.resulting_text_length,
+                self.settings.writing_block_enabled,
+                self.settings.resulting_text_formatting,
             )
             self.popup.set_theme(self.settings.theme)
 
@@ -195,6 +199,10 @@ class PromptMeld:
                 self.settings.natural_voice_enabled,
                 self.settings.auto_submit_enabled,
                 self.settings.theme,
+                self.settings.guided_drafting_enabled,
+                self.settings.resulting_text_length,
+                self.settings.writing_block_enabled,
+                self.settings.resulting_text_formatting,
             )
             self.popup.action_requested.connect(self.run_action)
             self.popup.custom_requested.connect(self.run_custom)
@@ -203,6 +211,18 @@ class PromptMeld:
             )
             self.popup.auto_submit_changed.connect(
                 self.set_auto_submit_enabled
+            )
+            self.popup.guided_drafting_changed.connect(
+                self.set_guided_drafting_enabled
+            )
+            self.popup.resulting_text_length_changed.connect(
+                self.set_resulting_text_length
+            )
+            self.popup.writing_block_changed.connect(
+                self.set_writing_block_enabled
+            )
+            self.popup.resulting_text_formatting_changed.connect(
+                self.set_resulting_text_formatting
             )
         return self.popup
 
@@ -332,6 +352,11 @@ class PromptMeld:
                     self.settings.natural_voice_instruction
                 ),
                 primary_language=self.settings.primary_language,
+                resulting_text_length=self.settings.resulting_text_length,
+                writing_block_enabled=self.settings.writing_block_enabled,
+                resulting_text_formatting=(
+                    self.settings.resulting_text_formatting
+                ),
             )
         except ValueError as exc:
             self.notify(APP_NAME, str(exc), QSystemTrayIcon.MessageIcon.Warning)
@@ -352,6 +377,11 @@ class PromptMeld:
             primary_language=self.settings.primary_language,
             guided_drafting_enabled=(
                 self.settings.guided_drafting_enabled
+            ),
+            resulting_text_length=self.settings.resulting_text_length,
+            writing_block_enabled=self.settings.writing_block_enabled,
+            resulting_text_formatting=(
+                self.settings.resulting_text_formatting
             ),
         )
         self.usage.record(action.id)
@@ -396,6 +426,90 @@ class PromptMeld:
             if self.popup is not None:
                 self.popup.set_auto_submit_enabled(
                     previous.auto_submit_enabled
+                )
+            self.notify(
+                "Setting could not be saved",
+                str(exc),
+                QSystemTrayIcon.MessageIcon.Warning,
+            )
+            return
+        self.settings = updated
+
+    def set_guided_drafting_enabled(self, enabled: bool) -> None:
+        if enabled == self.settings.guided_drafting_enabled:
+            return
+        previous = self.settings
+        updated = replace(previous, guided_drafting_enabled=enabled)
+        try:
+            save_settings(self.paths.settings_file, updated)
+        except OSError as exc:
+            LOGGER.exception("Could not save guided drafting setting")
+            if self.popup is not None:
+                self.popup.set_guided_drafting_enabled(
+                    previous.guided_drafting_enabled
+                )
+            self.notify(
+                "Setting could not be saved",
+                str(exc),
+                QSystemTrayIcon.MessageIcon.Warning,
+            )
+            return
+        self.settings = updated
+
+    def set_resulting_text_length(self, value: str) -> None:
+        if value == self.settings.resulting_text_length:
+            return
+        previous = self.settings
+        updated = replace(previous, resulting_text_length=value)
+        try:
+            save_settings(self.paths.settings_file, updated)
+        except (OSError, ValueError) as exc:
+            LOGGER.exception("Could not save resulting text length setting")
+            if self.popup is not None:
+                self.popup.set_resulting_text_length(
+                    previous.resulting_text_length
+                )
+            self.notify(
+                "Setting could not be saved",
+                str(exc),
+                QSystemTrayIcon.MessageIcon.Warning,
+            )
+            return
+        self.settings = updated
+
+    def set_writing_block_enabled(self, enabled: bool) -> None:
+        if enabled == self.settings.writing_block_enabled:
+            return
+        previous = self.settings
+        updated = replace(previous, writing_block_enabled=enabled)
+        try:
+            save_settings(self.paths.settings_file, updated)
+        except OSError as exc:
+            LOGGER.exception("Could not save writing block setting")
+            if self.popup is not None:
+                self.popup.set_writing_block_enabled(
+                    previous.writing_block_enabled
+                )
+            self.notify(
+                "Setting could not be saved",
+                str(exc),
+                QSystemTrayIcon.MessageIcon.Warning,
+            )
+            return
+        self.settings = updated
+
+    def set_resulting_text_formatting(self, value: str) -> None:
+        if value == self.settings.resulting_text_formatting:
+            return
+        previous = self.settings
+        updated = replace(previous, resulting_text_formatting=value)
+        try:
+            save_settings(self.paths.settings_file, updated)
+        except (OSError, ValueError) as exc:
+            LOGGER.exception("Could not save resulting text formatting setting")
+            if self.popup is not None:
+                self.popup.set_resulting_text_formatting(
+                    previous.resulting_text_formatting
                 )
             self.notify(
                 "Setting could not be saved",
