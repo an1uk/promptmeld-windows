@@ -38,6 +38,7 @@ class SelectionCapture:
         source_hwnd = win32gui.GetForegroundWindow()
         source_title = win32gui.GetWindowText(source_hwnd)
         source_class = win32gui.GetClassName(source_hwnd)
+        source_is_editable = self._source_is_editable(source_hwnd, source_class)
         LOGGER.info(
             "Capturing selection from window class=%r hwnd=%s",
             source_class,
@@ -78,13 +79,85 @@ class SelectionCapture:
                 source_hwnd,
             )
             raise SelectionCaptureError(
-                "No selected text was detected. Select text in another application and try again."
+                "No selected text was detected. Select text in another "
+                "application and try again."
             )
         return CapturedSelection(
             text=text,
             source_hwnd=source_hwnd,
             source_title=source_title,
+            source_is_editable=source_is_editable,
         )
+
+    @classmethod
+    def _source_is_editable(cls, source_hwnd: int, source_class: str) -> bool:
+        """Determine whether the captured selection came from an editable UI."""
+
+        focused_hwnd = cls._focused_hwnd() or source_hwnd
+        focused_class = cls._window_class(focused_hwnd)
+        if cls._looks_like_editable_class(
+            focused_class
+        ) or cls._looks_like_editable_class(source_class):
+            return True
+
+        # Web editors and custom controls often expose their editability only
+        # through UI Automation rather than a useful Win32 class name.
+        try:
+            import pythoncom
+            from pywinauto.uia_defines import IUIA
+
+            pythoncom.CoInitialize()
+            try:
+                element = IUIA().get_focused_element()
+                control_type = str(getattr(element, "control_type", ""))
+                if control_type in {"Edit", "Document"}:
+                    return True
+                current = getattr(element, "current", None)
+                if current is not None and str(
+                    getattr(current, "ControlType", "")
+                ) in {"Edit", "Document"}:
+                    return True
+            finally:
+                pythoncom.CoUninitialize()
+        except Exception:
+            LOGGER.debug(
+                "Could not inspect the focused UI Automation element",
+                exc_info=True,
+            )
+        return False
+
+    @staticmethod
+    def _focused_hwnd() -> int | None:
+        try:
+            info = win32gui.GetGUIThreadInfo(0)
+            if isinstance(info, tuple) and len(info) >= 3:
+                return int(info[2]) or None
+            if isinstance(info, dict):
+                return int(info.get("hwndFocus", 0)) or None
+        except Exception:
+            LOGGER.debug("Could not read the focused Win32 control", exc_info=True)
+        return None
+
+    @staticmethod
+    def _window_class(hwnd: int) -> str:
+        try:
+            return win32gui.GetClassName(hwnd)
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _looks_like_editable_class(class_name: str) -> bool:
+        folded = (class_name or "").strip().casefold()
+        return folded in {
+            "edit",
+            "richedit20a",
+            "richedit20w",
+            "richedit50w",
+            "richeditd2dpt",
+            "scintilla",
+            "tedit",
+            "wxwindowclassnr",
+        } or folded.startswith("richedit")
 
     @staticmethod
     def _send_copy() -> None:

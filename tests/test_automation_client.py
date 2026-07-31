@@ -52,6 +52,8 @@ def test_automation_client_sends_prompt_to_helper(monkeypatch):
     assert calls[0][0]["prompt"] == "private prompt"
     assert calls[0][0]["auto_submit"] is False
     assert calls[0][0]["temporary_chat"] is False
+    assert calls[0][0]["replace_selected_text"] is False
+    assert calls[0][0]["copy_generated_text"] is False
     assert calls[0][1] == 20.0
 
 

@@ -28,3 +28,4 @@ def test_selection_capture_retries_copy_when_first_attempt_is_missed(
     assert copy_attempts == 2
     assert selection.text == "Selected text"
     assert selection.source_hwnd == 123
+    assert selection.source_is_editable is True

@@ -137,6 +137,40 @@ def test_submit_navigates_project_and_restores_clipboard():
     assert clipboard == ["selected source"]
 
 
+def test_submit_copies_generated_response_to_clipboard():
+    events: list[str] = []
+    clipboard = {"text": "selected source"}
+    copy_button = FakeControl("Copy", "Button", events)
+    copy_button.on_click = lambda: clipboard.update(text="Generated answer")
+    controls = [
+        FakeControl("Switch mode, current mode: ChatGPT", "Button", events),
+        FakeControl("New chat", "Button", events, class_name="sidebar-item"),
+        FakeControl("Chat", "Button", events, class_name="text-token-text-primary"),
+        FakeControl("WritingLauncher", "Button", events),
+        FakeControl("Change project: WritingLauncher", "Button", events),
+        FakeComposer(events),
+        copy_button,
+    ]
+    window = FakeWindow(controls, events)
+    adapter = ChatGPTDesktop(
+        desktop_factory=lambda **kwargs: FakeDesktop(window),
+        clipboard_reader=lambda: clipboard["text"],
+        clipboard_writer=lambda text: clipboard.update(text=text),
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+    )
+
+    result = adapter.submit(
+        "complete prompt",
+        "WritingLauncher",
+        copy_generated_text=True,
+    )
+
+    assert result.submitted is True
+    assert result.generated_text_copied is True
+    assert clipboard["text"] == "Generated answer"
+    assert "The generated text is on the clipboard." in result.message
+
+
 def test_prepare_only_inserts_prompt_without_pressing_enter():
     events: list[str] = []
     clipboard: list[str] = []

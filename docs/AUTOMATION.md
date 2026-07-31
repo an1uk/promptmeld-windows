@@ -24,6 +24,11 @@ For each writing action, PromptMeld:
 10. Reads the composer back and continues only after the complete prompt is
     verified.
 11. Presses Enter only when **Submit automatically** is enabled.
+12. When generated-text output is enabled and automatic submission is on,
+    waits for a verified ChatGPT **Copy** control and retrieves the response.
+13. If replacement is enabled and the original selection came from an editable
+    control, returns focus to that source window and pastes the response over
+    the selected text. Otherwise the original selection is left untouched.
 
 Root-level actions and custom instructions use the base Project name
 `PromptMeld`. Nested action folders produce names such as
@@ -63,6 +68,20 @@ controls or cannot confirm that the composer received the complete prompt, it
 does not submit blindly. Instead, it focuses ChatGPT and leaves the completed
 prompt on the clipboard. Open the intended Project, start a new chat, and paste
 manually.
+
+Generated-text output has an additional dependency: ChatGPT must expose a
+completed response's **Copy** control through Windows UI Automation. If that
+control is not exposed before the output timeout, PromptMeld reports that the
+response was submitted but does not replace the original selection. The
+selected text is never replaced based on an unverified clipboard value.
+
+Automatic replacement is deliberately opt-in and shows a confirmation warning
+when used. It is destructive: the generated text can be wrong and the original
+selection may not be recoverable. This is especially important in Temporary
+Chat, where the original text is not retained in ChatGPT. Windows Clipboard
+History or a clipboard manager such as CopyQ may preserve the original
+selection, but those tools can retain sensitive text and do not guarantee
+recovery.
 
 ## Automation companion
 

@@ -38,6 +38,8 @@ ChatGPT and inserts the combined request into a fresh chat.
 - Can use ChatGPT Temporary Chat instead of the action's configured Project.
 - Leaves prompts unsubmitted by default, giving you time to choose the model or
   reasoning level in ChatGPT.
+- Can optionally replace a selected editable field with the generated response
+  after automatic submission, or copy the generated response to the clipboard.
 - Uses Windows accessibility controls instead of relying on fixed screen
   coordinates.
 - Requires no OpenAI API key and contains no telemetry or advertising.
@@ -92,6 +94,23 @@ PromptMeld builds the instruction, opens ChatGPT, selects or creates the
 appropriate PromptMeld Project, starts a fresh chat, and inserts the prompt.
 Automatic submission is off by default, so you can review the prompt and
 choose ChatGPT settings before sending it.
+
+### Generated-text output and replacement
+
+The **Submission** section of Configuration can optionally copy generated text
+to the clipboard or replace the selected text in an editable field after
+ChatGPT responds. These features require automatic submission. Selections that
+do not come from an editable control continue to work normally; replacement is
+simply skipped for them.
+
+Automatic replacement is destructive: the generated result may be unsuitable
+or a paste may fail, and the original text may be lost. This risk is especially
+important with Temporary Chat, where the original text is not retained in
+ChatGPT. Consider enabling Windows Clipboard History (`Win+V`) or using a
+clipboard manager such as [CopyQ](https://copyq.readthedocs.io/en/stable/) so
+the original selection may remain available for recovery. Clipboard history is
+not guaranteed recovery and may retain sensitive text, so configure it to suit
+your privacy needs.
 
 Use **Intent or additional context** in the launcher to supply a desired
 outcome, constraint, or point that is not already present in the selected

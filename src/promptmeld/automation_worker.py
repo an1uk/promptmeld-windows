@@ -65,11 +65,35 @@ def _process_payload(
         project_uri=str(payload.get("project_uri", "")),
         progress_callback=progress_callback,
     )
+    submit_kwargs: dict[str, object] = {
+        "auto_submit": bool(payload.get("auto_submit", False)),
+        "temporary_chat": bool(payload.get("temporary_chat", False)),
+    }
+    if any(
+        key in payload
+        for key in (
+            "source_hwnd",
+            "source_is_editable",
+            "replace_selected_text",
+            "copy_generated_text",
+        )
+    ):
+        submit_kwargs.update(
+            source_hwnd=(
+                int(payload["source_hwnd"])
+                if payload.get("source_hwnd") is not None
+                else None
+            ),
+            source_is_editable=bool(payload.get("source_is_editable", False)),
+            replace_selected_text=bool(
+                payload.get("replace_selected_text", False)
+            ),
+            copy_generated_text=bool(payload.get("copy_generated_text", False)),
+        )
     result = adapter.submit(
         str(payload["prompt"]),
         str(payload["project_name"]),
-        auto_submit=bool(payload.get("auto_submit", False)),
-        temporary_chat=bool(payload.get("temporary_chat", False)),
+        **submit_kwargs,
     )
     response = asdict(result)
     response["_timings"] = adapter.timings

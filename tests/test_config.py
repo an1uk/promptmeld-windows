@@ -136,6 +136,8 @@ def test_load_settings_includes_home_and_folder_display_defaults(tmp_path):
     assert settings.folder_icons["Editing"] == "lucide:pencil"
     assert settings.natural_voice_enabled is False
     assert settings.auto_submit_enabled is False
+    assert settings.replace_selected_text_enabled is False
+    assert settings.copy_generated_text_enabled is False
     assert settings.temporary_chat_enabled is False
     assert "individual voice" in settings.natural_voice_instruction
     assert settings.primary_language == "English (UK)"
@@ -154,6 +156,18 @@ def test_load_settings_rejects_invalid_auto_submit_value(tmp_path):
     )
 
     with pytest.raises(ConfigurationError, match="auto_submit_enabled"):
+        load_settings(path)
+
+
+@pytest.mark.parametrize(
+    "key",
+    ("replace_selected_text_enabled", "copy_generated_text_enabled"),
+)
+def test_load_settings_rejects_invalid_generated_output_value(tmp_path, key):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({key: "sometimes"}), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match=key):
         load_settings(path)
 
 

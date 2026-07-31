@@ -41,6 +41,13 @@ own.
    complete prompt. After successful insertion, it restores the original
    selected text to the clipboard.
 
+When **Copy generated text to the clipboard** is enabled, the generated ChatGPT
+response replaces the restored clipboard contents after ChatGPT responds. When
+automatic replacement is enabled for an editable selection, PromptMeld also
+returns focus to the original application and pastes that response over the
+selection. The response is held transiently in memory while this happens and
+is not written to PromptMeld files.
+
 The selected text and completed prompt are used only for this immediate
 operation. PromptMeld does not write them to a temporary file, database,
 configuration file, usage file, or log.

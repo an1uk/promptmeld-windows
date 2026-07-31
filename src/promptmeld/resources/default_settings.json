@@ -12,6 +12,8 @@
   "natural_voice_enabled": false,
   "natural_voice_instruction": "Preserve the writer's individual voice, vocabulary, and level of formality. Make only the changes needed for the selected task. Avoid generic filler, stock transitions, excessive structure, and unnecessarily polished phrasing. Do not use em dashes (—). Use a standard dash (-), comma, colon, semicolon, brackets, or a separate sentence instead. Do not invent personal details or deliberately introduce errors.",
   "auto_submit_enabled": false,
+  "replace_selected_text_enabled": false,
+  "copy_generated_text_enabled": false,
   "temporary_chat_enabled": false,
   "primary_language": "English (UK)",
   "guided_drafting_enabled": false,

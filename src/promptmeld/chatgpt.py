@@ -141,6 +141,10 @@ class ChatGPTDesktop:
         *,
         auto_submit: bool = True,
         temporary_chat: bool = False,
+        source_hwnd: int | None = None,
+        source_is_editable: bool = False,
+        replace_selected_text: bool = False,
+        copy_generated_text: bool = False,
     ) -> SubmissionResult:
         import pythoncom
 
@@ -235,9 +239,16 @@ class ChatGPTDesktop:
                     "Leaving the verified prompt ready for review",
                 )
             if previous_clipboard is not None:
-                if input_method == "clipboard":
+                if input_method == "clipboard" and not (
+                    auto_submit
+                    and (replace_selected_text or copy_generated_text)
+                ):
                     time.sleep(0.08)
-                self.clipboard_writer(previous_clipboard)
+                if not (
+                    auto_submit
+                    and (replace_selected_text or copy_generated_text)
+                ):
+                    self.clipboard_writer(previous_clipboard)
             self._log_timing("insert and submit", stage_started)
             if not auto_submit:
                 destination = (
@@ -258,6 +269,60 @@ class ChatGPTDesktop:
                         "press Enter to submit."
                     ),
                 )
+
+            generated_text = None
+            selection_replaced = False
+            generated_text_copied = False
+            wants_generated_text = copy_generated_text or (
+                replace_selected_text and source_is_editable
+            )
+            if wants_generated_text:
+                self._report_progress(
+                    "waiting-for-response",
+                    "Waiting for ChatGPT to finish the response",
+                )
+                try:
+                    generated_text = self._copy_latest_response(
+                        window,
+                        prompt,
+                    )
+                    if replace_selected_text and source_is_editable:
+                        self._report_progress(
+                            "replacing-selection",
+                            "Replacing the selected text in its original application",
+                        )
+                        self._replace_source_selection(
+                            source_hwnd,
+                            generated_text,
+                        )
+                        selection_replaced = True
+                    if copy_generated_text:
+                        self.clipboard_writer(generated_text)
+                        generated_text_copied = True
+                except Exception as exc:
+                    LOGGER.exception(
+                        "ChatGPT response could not be returned to the source"
+                    )
+                    if previous_clipboard is not None:
+                        self.clipboard_writer(previous_clipboard)
+                    return SubmissionResult(
+                        submitted=True,
+                        generated_text_copied=False,
+                        selection_replaced=False,
+                        output_failed=True,
+                        message=(
+                            "The prompt was submitted to ChatGPT, but PromptMeld "
+                            "could not safely retrieve the generated text. "
+                            f"The original text was not replaced. Details: {exc}"
+                        ),
+                    )
+
+            if (
+                previous_clipboard is not None
+                and wants_generated_text
+                and not generated_text_copied
+            ):
+                self.clipboard_writer(previous_clipboard)
             if temporary_chat:
                 LOGGER.info("Submitted writing prompt to ChatGPT Temporary Chat")
                 destination_message = "Submitted to Temporary Chat."
@@ -271,7 +336,21 @@ class ChatGPTDesktop:
                 )
             return SubmissionResult(
                 submitted=True,
-                message=destination_message,
+                generated_text_copied=generated_text_copied,
+                selection_replaced=selection_replaced,
+                message=(
+                    destination_message
+                    + (
+                        " The selected text was replaced."
+                        if selection_replaced
+                        else ""
+                    )
+                    + (
+                        " The generated text is on the clipboard."
+                        if generated_text_copied
+                        else ""
+                    )
+                ),
             )
         except Exception as exc:
             LOGGER.exception("ChatGPT submission failed")
@@ -1465,6 +1544,74 @@ class ChatGPTDesktop:
             if isinstance(value, str):
                 return value
         return None
+
+    def _copy_latest_response(self, window, prompt: str) -> str:
+        """Use ChatGPT's verified response Copy control to get plain text."""
+
+        deadline = time.monotonic() + max(self.timeout_seconds, 15.0)
+        sentinel = "__PROMPTMELD_OUTPUT_NOT_READY__"
+        while time.monotonic() < deadline:
+            current = self._refresh_chatgpt_window() or window
+            controls = self._descendants(current) or []
+            copy_controls = [
+                control
+                for control in controls
+                if (
+                    control.element_info.control_type == "Button"
+                    and (control.element_info.name or "").strip().casefold()
+                    in {"copy", "copy response"}
+                )
+            ]
+            for control in reversed(copy_controls):
+                self.clipboard_writer(sentinel)
+                self._activate_control(control)
+                time.sleep(0.08)
+                value = self.clipboard_reader()
+                if (
+                    isinstance(value, str)
+                    and value.strip()
+                    and value != sentinel
+                    and self._normalise_composer_text(value)
+                    != self._normalise_composer_text(prompt)
+                ):
+                    return value
+            time.sleep(0.15)
+        raise ChatGPTAutomationError(
+            "ChatGPT did not expose a completed response Copy control before "
+            "the output timeout."
+        )
+
+    def _replace_source_selection(self, source_hwnd: int | None, text: str) -> None:
+        if not source_hwnd:
+            raise ChatGPTAutomationError(
+                "The original editable window could not be identified."
+            )
+        try:
+            import win32gui
+
+            if not win32gui.IsWindow(source_hwnd):
+                raise ChatGPTAutomationError(
+                    "The original editable window is no longer available."
+                )
+            self.clipboard_writer(text)
+            win32gui.SetForegroundWindow(source_hwnd)
+            deadline = time.monotonic() + 1.5
+            while time.monotonic() < deadline:
+                if win32gui.GetForegroundWindow() == source_hwnd:
+                    break
+                time.sleep(0.03)
+            if win32gui.GetForegroundWindow() != source_hwnd:
+                raise ChatGPTAutomationError(
+                    "Windows did not return focus to the original application."
+                )
+            self.send_keys("^v", pause=0.02)
+        except ChatGPTAutomationError:
+            raise
+        except Exception as exc:
+            raise ChatGPTAutomationError(
+                "Windows could not paste the generated text into the original "
+                "application."
+            ) from exc
 
     @staticmethod
     def _normalise_composer_text(value: str) -> str:
