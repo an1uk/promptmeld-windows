@@ -91,13 +91,22 @@ class AutomationProgressWindow(QWidget):
 
         self._apply_progress_style()
 
-    def begin(self, project_name: str) -> None:
+    def begin(
+        self,
+        project_name: str,
+        *,
+        temporary_chat: bool = False,
+    ) -> None:
         self.hide_timer.stop()
         if self.scroll_animation is not None:
             self.scroll_animation.stop()
         self._clear_history()
         self.title.setText("Working with ChatGPT")
-        self.project.setText(f"Project: {project_name}")
+        self.project.setText(
+            "Temporary Chat (outside Projects)"
+            if temporary_chat
+            else f"Project: {project_name}"
+        )
         self.close_button.hide()
         self.update_stage("preparing", "Preparing the writing request")
         self._show_on_cursor_screen()

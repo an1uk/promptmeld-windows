@@ -50,6 +50,7 @@ def main() -> int:
             settings.folder_icons,
             settings.natural_voice_enabled,
             settings.auto_submit_enabled,
+            settings.temporary_chat_enabled,
             "dark",
             settings.guided_drafting_enabled,
             settings.resulting_text_length,

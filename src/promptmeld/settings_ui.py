@@ -413,16 +413,28 @@ class ActionSettingsDialog(QDialog):
         self.auto_submit_default.setToolTip(
             "This is also the remembered state of the checkbox in the launcher."
         )
+        self.temporary_chat_default = QCheckBox(
+            "Turn on Temporary Chat by default"
+        )
+        self.temporary_chat_default.setChecked(
+            voice_settings.temporary_chat_enabled
+        )
+        self.temporary_chat_default.setToolTip(
+            "This is also the remembered state of the checkbox in the launcher. "
+            "Temporary chats are opened outside ChatGPT Projects."
+        )
         self.submission_description = QLabel(
-            f"When off, {APP_NAME} opens a fresh chat in the configured "
-            "project and pastes the complete prompt without pressing Enter. "
-            "Choose the model or reasoning level in ChatGPT, then submit it "
-            "yourself. This avoids depending on model-picker labels that can "
-            "change over time or vary by account."
+            f"When automatic submission is off, {APP_NAME} pastes the complete "
+            "prompt without pressing Enter so you can choose the model or "
+            "reasoning level first. Temporary Chat opens a top-level chat and "
+            "skips the configured Project because temporary chats cannot be "
+            "used inside Projects. ChatGPT may show a one-time explanation "
+            "which you must review and confirm yourself."
         )
         self.submission_description.setObjectName("muted")
         self.submission_description.setWordWrap(True)
         submission_layout.addWidget(self.auto_submit_default)
+        submission_layout.addWidget(self.temporary_chat_default)
         submission_layout.addWidget(self.submission_description)
 
         voice_group = QGroupBox("Preserve my natural voice")
@@ -872,6 +884,7 @@ class ActionSettingsDialog(QDialog):
             self.resulting_text_formatting.currentIndexChanged,
             self.writing_block_default.toggled,
             self.auto_submit_default.toggled,
+            self.temporary_chat_default.toggled,
             self.natural_voice_default.toggled,
             self.natural_voice_instruction.textChanged,
             self.guided_drafting_default.toggled,
@@ -1352,6 +1365,7 @@ class ActionSettingsDialog(QDialog):
             str(self.resulting_text_formatting.currentData() or "default"),
             self.writing_block_default.isChecked(),
             self.auto_submit_default.isChecked(),
+            self.temporary_chat_default.isChecked(),
             self.natural_voice_default.isChecked(),
             self.natural_voice_instruction.toPlainText().strip(),
             self.guided_drafting_default.isChecked(),
@@ -1527,6 +1541,9 @@ class ActionSettingsDialog(QDialog):
                     ),
                     auto_submit_enabled=(
                         self.auto_submit_default.isChecked()
+                    ),
+                    temporary_chat_enabled=(
+                        self.temporary_chat_default.isChecked()
                     ),
                     primary_language=(
                         self.primary_language.currentText().strip()

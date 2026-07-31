@@ -222,11 +222,15 @@ def submit_via_worker(
         "chatgpt_uri": settings.chatgpt_uri,
         "project_uri": settings.project_uri,
         "auto_submit": settings.auto_submit_enabled,
+        "temporary_chat": settings.temporary_chat_enabled,
     }
     try:
         raw = _request_from_helper(
             payload,
-            max(20.0, settings.automation_timeout_seconds + 12.0),
+            max(
+                75.0 if settings.temporary_chat_enabled else 20.0,
+                settings.automation_timeout_seconds + 12.0,
+            ),
             progress_callback,
         )
         for timing in raw.get("_timings", []):

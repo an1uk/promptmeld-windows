@@ -376,6 +376,11 @@ def load_settings(path: Path) -> AppSettings:
     auto_submit_enabled = raw.get("auto_submit_enabled", False)
     if not isinstance(auto_submit_enabled, bool):
         raise ConfigurationError("auto_submit_enabled must be true or false.")
+    temporary_chat_enabled = raw.get("temporary_chat_enabled", False)
+    if not isinstance(temporary_chat_enabled, bool):
+        raise ConfigurationError(
+            "temporary_chat_enabled must be true or false."
+        )
     natural_voice_instruction_value = raw.get(
         "natural_voice_instruction",
         DEFAULT_NATURAL_VOICE_INSTRUCTION,
@@ -455,6 +460,7 @@ def load_settings(path: Path) -> AppSettings:
         "natural_voice_enabled",
         "natural_voice_instruction",
         "auto_submit_enabled",
+        "temporary_chat_enabled",
         "primary_language",
         "guided_drafting_enabled",
         "resulting_text_length",
@@ -481,6 +487,7 @@ def load_settings(path: Path) -> AppSettings:
         natural_voice_enabled=natural_voice_enabled,
         natural_voice_instruction=natural_voice_instruction,
         auto_submit_enabled=auto_submit_enabled,
+        temporary_chat_enabled=temporary_chat_enabled,
         primary_language=primary_language,
         guided_drafting_enabled=guided_drafting_enabled,
         resulting_text_length=resulting_text_length,
@@ -508,6 +515,7 @@ def settings_to_dict(settings: AppSettings) -> dict[str, object]:
         "natural_voice_enabled": settings.natural_voice_enabled,
         "natural_voice_instruction": settings.natural_voice_instruction,
         "auto_submit_enabled": settings.auto_submit_enabled,
+        "temporary_chat_enabled": settings.temporary_chat_enabled,
         "primary_language": settings.primary_language,
         "guided_drafting_enabled": settings.guided_drafting_enabled,
         "resulting_text_length": settings.resulting_text_length,

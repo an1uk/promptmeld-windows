@@ -189,6 +189,149 @@ def test_prepare_only_inserts_prompt_without_pressing_enter():
     assert clipboard == ["selected source"]
 
 
+def test_temporary_chat_skips_project_and_prepares_prompt():
+    events: list[str] = []
+    clipboard: list[str] = []
+    composer = FakeComposer(events)
+    temporary_toggle = FakeControl(
+        "Turn on temporary chat",
+        "Button",
+        events,
+    )
+
+    def enable_temporary_chat():
+        temporary_toggle.element_info.name = "Turn off temporary chat"
+
+    temporary_toggle.on_click = enable_temporary_chat
+    controls = [
+        FakeControl(
+            "Switch mode, current mode: ChatGPT",
+            "Button",
+            events,
+        ),
+        FakeControl(
+            "New chat",
+            "Button",
+            events,
+            class_name="sidebar-item",
+        ),
+        FakeControl(
+            "Chat",
+            "Button",
+            events,
+            class_name="text-token-text-primary",
+        ),
+        FakeControl("PromptMeld", "Button", events),
+        temporary_toggle,
+        composer,
+    ]
+    window = FakeWindow(controls, events)
+    adapter = ChatGPTDesktop(
+        desktop_factory=lambda **kwargs: FakeDesktop(window),
+        clipboard_reader=lambda: "selected source",
+        clipboard_writer=clipboard.append,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+    )
+
+    result = adapter.submit(
+        "complete prompt",
+        "PromptMeld",
+        auto_submit=False,
+        temporary_chat=True,
+    )
+
+    assert result.prepared is True
+    assert "Temporary Chat" in result.message
+    assert "click:PromptMeld" not in events
+    assert "click:Turn on temporary chat" in events
+    assert composer.value == "complete prompt"
+    assert clipboard == ["selected source"]
+
+
+def test_one_time_temporary_chat_continue_is_left_to_the_user():
+    events: list[str] = []
+    progress: list[tuple[str, str]] = []
+    composer = FakeComposer(events)
+    continue_button = FakeControl("Continue", "Button", events)
+    dialog = FakeWindow([continue_button], events)
+    dialog.element_info.name = "Temporary Chat"
+    temporary_toggle = FakeControl(
+        "Turn on temporary chat",
+        "Button",
+        events,
+    )
+    controls = [
+        FakeControl(
+            "Switch mode, current mode: ChatGPT",
+            "Button",
+            events,
+        ),
+        FakeControl(
+            "New chat",
+            "Button",
+            events,
+            class_name="sidebar-item",
+        ),
+        FakeControl(
+            "Chat",
+            "Button",
+            events,
+            class_name="text-token-text-primary",
+        ),
+        temporary_toggle,
+        composer,
+    ]
+
+    def show_explanation():
+        controls.append(dialog)
+
+    temporary_toggle.on_click = show_explanation
+
+    class UserConfirmationWindow(FakeWindow):
+        def __init__(self):
+            super().__init__(controls, events)
+            self.dialog_reads = 0
+
+        def descendants(self):
+            if dialog in self.controls:
+                self.dialog_reads += 1
+                if self.dialog_reads >= 4:
+                    # This state change represents the user pressing Continue
+                    # in ChatGPT. PromptMeld must never activate that button.
+                    self.controls.remove(dialog)
+                    temporary_toggle.element_info.name = (
+                        "Turn off temporary chat"
+                    )
+            return self.controls
+
+    window = UserConfirmationWindow()
+    adapter = ChatGPTDesktop(
+        desktop_factory=lambda **kwargs: FakeDesktop(window),
+        clipboard_reader=lambda: "selected source",
+        clipboard_writer=lambda text: None,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+        progress_callback=lambda stage, message: progress.append(
+            (stage, message)
+        ),
+    )
+
+    result = adapter.submit(
+        "complete prompt",
+        "PromptMeld",
+        auto_submit=False,
+        temporary_chat=True,
+    )
+
+    assert result.prepared is True
+    assert "click:Continue" not in events
+    assert "mouse:Continue" not in events
+    assert (
+        "temporary-chat-confirmation",
+        "Waiting for you to review and confirm Temporary Chat in ChatGPT",
+    ) in progress
+    assert composer.value == "complete prompt"
+
+
 def test_composer_uses_targeted_clipboard_paste_when_uia_input_fails():
     clipboard = {"text": "selected source"}
     events: list[str] = []
@@ -213,6 +356,34 @@ def test_composer_uses_targeted_clipboard_paste_when_uia_input_fails():
     assert method == "clipboard"
     assert composer.value == "complete prompt"
     assert events == ["type-keys:^a^v"]
+
+
+def test_composer_verification_reacquires_fresh_chatgpt_control():
+    events: list[str] = []
+    fresh_composer = FakeComposer(events)
+
+    class StaleComposer(FakeComposer):
+        def set_edit_text(self, text: str):
+            self.events.append("set-text:stale-composer")
+            fresh_composer.value = text
+
+    stale_composer = StaleComposer(events)
+    stale_window = FakeWindow([stale_composer], events)
+    fresh_window = FakeWindow([fresh_composer], events)
+    adapter = ChatGPTDesktop(
+        desktop_factory=lambda **kwargs: FakeDesktop(fresh_window),
+        timeout_seconds=0.2,
+    )
+
+    method = adapter._set_composer_prompt(
+        stale_composer,
+        "complete prompt",
+        window=stale_window,
+    )
+
+    assert method == "uia"
+    assert fresh_composer.value == "complete prompt"
+    assert events == ["set-text:stale-composer"]
 
 
 def test_submit_does_not_press_enter_when_composer_rejects_prompt():
@@ -287,6 +458,8 @@ def test_submit_copies_prompt_when_project_controls_are_missing():
     assert result.submitted is False
     assert result.fallback_copied is True
     assert clipboard == ["complete prompt"]
+    assert "switch from Codex to ChatGPT after two attempts" in result.message
+    assert "project controls are not exposed" not in result.message
 
 
 def test_submit_switches_from_codex_to_chatgpt_before_selecting_project():
@@ -347,6 +520,141 @@ def test_submit_switches_from_codex_to_chatgpt_before_selecting_project():
         "click:ChatGPT Create, learn, and explore"
     ) < events.index("click:Chat")
     assert events.index("click:Chat") < events.index("click:WritingLauncher")
+
+
+def test_submit_retries_transient_codex_mode_switch():
+    events: list[str] = []
+    progress: list[tuple[str, str]] = []
+    controls: list[FakeControl] = []
+    attempts = 0
+    mode_switch = FakeControl(
+        "Switch mode, current mode: Codex",
+        "Button",
+        events,
+    )
+
+    def reveal_mode_item_on_second_attempt():
+        nonlocal attempts
+        attempts += 1
+        if attempts != 2:
+            return
+        controls.append(
+            FakeControl(
+                "ChatGPT Create, learn, and explore",
+                "MenuItem",
+                events,
+                on_click=lambda: setattr(
+                    mode_switch.element_info,
+                    "name",
+                    "Switch mode, current mode: ChatGPT",
+                ),
+            )
+        )
+
+    mode_switch.on_click = reveal_mode_item_on_second_attempt
+    controls.extend(
+        [
+            mode_switch,
+            FakeControl(
+                "New chat",
+                "Button",
+                events,
+                class_name="sidebar-item",
+            ),
+            FakeControl(
+                "Chat",
+                "Button",
+                events,
+                class_name="text-token-text-primary",
+            ),
+            FakeControl("WritingLauncher", "Button", events),
+            FakeControl(
+                "Change project: WritingLauncher",
+                "Button",
+                events,
+            ),
+            FakeComposer(events),
+        ]
+    )
+    adapter = ChatGPTDesktop(
+        timeout_seconds=0.02,
+        desktop_factory=lambda **kwargs: FakeDesktop(
+            FakeWindow(controls, events)
+        ),
+        clipboard_reader=lambda: "selected source",
+        clipboard_writer=lambda text: None,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+        progress_callback=lambda stage, message: progress.append(
+            (stage, message)
+        ),
+    )
+
+    result = adapter.submit("complete prompt", "WritingLauncher")
+
+    assert result.submitted is True
+    assert attempts == 2
+    assert (
+        "selecting-mode",
+        "Retrying the switch from Codex to ChatGPT",
+    ) in progress
+
+
+def test_submit_retries_transient_chat_home_transition():
+    events: list[str] = []
+    controls: list[FakeControl] = [
+        FakeControl(
+            "Switch mode, current mode: ChatGPT",
+            "Button",
+            events,
+        ),
+        FakeControl(
+            "New chat",
+            "Button",
+            events,
+            class_name="sidebar-item",
+        ),
+    ]
+
+    def send_keys(keys, **kwargs):
+        events.append(f"keys:{keys}")
+        if keys != "{ESC}" or any(
+            control.element_info.name == "Chat"
+            for control in controls
+        ):
+            return
+        controls.extend(
+            [
+                FakeControl(
+                    "Chat",
+                    "Button",
+                    events,
+                    class_name="text-token-text-primary",
+                ),
+                FakeControl("WritingLauncher", "Button", events),
+                FakeControl(
+                    "Change project: WritingLauncher",
+                    "Button",
+                    events,
+                ),
+                FakeComposer(events),
+            ]
+        )
+
+    adapter = ChatGPTDesktop(
+        timeout_seconds=0.02,
+        desktop_factory=lambda **kwargs: FakeDesktop(
+            FakeWindow(controls, events)
+        ),
+        clipboard_reader=lambda: "selected source",
+        clipboard_writer=lambda text: None,
+        send_keys=send_keys,
+    )
+
+    result = adapter.submit("complete prompt", "WritingLauncher")
+
+    assert result.submitted is True
+    assert events.count("click:New chat") == 2
+    assert "keys:{ESC}" in events
 
 
 def test_submit_creates_missing_writinglauncher_project():
@@ -808,3 +1116,181 @@ def test_visible_project_new_chat_uses_fast_path():
     assert "click:New chat in PromptMeld - Editing" in events
     assert "click:New chat" not in events
     assert "click:Chat" not in events
+
+
+def test_project_new_chat_is_reacquired_after_unconfirmed_activation():
+    events: list[str] = []
+    progress: list[tuple[str, str]] = []
+    controls: list[FakeControl] = [
+        FakeControl(
+            "Switch mode, current mode: ChatGPT",
+            "Button",
+            events,
+        ),
+        FakeComposer(events),
+    ]
+    attempts = 0
+
+    def activate_on_second_attempt():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            controls.append(
+                FakeControl(
+                    "Change project: PromptMeld - Editing",
+                    "Button",
+                    events,
+                )
+            )
+
+    project_action = FakeControl(
+        "New chat in PromptMeld - Editing",
+        "Button",
+        events,
+        on_click=activate_on_second_attempt,
+    )
+    controls.append(project_action)
+    adapter = ChatGPTDesktop(
+        timeout_seconds=0.02,
+        desktop_factory=lambda **kwargs: FakeDesktop(
+            FakeWindow(controls, events)
+        ),
+        clipboard_reader=lambda: "selected source",
+        clipboard_writer=lambda text: None,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+        progress_callback=lambda stage, message: progress.append(
+            (stage, message)
+        ),
+    )
+
+    result = adapter.submit(
+        "complete prompt",
+        "PromptMeld - Editing",
+    )
+
+    assert result.submitted is True
+    assert attempts == 2
+    assert events.count("click:New chat in PromptMeld - Editing") == 2
+    assert (
+        "opening-project",
+        "Project confirmation is taking longer; refreshing ChatGPT controls",
+    ) in progress
+    assert (
+        "opening-project",
+        "Reacquiring the Project control and retrying once",
+    ) in progress
+
+
+def test_project_confirmation_refreshes_stale_chatgpt_window():
+    events: list[str] = []
+    progress: list[tuple[str, str]] = []
+    project_name = "PromptMeld - Editing"
+    stale_controls: list[FakeControl] = [
+        FakeControl(
+            "Switch mode, current mode: ChatGPT",
+            "Button",
+            events,
+        ),
+        FakeControl(
+            f"New chat in {project_name}",
+            "Button",
+            events,
+        ),
+    ]
+    fresh_controls: list[FakeControl] = [
+        FakeControl(
+            "Switch mode, current mode: ChatGPT",
+            "Button",
+            events,
+        ),
+        FakeControl(
+            f"Change project: {project_name}",
+            "Button",
+            events,
+        ),
+        FakeComposer(events),
+    ]
+    stale_window = FakeWindow(stale_controls, events)
+    fresh_window = FakeWindow(fresh_controls, events)
+    desktop_calls = 0
+
+    def desktop_factory(**kwargs):
+        nonlocal desktop_calls
+        desktop_calls += 1
+        return FakeDesktop(
+            stale_window if desktop_calls == 1 else fresh_window
+        )
+
+    adapter = ChatGPTDesktop(
+        timeout_seconds=0.02,
+        desktop_factory=desktop_factory,
+        clipboard_reader=lambda: "selected source",
+        clipboard_writer=lambda text: None,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+        progress_callback=lambda stage, message: progress.append(
+            (stage, message)
+        ),
+    )
+
+    result = adapter.submit("complete prompt", project_name)
+
+    assert result.submitted is True
+    assert events.count(f"click:New chat in {project_name}") == 1
+    assert "set-text:Message ChatGPT" in events
+    assert (
+        "opening-project",
+        "Reacquiring the Project control and retrying once",
+    ) not in progress
+
+
+def test_project_composer_transition_allows_delayed_context_label():
+    events: list[str] = []
+    progress: list[tuple[str, str]] = []
+    project_name = "PromptMeld - Editing"
+    previous_composer = FakeComposer(events)
+    project_composer = FakeComposer(events)
+    controls: list[FakeControl] = [
+        FakeControl(
+            "Switch mode, current mode: ChatGPT",
+            "Button",
+            events,
+        ),
+        previous_composer,
+    ]
+
+    def open_project_chat():
+        controls.remove(previous_composer)
+        controls.append(project_composer)
+
+    project_action = FakeControl(
+        f"New chat in {project_name}",
+        "Button",
+        events,
+        on_click=open_project_chat,
+    )
+    controls.append(project_action)
+    window = FakeWindow(controls, events)
+    adapter = ChatGPTDesktop(
+        timeout_seconds=0.02,
+        desktop_factory=lambda **kwargs: FakeDesktop(window),
+        clipboard_reader=lambda: "selected source",
+        clipboard_writer=lambda text: None,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+        progress_callback=lambda stage, message: progress.append(
+            (stage, message)
+        ),
+    )
+
+    result = adapter.submit("complete prompt", project_name)
+
+    assert result.submitted is True
+    assert events.count(f"click:New chat in {project_name}") == 1
+    assert project_composer.value == "complete prompt"
+    assert (
+        "opening-project",
+        "The Project label is delayed; continuing with its verified message box",
+    ) in progress
+    assert (
+        "opening-project",
+        "Reacquiring the Project control and retrying once",
+    ) not in progress

@@ -58,6 +58,10 @@ advance.
 The **Defaults & style** tab controls:
 
 - Automatic submission, which is off by default.
+- Temporary Chat, which opens a top-level chat instead of using the writing
+  action's configured Project. ChatGPT may show a one-time explanation;
+  PromptMeld waits while you read and respond to it and does not activate
+  **Continue** for you.
 - Resulting text length, with qualitative choices from **Extra short** to
   **Extra long**. **Default** adds no length instruction to the prompt.
 - Result formatting: use ChatGPT's default behaviour, prevent newly added
@@ -72,9 +76,32 @@ The **Defaults & style** tab controls:
 These settings provide the initial remembered states of the corresponding
 launcher checkboxes. Changing **Preserve my natural voice**, **Guided
 questions** and **Submit automatically** in the launcher updates that remembered
-setting for the next use. Less frequently changed length, formatting, and
-writing-block settings are grouped under the launcher's **Output options** menu
-and are remembered in the same way.
+setting for the next use. The launcher's **Temporary Chat** checkbox is also
+remembered. Less frequently changed length, formatting, and writing-block
+settings are grouped under the launcher's **Output options** menu and are
+remembered in the same way.
+
+The launcher's **Intent or additional context** field is deliberately temporary
+and is cleared whenever a new selection is captured. It adds the desired
+outcome, supplementary context, constraints, or points to include to either a
+configured action or a one-off instruction. PromptMeld separates these notes
+from the selected source text in the generated prompt.
+
+The **Writing guidance** menu also applies only to the current request:
+
+- **Editing strength** adds no extra instruction at Default. Proofread limits
+  changes to corrections, Improve permits useful rephrasing, and Rewrite
+  permits broader restructuring. These rules are explicitly limited to tasks
+  that edit existing text, so they do not reinterpret a received message as a
+  draft reply.
+- **Preserve facts and specifics** is On by default and protects concrete
+  details while preventing invented facts, promises, actions, or attachments.
+- **Recipient or audience** adapts the result for common personal, workplace,
+  customer, support, public, or general-reader contexts. Use **Other** together
+  with the intent/context field for a recipient not listed.
+
+All three controls reset when PromptMeld captures a new selection. This avoids
+guidance intended for one request silently affecting another.
 
 See OpenAI's guide to
 [writing blocks](https://help.openai.com/en/articles/20001246-working-with-writing-blocks-and-code-blocks-in-chatgpt)

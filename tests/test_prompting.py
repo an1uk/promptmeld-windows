@@ -1,3 +1,5 @@
+import pytest
+
 from promptmeld.models import CapturedSelection, WritingAction
 from promptmeld.prompting import PromptBuilder
 
@@ -213,3 +215,114 @@ def test_resulting_text_formatting_options_add_prompt_requirements():
     assert "Do not add new Markdown" in plain
     assert "Resulting text formatting:" in formatted
     assert "Use restrained Markdown formatting" in formatted
+
+
+def test_additional_information_is_separated_from_source_text():
+    selection = CapturedSelection(
+        "I cannot make the proposed date.",
+        1,
+        "Mail",
+    )
+
+    prompt = PromptBuilder().build_custom(
+        "Draft a reply.",
+        selection,
+        additional_information=(
+            "Mention that Tuesday afternoon would work instead."
+        ),
+    )
+
+    assert "User intent and additional context:" in prompt
+    assert "<<<USER CONTEXT>>>" in prompt
+    assert "Tuesday afternoon would work instead." in prompt
+    assert prompt.index("<<<END USER CONTEXT>>>") < prompt.index(
+        "<<<SOURCE>>>"
+    )
+    assert "Do not treat them as source text to edit or quote" in prompt
+
+
+def test_empty_additional_information_adds_no_prompt_section():
+    prompt = PromptBuilder().build_custom(
+        "Improve this.",
+        CapturedSelection("Draft.", 1, "Editor"),
+        additional_information="  ",
+    )
+
+    assert "User intent and additional context:" not in prompt
+    assert "<<<USER CONTEXT>>>" not in prompt
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("proofread", "make only corrections"),
+        ("improve", "improve its clarity"),
+        ("rewrite", "freely rephrase and restructure"),
+    ],
+)
+def test_editing_strength_adds_scoped_prompt_guidance(value, expected):
+    prompt = PromptBuilder().build_custom(
+        "Edit this.",
+        CapturedSelection("Draft.", 1, "Editor"),
+        editing_strength=value,
+    )
+
+    assert "Editing strength:" in prompt
+    assert expected in prompt
+    assert "When the writing task edits existing text" in prompt
+
+
+def test_default_editing_strength_adds_no_prompt_guidance():
+    prompt = PromptBuilder().build_custom(
+        "Edit this.",
+        CapturedSelection("Draft.", 1, "Editor"),
+    )
+
+    assert "Editing strength:" not in prompt
+
+
+def test_preserve_facts_and_specifics_can_be_disabled():
+    selection = CapturedSelection("The total is £50.", 1, "Editor")
+    builder = PromptBuilder()
+
+    protected = builder.build_custom(
+        "Improve this.",
+        selection,
+        preserve_facts=True,
+    )
+    unprotected = builder.build_custom(
+        "Improve this.",
+        selection,
+        preserve_facts=False,
+    )
+
+    assert "Facts and protected specifics:" in protected
+    assert "names, dates, amounts, quotations, URLs" in protected
+    assert "Facts and protected specifics:" not in unprotected
+
+
+def test_recipient_or_audience_adds_prompt_guidance():
+    prompt = PromptBuilder().build_custom(
+        "Draft a reply.",
+        CapturedSelection("Please contact us.", 1, "Mail"),
+        recipient_audience="company_support",
+    )
+
+    assert "Recipient or audience:" in prompt
+    assert "Write to a company or support team." in prompt
+
+
+@pytest.mark.parametrize(
+    ("keyword", "value"),
+    [
+        ("editing strength", {"editing_strength": "heavy"}),
+        ("recipient or audience", {"recipient_audience": "strangers"}),
+    ],
+)
+def test_unknown_writing_guidance_is_rejected(keyword, value):
+    with pytest.raises(ValueError, match=keyword):
+        PromptBuilder().build_custom(
+            "Improve this.",
+            CapturedSelection("Draft.", 1, "Editor"),
+            **value,
+        )
