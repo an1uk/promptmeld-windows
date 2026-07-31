@@ -413,6 +413,37 @@ class ActionSettingsDialog(QDialog):
         self.auto_submit_default.setToolTip(
             "This is also the remembered state of the checkbox in the launcher."
         )
+        self.replace_selected_text_default = QCheckBox(
+            "Replace selected text automatically when possible"
+        )
+        self.replace_selected_text_default.setChecked(
+            voice_settings.replace_selected_text_enabled
+        )
+        self.replace_selected_text_default.setToolTip(
+            "Only applies to selections detected in editable controls and when "
+            "automatic submission is enabled."
+        )
+        self.copy_generated_text_default = QCheckBox(
+            "Copy generated text to the clipboard"
+        )
+        self.copy_generated_text_default.setChecked(
+            voice_settings.copy_generated_text_enabled
+        )
+        self.copy_generated_text_default.setToolTip(
+            "Only applies after ChatGPT has generated a response, so automatic "
+            "submission must be enabled."
+        )
+        self.output_safety_warning = QLabel(
+            "Warning: automatic replacement is destructive. The selected text "
+            "may be lost if the generated result is wrong or the paste fails. "
+            "With Temporary Chat enabled, the original is not retained in "
+            "ChatGPT and may not be recoverable. Consider enabling Windows "
+            "Clipboard History (Win+V) or using a clipboard manager such as "
+            "CopyQ first; clipboard history can retain the original selection "
+            "for recovery, but it may also store sensitive text."
+        )
+        self.output_safety_warning.setObjectName("warning")
+        self.output_safety_warning.setWordWrap(True)
         self.temporary_chat_default = QCheckBox(
             "Turn on Temporary Chat by default"
         )
@@ -434,6 +465,9 @@ class ActionSettingsDialog(QDialog):
         self.submission_description.setObjectName("muted")
         self.submission_description.setWordWrap(True)
         submission_layout.addWidget(self.auto_submit_default)
+        submission_layout.addWidget(self.replace_selected_text_default)
+        submission_layout.addWidget(self.copy_generated_text_default)
+        submission_layout.addWidget(self.output_safety_warning)
         submission_layout.addWidget(self.temporary_chat_default)
         submission_layout.addWidget(self.submission_description)
 
@@ -884,6 +918,8 @@ class ActionSettingsDialog(QDialog):
             self.resulting_text_formatting.currentIndexChanged,
             self.writing_block_default.toggled,
             self.auto_submit_default.toggled,
+            self.replace_selected_text_default.toggled,
+            self.copy_generated_text_default.toggled,
             self.temporary_chat_default.toggled,
             self.natural_voice_default.toggled,
             self.natural_voice_instruction.textChanged,
@@ -1365,6 +1401,8 @@ class ActionSettingsDialog(QDialog):
             str(self.resulting_text_formatting.currentData() or "default"),
             self.writing_block_default.isChecked(),
             self.auto_submit_default.isChecked(),
+            self.replace_selected_text_default.isChecked(),
+            self.copy_generated_text_default.isChecked(),
             self.temporary_chat_default.isChecked(),
             self.natural_voice_default.isChecked(),
             self.natural_voice_instruction.toPlainText().strip(),
@@ -1541,6 +1579,12 @@ class ActionSettingsDialog(QDialog):
                     ),
                     auto_submit_enabled=(
                         self.auto_submit_default.isChecked()
+                    ),
+                    replace_selected_text_enabled=(
+                        self.replace_selected_text_default.isChecked()
+                    ),
+                    copy_generated_text_enabled=(
+                        self.copy_generated_text_default.isChecked()
                     ),
                     temporary_chat_enabled=(
                         self.temporary_chat_default.isChecked()

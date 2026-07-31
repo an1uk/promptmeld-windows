@@ -40,3 +40,16 @@ def test_failed_submission_notifies_user_to_take_action():
 
     assert notifications[0][0] == "ChatGPT needs attention"
     assert notifications[0][1] == result.message
+
+
+def test_failed_generated_output_notifies_user_that_text_was_not_replaced():
+    result = SubmissionResult(
+        submitted=True,
+        output_failed=True,
+        message="The original text was not replaced.",
+    )
+
+    notifications = _notifications_for(result)
+
+    assert notifications[0][0] == "Generated text could not be returned"
+    assert notifications[0][1] == result.message

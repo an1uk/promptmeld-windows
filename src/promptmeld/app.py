@@ -371,6 +371,8 @@ class PromptMeld:
                 QSystemTrayIcon.MessageIcon.Warning,
             )
             return
+        if not self._confirm_automatic_replacement(self.current_selection):
+            return
         try:
             prompt = self.prompt_builder.build_custom(
                 instruction,
@@ -394,7 +396,7 @@ class PromptMeld:
             self.notify(APP_NAME, str(exc), QSystemTrayIcon.MessageIcon.Warning)
             return
         self.usage.record("__custom__")
-        self._submit_prompt(prompt)
+        self._submit_prompt(prompt, selection=self.current_selection)
 
     def _submit_action(
         self,
@@ -406,6 +408,8 @@ class PromptMeld:
         preserve_facts: bool = True,
         recipient_audience: str = "unspecified",
     ) -> None:
+        if not self._confirm_automatic_replacement(selection):
+            return
         prompt = self.prompt_builder.build(
             action,
             selection,
@@ -432,7 +436,40 @@ class PromptMeld:
                 self.settings.project_name,
                 action,
             ),
+            selection=selection,
         )
+
+    def _confirm_automatic_replacement(
+        self,
+        selection: CapturedSelection,
+    ) -> bool:
+        if not (
+            self.settings.replace_selected_text_enabled
+            and self.settings.auto_submit_enabled
+            and selection.source_is_editable
+        ):
+            return True
+        chat_mode = (
+            "Temporary Chat is enabled, so the original text will not be saved "
+            "in ChatGPT."
+            if self.settings.temporary_chat_enabled
+            else "The original may not be recoverable if the replacement goes wrong."
+        )
+        response = QMessageBox.warning(
+            self.popup,
+            "Confirm automatic text replacement",
+            "PromptMeld will automatically replace the selected text after "
+            "ChatGPT generates a response. The generated text may be wrong, "
+            "and the existing text may be lost. "
+            f"{chat_mode}\n\n"
+            "Before using this, consider enabling Windows Clipboard History "
+            "(Win+V) or a clipboard manager such as CopyQ. This may preserve "
+            "the original selection for recovery, but clipboard history can "
+            "retain sensitive text.\n\nDo you want to continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return response == QMessageBox.StandardButton.Yes
 
     def set_natural_voice_enabled(self, enabled: bool) -> None:
         if enabled == self.settings.natural_voice_enabled:
@@ -585,9 +622,11 @@ class PromptMeld:
         self,
         prompt: str,
         project_name: str | None = None,
+        selection: CapturedSelection | None = None,
     ) -> None:
         project_name = project_name or self.settings.project_name
         settings = self.settings
+        selection = selection or self.current_selection
         progress_window = self._show_automation_progress(
             project_name,
             temporary_chat=settings.temporary_chat_enabled,
@@ -597,6 +636,10 @@ class PromptMeld:
                 prompt,
                 project_name,
                 settings,
+                source_hwnd=(selection.source_hwnd if selection else None),
+                source_is_editable=(
+                    selection.source_is_editable if selection else False
+                ),
                 progress_callback=report_progress,
             ),
             with_progress=True,
@@ -646,6 +689,30 @@ class PromptMeld:
                 result.message,
                 QSystemTrayIcon.MessageIcon.Information,
                 6500,
+            )
+            return
+        if result.selection_replaced:
+            self.notify(
+                "Text replaced",
+                result.message,
+                QSystemTrayIcon.MessageIcon.Information,
+                6500,
+            )
+            return
+        if result.generated_text_copied:
+            self.notify(
+                "Generated text copied",
+                result.message,
+                QSystemTrayIcon.MessageIcon.Information,
+                6500,
+            )
+            return
+        if result.output_failed:
+            self.notify(
+                "Generated text could not be returned",
+                result.message,
+                QSystemTrayIcon.MessageIcon.Warning,
+                8000,
             )
             return
         if not result.submitted:

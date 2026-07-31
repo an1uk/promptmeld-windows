@@ -213,6 +213,9 @@ def submit_via_worker(
     prompt: str,
     project_name: str,
     settings: AppSettings,
+    *,
+    source_hwnd: int | None = None,
+    source_is_editable: bool = False,
     progress_callback: Callable[[str, str], None] | None = None,
 ) -> SubmissionResult:
     payload = {
@@ -223,6 +226,10 @@ def submit_via_worker(
         "project_uri": settings.project_uri,
         "auto_submit": settings.auto_submit_enabled,
         "temporary_chat": settings.temporary_chat_enabled,
+        "source_hwnd": source_hwnd,
+        "source_is_editable": source_is_editable,
+        "replace_selected_text": settings.replace_selected_text_enabled,
+        "copy_generated_text": settings.copy_generated_text_enabled,
     }
     try:
         raw = _request_from_helper(
@@ -245,6 +252,11 @@ def submit_via_worker(
             submitted=bool(raw["submitted"]),
             prepared=bool(raw.get("prepared", False)),
             fallback_copied=bool(raw.get("fallback_copied", False)),
+            generated_text_copied=bool(
+                raw.get("generated_text_copied", False)
+            ),
+            selection_replaced=bool(raw.get("selection_replaced", False)),
+            output_failed=bool(raw.get("output_failed", False)),
             message=str(raw.get("message", "")),
         )
     except Exception:

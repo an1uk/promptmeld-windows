@@ -58,6 +58,11 @@ advance.
 The **Defaults & style** tab controls:
 
 - Automatic submission, which is off by default.
+- Copying generated text to the clipboard after ChatGPT responds. This also
+  requires automatic submission.
+- Replacing selected text automatically when the source selection was detected
+  in an editable control. This also requires automatic submission; selections
+  from non-editable fields continue to use the normal PromptMeld workflow.
 - Temporary Chat, which opens a top-level chat instead of using the writing
   action's configured Project. ChatGPT may show a one-time explanation;
   PromptMeld waits while you read and respond to it and does not activate
@@ -80,6 +85,16 @@ setting for the next use. The launcher's **Temporary Chat** checkbox is also
 remembered. Less frequently changed length, formatting, and writing-block
 settings are grouped under the launcher's **Output options** menu and are
 remembered in the same way.
+
+Automatic replacement is destructive and opt-in. The generated response may be
+wrong or unsuitable, and the existing selection may be lost if the result is
+incorrect or the paste fails. With Temporary Chat enabled, the original text
+is not retained in ChatGPT and may not be recoverable. Consider enabling
+Windows Clipboard History (`Win+V`) or using a clipboard manager such as
+[CopyQ](https://copyq.readthedocs.io/en/stable/) before using replacement.
+Clipboard history may preserve the original selection because PromptMeld
+captures it through the clipboard, but clipboard tools can retain sensitive
+text and are not guaranteed recovery.
 
 The launcher's **Intent or additional context** field is deliberately temporary
 and is cleared whenever a new selection is captured. It adds the desired
@@ -184,6 +199,8 @@ Home-screen, submission, language, and style settings are stored in
   "popup_hotkey": "Ctrl+Alt+Space",
   "home_most_used_count": 3,
   "auto_submit_enabled": false,
+  "replace_selected_text_enabled": false,
+  "copy_generated_text_enabled": false,
   "natural_voice_enabled": false,
   "natural_voice_instruction": "Preserve the writer's individual voice...",
   "primary_language": "English (UK)",
