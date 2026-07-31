@@ -231,6 +231,7 @@ The formal warranty and liability terms are contained in the
 
 ## Documentation
 
+- [Research report: AI Writing — Promise, Resistance and Access](docs/AI_WRITING_PROMISE_RESISTANCE_AND_ACCESS.md)
 - [Privacy](PRIVACY.md)
 - [Configuration and customisation](docs/CONFIGURATION.md)
 - [ChatGPT automation and fallback behaviour](docs/AUTOMATION.md)
