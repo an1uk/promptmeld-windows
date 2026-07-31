@@ -136,6 +136,7 @@ def test_load_settings_includes_home_and_folder_display_defaults(tmp_path):
     assert settings.folder_icons["Editing"] == "lucide:pencil"
     assert settings.natural_voice_enabled is False
     assert settings.auto_submit_enabled is False
+    assert settings.temporary_chat_enabled is False
     assert "individual voice" in settings.natural_voice_instruction
     assert settings.primary_language == "English (UK)"
     assert settings.guided_drafting_enabled is False
@@ -153,6 +154,17 @@ def test_load_settings_rejects_invalid_auto_submit_value(tmp_path):
     )
 
     with pytest.raises(ConfigurationError, match="auto_submit_enabled"):
+        load_settings(path)
+
+
+def test_load_settings_rejects_invalid_temporary_chat_value(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"temporary_chat_enabled": "sometimes"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="temporary_chat_enabled"):
         load_settings(path)
 
 

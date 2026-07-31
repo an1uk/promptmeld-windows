@@ -4,6 +4,7 @@ import io
 import json
 
 from promptmeld import automation_worker
+from promptmeld.models import SubmissionResult
 
 
 def test_worker_requests_per_monitor_v2_dpi_awareness(monkeypatch):
@@ -16,6 +17,44 @@ def test_worker_requests_per_monitor_v2_dpi_awareness(monkeypatch):
 
     assert enabled is True
     assert requested == [automation_worker.PER_MONITOR_AWARE_V2]
+
+
+def test_worker_forwards_temporary_chat_choice(monkeypatch):
+    calls = []
+
+    class FakeAdapter:
+        timings = []
+
+        def __init__(self, **kwargs):
+            pass
+
+        def submit(self, prompt, project_name, **kwargs):
+            calls.append((prompt, project_name, kwargs))
+            return SubmissionResult(
+                submitted=False,
+                fallback_copied=False,
+                prepared=True,
+                message="Prompt ready.",
+            )
+
+    monkeypatch.setattr(automation_worker, "ChatGPTDesktop", FakeAdapter)
+
+    response = automation_worker._process_payload(
+        {
+            "prompt": "complete prompt",
+            "project_name": "PromptMeld",
+            "temporary_chat": True,
+        }
+    )
+
+    assert calls == [
+        (
+            "complete prompt",
+            "PromptMeld",
+            {"auto_submit": False, "temporary_chat": True},
+        )
+    ]
+    assert response["prepared"] is True
 
 
 def test_server_processes_multiple_requests_before_shutdown(monkeypatch):

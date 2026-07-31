@@ -9,7 +9,8 @@
 PromptMeld is a Windows companion for turning selected text into focused
 ChatGPT writing requests. Highlight text in almost any application, choose a
 writing action, and PromptMeld opens a fresh chat in an organised ChatGPT
-Project and inserts the completed prompt.
+Project—or, optionally, a Temporary Chat outside Projects—and inserts the
+completed prompt.
 
 It is designed to remove repetitive copying, prompt-writing, and navigation
 while keeping you in control of what reaches ChatGPT and when it is submitted.
@@ -32,6 +33,9 @@ ChatGPT and inserts the combined request into a fresh chat.
 - Supports custom instructions, action-specific hotkeys, and imported icons.
 - Offers optional natural-voice, guided-drafting, length, formatting, and
   copyable-writing-block controls.
+- Provides per-request guidance for editing strength, factual preservation,
+  recipient or audience, and the writer's intent or additional context.
+- Can use ChatGPT Temporary Chat instead of the action's configured Project.
 - Leaves prompts unsubmitted by default, giving you time to choose the model or
   reasoning level in ChatGPT.
 - Uses Windows accessibility controls instead of relying on fixed screen
@@ -89,6 +93,28 @@ appropriate PromptMeld Project, starts a fresh chat, and inserts the prompt.
 Automatic submission is off by default, so you can review the prompt and
 choose ChatGPT settings before sending it.
 
+Use **Intent or additional context** in the launcher to supply a desired
+outcome, constraint, or point that is not already present in the selected
+text. PromptMeld keeps these notes separate from the source text in the
+generated prompt. They work with both configured writing actions and one-off
+instructions.
+
+The **Writing guidance** menu provides per-request controls for:
+
+- **Editing strength:** Default, Proofread, Improve, or Rewrite.
+- **Preserve facts and specifics:** protects names, dates, amounts, quotations,
+  URLs, product details, policies, commitments, and similar details.
+- **Recipient or audience:** adapts wording for personal, workplace, customer,
+  support, public, or general-reader contexts.
+
+These choices reset for each newly captured selection. Factual protection
+starts On; editing strength and audience start at their neutral defaults.
+
+Turn on **Temporary Chat** in the launcher when you do not want the action to
+use its configured Project. On first use, ChatGPT may show an explanation with
+a **Continue** button. PromptMeld pauses so you can read and respond to that
+dialog yourself; it never accepts the explanation for you.
+
 If the required ChatGPT controls cannot be verified safely, PromptMeld focuses
 ChatGPT and leaves the completed prompt on the clipboard for you to paste
 manually.
@@ -119,11 +145,11 @@ PromptMeld inserts the completed prompt through verified local accessibility
 controls, using a targeted clipboard paste only when direct insertion is
 unavailable.
 
-Selected text, one-off custom instructions, and completed prompts are not
-written to PromptMeld's settings, usage data, or logs. After successful
-insertion, the original selected text is restored to the clipboard. If safe
-automation is not possible, the completed prompt remains there for manual
-pasting.
+Selected text, additional information, one-off custom instructions, and
+completed prompts are not written to PromptMeld's settings, usage data, or
+logs. After successful insertion, the original selected text is restored to
+the clipboard. If safe automation is not possible, the completed prompt
+remains there for manual pasting.
 
 Clipboard-history tools, including Windows Clipboard History and third-party
 clipboard managers, may independently retain copied text. Once text is inserted
@@ -157,6 +183,32 @@ PromptMeld is an early open-source project, and participation is welcome.
 help test new releases, improve the documentation, or submit a pull request.
 If you plan a substantial change, opening an issue first is a good way to
 discuss the approach.
+
+## Disclaimer
+
+PromptMeld is experimental software supplied **as is**, without any guarantee
+that it will be uninterrupted, error-free, compatible with every system, or
+suitable for a particular purpose. It depends on Windows, the ChatGPT desktop
+app, Windows accessibility controls, and third-party services whose behaviour
+and interfaces may change without notice.
+
+PromptMeld may fail to capture, transform, paste, or submit text correctly.
+ChatGPT may produce inaccurate, incomplete, inappropriate, or unexpected
+content. Always review the completed prompt and resulting text before sending,
+publishing, or relying on it. Keep appropriate backups and do not use
+PromptMeld or AI-generated output as a substitute for professional advice or
+for safety-critical decisions.
+
+To the fullest extent permitted by applicable law, PromptMeld's authors,
+contributors, and distributors accept no liability for any loss, damage,
+claim, cost, missed or incorrect communication, data loss, business
+interruption, account issue, or other consequence arising from the software,
+its failure, its use or inability to be used, AI-generated content, or
+third-party services. Nothing in this disclaimer excludes or restricts any
+liability that cannot lawfully be excluded or restricted.
+
+The formal warranty and liability terms are contained in the
+[MIT Licence](LICENSE).
 
 ## Documentation
 

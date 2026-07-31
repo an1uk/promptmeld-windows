@@ -69,6 +69,7 @@ def _process_payload(
         str(payload["prompt"]),
         str(payload["project_name"]),
         auto_submit=bool(payload.get("auto_submit", False)),
+        temporary_chat=bool(payload.get("temporary_chat", False)),
     )
     response = asdict(result)
     response["_timings"] = adapter.timings

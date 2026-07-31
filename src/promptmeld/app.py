@@ -175,6 +175,7 @@ class PromptMeld:
                 self.settings.folder_icons,
                 self.settings.natural_voice_enabled,
                 self.settings.auto_submit_enabled,
+                self.settings.temporary_chat_enabled,
                 self.settings.guided_drafting_enabled,
                 self.settings.resulting_text_length,
                 self.settings.writing_block_enabled,
@@ -200,6 +201,7 @@ class PromptMeld:
                 self.settings.folder_icons,
                 self.settings.natural_voice_enabled,
                 self.settings.auto_submit_enabled,
+                self.settings.temporary_chat_enabled,
                 self.settings.theme,
                 self.settings.guided_drafting_enabled,
                 self.settings.resulting_text_length,
@@ -213,6 +215,9 @@ class PromptMeld:
             )
             self.popup.auto_submit_changed.connect(
                 self.set_auto_submit_enabled
+            )
+            self.popup.temporary_chat_changed.connect(
+                self.set_temporary_chat_enabled
             )
             self.popup.guided_drafting_changed.connect(
                 self.set_guided_drafting_enabled
@@ -326,7 +331,14 @@ class PromptMeld:
             return
         self._submit_action(action, selection)
 
-    def run_action(self, action_id: str) -> None:
+    def run_action(
+        self,
+        action_id: str,
+        additional_information: str = "",
+        editing_strength: str = "default",
+        preserve_facts: bool = True,
+        recipient_audience: str = "unspecified",
+    ) -> None:
         action = self.registry.get(action_id)
         if action is None or self.current_selection is None:
             self.notify(
@@ -335,9 +347,23 @@ class PromptMeld:
                 QSystemTrayIcon.MessageIcon.Warning,
             )
             return
-        self._submit_action(action, self.current_selection)
+        self._submit_action(
+            action,
+            self.current_selection,
+            additional_information=additional_information,
+            editing_strength=editing_strength,
+            preserve_facts=preserve_facts,
+            recipient_audience=recipient_audience,
+        )
 
-    def run_custom(self, instruction: str) -> None:
+    def run_custom(
+        self,
+        instruction: str,
+        additional_information: str = "",
+        editing_strength: str = "default",
+        preserve_facts: bool = True,
+        recipient_audience: str = "unspecified",
+    ) -> None:
         if self.current_selection is None:
             self.notify(
                 APP_NAME,
@@ -359,6 +385,10 @@ class PromptMeld:
                 resulting_text_formatting=(
                     self.settings.resulting_text_formatting
                 ),
+                additional_information=additional_information,
+                editing_strength=editing_strength,
+                preserve_facts=preserve_facts,
+                recipient_audience=recipient_audience,
             )
         except ValueError as exc:
             self.notify(APP_NAME, str(exc), QSystemTrayIcon.MessageIcon.Warning)
@@ -370,6 +400,11 @@ class PromptMeld:
         self,
         action: WritingAction,
         selection: CapturedSelection,
+        *,
+        additional_information: str = "",
+        editing_strength: str = "default",
+        preserve_facts: bool = True,
+        recipient_audience: str = "unspecified",
     ) -> None:
         prompt = self.prompt_builder.build(
             action,
@@ -385,6 +420,10 @@ class PromptMeld:
             resulting_text_formatting=(
                 self.settings.resulting_text_formatting
             ),
+            additional_information=additional_information,
+            editing_strength=editing_strength,
+            preserve_facts=preserve_facts,
+            recipient_audience=recipient_audience,
         )
         self.usage.record(action.id)
         self._submit_prompt(
@@ -449,6 +488,27 @@ class PromptMeld:
             if self.popup is not None:
                 self.popup.set_guided_drafting_enabled(
                     previous.guided_drafting_enabled
+                )
+            self.notify(
+                "Setting could not be saved",
+                str(exc),
+                QSystemTrayIcon.MessageIcon.Warning,
+            )
+            return
+        self.settings = updated
+
+    def set_temporary_chat_enabled(self, enabled: bool) -> None:
+        if enabled == self.settings.temporary_chat_enabled:
+            return
+        previous = self.settings
+        updated = replace(previous, temporary_chat_enabled=enabled)
+        try:
+            save_settings(self.paths.settings_file, updated)
+        except OSError as exc:
+            LOGGER.exception("Could not save temporary chat setting")
+            if self.popup is not None:
+                self.popup.set_temporary_chat_enabled(
+                    previous.temporary_chat_enabled
                 )
             self.notify(
                 "Setting could not be saved",
@@ -528,7 +588,10 @@ class PromptMeld:
     ) -> None:
         project_name = project_name or self.settings.project_name
         settings = self.settings
-        progress_window = self._show_automation_progress(project_name)
+        progress_window = self._show_automation_progress(
+            project_name,
+            temporary_chat=settings.temporary_chat_enabled,
+        )
         worker = FunctionWorker(
             lambda report_progress: submit_via_worker(
                 prompt,
@@ -550,6 +613,8 @@ class PromptMeld:
     def _show_automation_progress(
         self,
         project_name: str,
+        *,
+        temporary_chat: bool = False,
     ) -> AutomationProgressWindow:
         from .automation_progress import AutomationProgressWindow
 
@@ -562,7 +627,10 @@ class PromptMeld:
             self.automation_progress = AutomationProgressWindow(
                 self.settings.theme
             )
-        self.automation_progress.begin(project_name)
+        self.automation_progress.begin(
+            project_name,
+            temporary_chat=temporary_chat,
+        )
         return self.automation_progress
 
     def _submission_finished(

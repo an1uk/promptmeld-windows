@@ -20,7 +20,8 @@ from promptmeld.settings_ui import (
 )
 from promptmeld.ui import LauncherPopup
 from promptmeld.usage import UsageTracker
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import (
     QDialogButtonBox,
@@ -88,6 +89,15 @@ def test_automation_progress_keeps_final_result_in_history(qtbot):
     assert window.close_button.isVisible()
 
 
+def test_automation_progress_identifies_temporary_chat(qtbot):
+    window = AutomationProgressWindow("light")
+    qtbot.addWidget(window)
+
+    window.begin("PromptMeld", temporary_chat=True)
+
+    assert window.project.text() == "Temporary Chat (outside Projects)"
+
+
 def test_promptmeld_tagline_is_shown_in_launcher_and_configuration(
     qtbot,
     tmp_path,
@@ -128,6 +138,70 @@ def test_promptmeld_tagline_is_shown_in_launcher_and_configuration(
     heading = dialog.findChild(QLabel, "settingsTitle")
     assert heading is not None
     assert dialog.tagline.geometry().top() == heading.geometry().top()
+
+
+def test_launcher_header_can_drag_the_window(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        )
+    )
+    qtbot.addWidget(popup)
+    popup.move(120, 100)
+    popup.show()
+    qtbot.wait(0)
+    start = popup.title.mapToGlobal(QPoint(4, 4))
+
+    pressed = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        QPointF(4, 4),
+        QPointF(start),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    moved = QMouseEvent(
+        QEvent.Type.MouseMove,
+        QPointF(44, 29),
+        QPointF(start + QPoint(40, 25)),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    released = QMouseEvent(
+        QEvent.Type.MouseButtonRelease,
+        QPointF(44, 29),
+        QPointF(start + QPoint(40, 25)),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    assert popup.eventFilter(popup.title, pressed) is True
+    assert popup.eventFilter(popup.title, moved) is True
+    assert popup.pos() == QPoint(160, 125)
+    assert popup.eventFilter(popup.title, released) is True
+    assert popup._dragging is False
+
+
+def test_launcher_has_top_right_close_button(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        )
+    )
+    qtbot.addWidget(popup)
+    popup.show()
+
+    assert popup.close_button.text() == "×"
+    assert popup.close_button.accessibleName() == "Close launcher"
+    assert popup.close_button.geometry().center().x() > popup.width() // 2
+
+    qtbot.mouseClick(popup.close_button, Qt.MouseButton.LeftButton)
+
+    assert popup.isVisible() is False
 
 
 def test_popup_filters_actions(qtbot, tmp_path):
@@ -182,6 +256,24 @@ def test_popup_exposes_remembered_auto_submit_toggle(qtbot, tmp_path):
     assert popup.auto_submit_enabled is True
 
 
+def test_popup_exposes_remembered_temporary_chat_toggle(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        ),
+        temporary_chat_enabled=True,
+    )
+    qtbot.addWidget(popup)
+
+    assert popup.temporary_chat.isChecked() is True
+    with qtbot.waitSignal(popup.temporary_chat_changed) as signal:
+        popup.temporary_chat.setChecked(False)
+
+    assert signal.args == [False]
+    assert popup.temporary_chat_enabled is False
+
+
 def test_popup_exposes_remembered_guided_questions_toggle(qtbot, tmp_path):
     popup = LauncherPopup(
         ActionRegistry(
@@ -215,6 +307,20 @@ def test_launcher_guided_questions_toggle_is_saved(qtbot, tmp_path):
     assert load_settings(paths.settings_file).guided_drafting_enabled is True
 
 
+def test_launcher_temporary_chat_toggle_is_saved(qtbot, tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    app = object.__new__(PromptMeld)
+    app.settings = AppSettings(temporary_chat_enabled=False)
+    app.paths = paths
+    app.popup = None
+    app.notify = lambda *args: None
+
+    app.set_temporary_chat_enabled(True)
+
+    assert load_settings(paths.settings_file).temporary_chat_enabled is True
+
+
 def test_popup_exposes_remembered_resulting_text_length(qtbot, tmp_path):
     popup = LauncherPopup(
         ActionRegistry(
@@ -233,12 +339,20 @@ def test_popup_exposes_remembered_resulting_text_length(qtbot, tmp_path):
         "long",
         "extra_long",
     ]
-    assert popup.length_actions["long"].isChecked() is True
+    assert popup.length_actions["long"].isCheckable() is False
+    assert popup.length_actions["long"].text() == "Long  (selected)"
+    assert popup.length_actions["long"].font().bold() is True
+    assert popup.length_menu_action.text() == "Resulting text length: Long"
     with qtbot.waitSignal(popup.resulting_text_length_changed) as signal:
         popup.length_actions["extra_short"].trigger()
 
     assert signal.args == ["extra_short"]
     assert popup.resulting_text_length_value == "extra_short"
+    assert (
+        popup.length_actions["extra_short"].text()
+        == "Extra short  (selected)"
+    )
+    assert popup.length_actions["long"].text() == "Long"
 
 
 def test_launcher_resulting_text_length_is_saved(qtbot, tmp_path):
@@ -265,12 +379,18 @@ def test_popup_exposes_remembered_writing_block_toggle(qtbot, tmp_path):
     )
     qtbot.addWidget(popup)
 
-    assert popup.writing_block_action.isChecked() is True
+    assert popup.writing_block_actions[True].isCheckable() is False
+    assert popup.writing_block_actions[True].text() == "On  (selected)"
+    assert (
+        popup.writing_block_menu_action.text()
+        == "Copyable writing block: On"
+    )
     with qtbot.waitSignal(popup.writing_block_changed) as signal:
-        popup.writing_block_action.trigger()
+        popup.writing_block_actions[False].trigger()
 
     assert signal.args == [False]
     assert popup.writing_block_enabled is False
+    assert popup.writing_block_actions[False].text() == "Off  (selected)"
 
 
 def test_launcher_writing_block_toggle_is_saved(qtbot, tmp_path):
@@ -300,7 +420,15 @@ def test_popup_exposes_resulting_text_formatting_in_output_menu(
     )
     qtbot.addWidget(popup)
 
-    assert popup.formatting_actions["plain"].isChecked() is True
+    assert popup.formatting_actions["plain"].isCheckable() is False
+    assert (
+        popup.formatting_actions["plain"].text()
+        == "Do not add formatting  (selected)"
+    )
+    assert (
+        popup.formatting_menu_action.text()
+        == "Formatting: Do not add formatting"
+    )
     assert "No added formatting" in popup.output_summary.text()
     with qtbot.waitSignal(
         popup.resulting_text_formatting_changed
@@ -422,11 +550,110 @@ def test_popup_single_clicks_folders_but_not_actions(qtbot, tmp_path):
     action_item = popup.list.item(1)
     popup.list.itemClicked.emit(action_item)
     assert requested.count() == 0
+    popup.additional_information.setPlainText(
+        "Mention that Tuesday afternoon works."
+    )
+    popup.set_editing_strength("proofread")
+    popup.set_preserve_facts_enabled(False)
+    popup.set_recipient_audience("company_support")
 
     popup.list.itemDoubleClicked.emit(action_item)
 
     assert requested.count() == 1
-    assert requested.at(0) == ["edit"]
+    assert requested.at(0) == [
+        "edit",
+        "Mention that Tuesday afternoon works.",
+        "proofread",
+        False,
+        "company_support",
+    ]
+
+
+def test_popup_adds_information_to_a_one_off_instruction(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        )
+    )
+    qtbot.addWidget(popup)
+    requested = QSignalSpy(popup.custom_requested)
+    popup.custom.setText("Draft a reply")
+    popup.additional_information.setPlainText(
+        "Make clear that I cannot agree to the fee."
+    )
+    popup.set_editing_strength("rewrite")
+    popup.set_recipient_audience("customer_client")
+
+    popup.custom_send.click()
+
+    assert requested.count() == 1
+    assert requested.at(0) == [
+        "Draft a reply",
+        "Make clear that I cannot agree to the fee.",
+        "rewrite",
+        True,
+        "customer_client",
+    ]
+
+
+def test_popup_writing_guidance_menu_shows_current_choices(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        )
+    )
+    qtbot.addWidget(popup)
+
+    assert popup.editing_actions["default"].isCheckable() is False
+    assert popup.editing_actions["default"].text() == "Default  (selected)"
+    assert popup.preserve_actions[True].text() == "On  (selected)"
+    assert (
+        popup.audience_actions["unspecified"].text()
+        == "Not specified  (selected)"
+    )
+
+    popup.editing_actions["improve"].trigger()
+    popup.preserve_actions[False].trigger()
+    popup.audience_actions["manager_senior"].trigger()
+
+    assert popup.editing_menu_action.text() == "Editing strength: Improve"
+    assert (
+        popup.preserve_menu_action.text()
+        == "Preserve facts and specifics: Off"
+    )
+    assert (
+        popup.audience_menu_action.text()
+        == "Recipient or audience: Manager or senior colleague"
+    )
+    assert "Improve" in popup.guidance_summary.text()
+    assert "Specifics unprotected" in popup.guidance_summary.text()
+    assert "Manager or senior colleague" in popup.guidance_summary.text()
+
+
+def test_popup_clears_additional_information_for_a_new_capture(
+    qtbot,
+    tmp_path,
+):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        )
+    )
+    qtbot.addWidget(popup)
+    popup.additional_information.setPlainText("Context from an old request")
+    popup.set_editing_strength("rewrite")
+    popup.set_preserve_facts_enabled(False)
+    popup.set_recipient_audience("public_online")
+
+    popup.show_at_cursor()
+
+    assert popup.additional_information.toPlainText() == ""
+    assert popup.editing_strength_value == "default"
+    assert popup.preserve_facts_enabled is True
+    assert popup.recipient_audience_value == "unspecified"
 
 
 def test_popup_shows_direct_and_real_most_used_actions(qtbot, tmp_path):
@@ -779,6 +1006,7 @@ def test_action_settings_saves_natural_voice_configuration(qtbot, tmp_path):
 
     dialog.natural_voice_default.setChecked(True)
     dialog.auto_submit_default.setChecked(True)
+    dialog.temporary_chat_default.setChecked(True)
     dialog.natural_voice_instruction.setPlainText("Keep my own vocabulary.")
     dialog.primary_language.setCurrentText("English (US)")
     dialog.natural_voice_mode.setCurrentIndex(
@@ -798,6 +1026,7 @@ def test_action_settings_saves_natural_voice_configuration(qtbot, tmp_path):
     saved_settings = load_settings(paths.settings_file)
     assert saved_settings.natural_voice_enabled is True
     assert saved_settings.auto_submit_enabled is True
+    assert saved_settings.temporary_chat_enabled is True
     assert (
         saved_settings.natural_voice_instruction
         == "Keep my own vocabulary."
@@ -856,9 +1085,11 @@ def test_submission_help_explains_model_selection(qtbot, tmp_path):
     qtbot.addWidget(dialog)
 
     assert dialog.auto_submit_default.isChecked() is False
+    assert dialog.temporary_chat_default.isChecked() is False
     help_text = dialog.submission_description.text()
     assert "without pressing Enter" in help_text
     assert "model or reasoning level" in help_text
+    assert "must review and confirm yourself" in help_text
 
 
 def test_action_settings_saves_a_badged_folder_icon(qtbot, tmp_path):

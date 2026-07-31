@@ -51,7 +51,36 @@ def test_automation_client_sends_prompt_to_helper(monkeypatch):
     assert result.submitted is True
     assert calls[0][0]["prompt"] == "private prompt"
     assert calls[0][0]["auto_submit"] is False
+    assert calls[0][0]["temporary_chat"] is False
     assert calls[0][1] == 20.0
+
+
+def test_temporary_chat_allows_time_for_user_confirmation(monkeypatch):
+    calls = []
+
+    def fake_request(payload, timeout_seconds, progress_callback=None):
+        calls.append((payload, timeout_seconds))
+        return {
+            "submitted": False,
+            "prepared": True,
+            "fallback_copied": False,
+            "message": "Prompt ready.",
+        }
+
+    monkeypatch.setattr(
+        automation_client,
+        "_request_from_helper",
+        fake_request,
+    )
+
+    automation_client.submit_via_worker(
+        "private prompt",
+        "PromptMeld",
+        AppSettings(temporary_chat_enabled=True),
+    )
+
+    assert calls[0][0]["temporary_chat"] is True
+    assert calls[0][1] >= 75.0
 
 
 def test_automation_client_preserves_prepared_result(monkeypatch):

@@ -38,6 +38,29 @@ RESULTING_TEXT_FORMATTING_OPTIONS = (
 RESULTING_TEXT_FORMATTING_VALUES = tuple(
     value for value, _label in RESULTING_TEXT_FORMATTING_OPTIONS
 )
+EDITING_STRENGTH_OPTIONS = (
+    ("default", "Default"),
+    ("proofread", "Proofread"),
+    ("improve", "Improve"),
+    ("rewrite", "Rewrite"),
+)
+EDITING_STRENGTH_VALUES = tuple(
+    value for value, _label in EDITING_STRENGTH_OPTIONS
+)
+RECIPIENT_AUDIENCE_OPTIONS = (
+    ("unspecified", "Not specified"),
+    ("friend_family", "Friend or family"),
+    ("colleague_peer", "Colleague or peer"),
+    ("manager_senior", "Manager or senior colleague"),
+    ("customer_client", "Customer or client"),
+    ("company_support", "Company or support team"),
+    ("public_online", "Public or online audience"),
+    ("general_reader", "General reader"),
+    ("other", "Other (describe in context)"),
+)
+RECIPIENT_AUDIENCE_VALUES = tuple(
+    value for value, _label in RECIPIENT_AUDIENCE_OPTIONS
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +115,7 @@ class AppSettings:
     natural_voice_enabled: bool = False
     natural_voice_instruction: str = DEFAULT_NATURAL_VOICE_INSTRUCTION
     auto_submit_enabled: bool = False
+    temporary_chat_enabled: bool = False
     primary_language: str = "English (UK)"
     guided_drafting_enabled: bool = False
     resulting_text_length: str = "default"
