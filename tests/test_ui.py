@@ -24,6 +24,7 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import (
+    QDialog,
     QDialogButtonBox,
     QHeaderView,
     QLabel,
@@ -309,23 +310,25 @@ def test_open_configuration_hides_tool_windows_and_reuses_dialog(qtbot):
         def hide(self):
             events.append("hide-tool")
 
-    class SettingsDialog:
+    class SettingsDialog(QDialog):
         def showNormal(self):
             events.append("show-normal")
+            super().showNormal()
 
         def raise_(self):
             events.append("raise")
+            super().raise_()
 
         def activateWindow(self):
             events.append("activate")
-
-        def isVisible(self):
-            return True
+            super().activateWindow()
 
     app = object.__new__(PromptMeld)
     app.popup = ToolWindow()
     app.automation_progress = ToolWindow()
-    app.settings_dialog = SettingsDialog()
+    dialog = SettingsDialog()
+    qtbot.addWidget(dialog)
+    app.settings_dialog = dialog
 
     app.open_action_settings()
 
@@ -336,6 +339,62 @@ def test_open_configuration_hides_tool_windows_and_reuses_dialog(qtbot):
         "raise",
         "activate",
     ]
+    app.settings_dialog = None
+    dialog.close()
+
+
+def test_open_configuration_recreates_an_unusable_dialog(qtbot):
+    events: list[str] = []
+
+    class StaleSettingsDialog:
+        def windowState(self):
+            raise RuntimeError("Internal C++ object already deleted")
+
+        def hide(self):
+            events.append("discard-stale")
+
+        def close(self):
+            events.append("close-stale")
+
+    class FreshSettingsDialog(QDialog):
+        def showNormal(self):
+            events.append("show-fresh")
+            super().showNormal()
+
+    class SignalStub:
+        def connect(self, callback):
+            self.callback = callback
+
+    class Hotkeys:
+        def unregister_all(self):
+            events.append("unregister-hotkeys")
+
+    app = object.__new__(PromptMeld)
+    app.popup = None
+    app.automation_progress = None
+    app.settings_dialog = StaleSettingsDialog()
+    app.hotkeys = Hotkeys()
+    app.icons = None
+    app.register_hotkeys = lambda: events.append("register-hotkeys")
+    app.reload_configuration_after_save = lambda: None
+    app.notify = lambda *args: events.append("notify")
+
+    fresh = FreshSettingsDialog()
+    fresh.actions_saved = SignalStub()
+    qtbot.addWidget(fresh)
+    app._create_settings_dialog = lambda: fresh
+
+    app.open_action_settings()
+
+    assert app.settings_dialog is fresh
+    assert events == [
+        "discard-stale",
+        "close-stale",
+        "unregister-hotkeys",
+        "show-fresh",
+    ]
+    app.settings_dialog = None
+    fresh.close()
 
 
 def test_tray_double_click_opens_configuration_not_launcher(qtbot):

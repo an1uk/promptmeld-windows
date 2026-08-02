@@ -784,30 +784,46 @@ class PromptMeld:
         # Tool windows can remain topmost while hidden or while an automation
         # worker is finishing. Clear them before presenting Configuration so it
         # cannot open behind a manually closed launcher/progress window.
+        LOGGER.info(
+            "Configuration open requested (existing_dialog=%s)",
+            self.settings_dialog is not None,
+        )
         if self.popup is not None:
             self.popup.hide()
         if self.automation_progress is not None:
             self.automation_progress.hide()
         if self.settings_dialog is not None:
-            self._present_settings_dialog(self.settings_dialog)
-            return
-        from .settings_ui import ActionSettingsDialog
+            existing_dialog = self.settings_dialog
+            try:
+                self._present_settings_dialog(existing_dialog)
+                LOGGER.info("Existing Configuration window presented")
+                return
+            except Exception:
+                # A Qt wrapper can occasionally outlive its native dialog after
+                # a close during another window transition. Do not let that
+                # stale reference make every later tray request a no-op.
+                LOGGER.exception(
+                    "Existing Configuration window was unusable; recreating it"
+                )
+                self._discard_settings_dialog(existing_dialog)
 
         self.hotkeys.unregister_all()
+        dialog = None
         try:
-            self.settings_dialog = ActionSettingsDialog(
-                self.actions,
-                self.paths,
-                self._ensure_icons(),
-                self.settings.popup_hotkey,
-                replace(
-                    self.settings,
-                    startup_enabled=self.startup.is_enabled(),
-                ),
-                hotkey_availability=self.hotkeys.is_available,
+            dialog = self._create_settings_dialog()
+            dialog.actions_saved.connect(self.reload_configuration_after_save)
+            dialog.finished.connect(
+                lambda result, current=dialog: self._settings_dialog_closed(
+                    current,
+                    result,
+                )
             )
+            self.settings_dialog = dialog
+            self._present_settings_dialog(dialog)
         except Exception as exc:
             LOGGER.exception("Configuration window could not be created")
+            if dialog is not None:
+                self._discard_settings_dialog(dialog)
             try:
                 self.register_hotkeys()
             except Exception:
@@ -821,30 +837,119 @@ class PromptMeld:
                 8000,
             )
             return
-        self.settings_dialog.actions_saved.connect(
-            self.reload_configuration_after_save
+        LOGGER.info("New Configuration window presented")
+
+    def _create_settings_dialog(self):
+        from .settings_ui import ActionSettingsDialog
+
+        return ActionSettingsDialog(
+            self.actions,
+            self.paths,
+            self._ensure_icons(),
+            self.settings.popup_hotkey,
+            replace(
+                self.settings,
+                startup_enabled=self.startup.is_enabled(),
+            ),
+            hotkey_availability=self.hotkeys.is_available,
         )
-        self.settings_dialog.finished.connect(self._settings_dialog_closed)
-        self._present_settings_dialog(self.settings_dialog)
 
     def _present_settings_dialog(self, dialog) -> None:
-        dialog.showNormal()
-        dialog.raise_()
-        dialog.activateWindow()
-        # The tray menu and topmost tool window finish closing asynchronously
-        # on Windows. Activate once more after that native transition.
-        QTimer.singleShot(
-            75,
-            lambda current=dialog: self._reactivate_settings_dialog(current),
+        # Reversing the minimized state before showNormal avoids a Qt/Windows
+        # edge case where the dialog is technically visible but remains only on
+        # the taskbar. Widget, window-handle, and native activation requests
+        # cover the different stages of the Windows window lifecycle.
+        state = dialog.windowState()
+        dialog.setWindowState(
+            (state & ~Qt.WindowState.WindowMinimized)
+            | Qt.WindowState.WindowActive
         )
+        dialog.showNormal()
+        self._activate_settings_dialog(dialog)
+        # The tray menu and topmost tool window finish closing asynchronously
+        # on Windows. Retry across that native transition rather than relying on
+        # one timing-sensitive activation attempt.
+        for delay_ms in (75, 250):
+            QTimer.singleShot(
+                delay_ms,
+                lambda current=dialog, delay=delay_ms: (
+                    self._reactivate_settings_dialog(current, delay)
+                ),
+            )
 
-    def _reactivate_settings_dialog(self, dialog) -> None:
-        if self.settings_dialog is not dialog or not dialog.isVisible():
-            return
+    @staticmethod
+    def _activate_settings_dialog(dialog) -> None:
         dialog.raise_()
         dialog.activateWindow()
+        window_handle = dialog.windowHandle()
+        if window_handle is not None:
+            window_handle.requestActivate()
+        if sys.platform != "win32":
+            return
+        try:
+            import win32con
+            import win32gui
 
-    def _settings_dialog_closed(self, result: int) -> None:
+            window_id = int(dialog.winId())
+            if window_id and win32gui.IsWindow(window_id):
+                win32gui.ShowWindow(window_id, win32con.SW_RESTORE)
+                win32gui.BringWindowToTop(window_id)
+                win32gui.SetForegroundWindow(window_id)
+        except Exception:
+            # Windows can refuse SetForegroundWindow under its focus-stealing
+            # rules. The Qt requests and the later retry still remain valid.
+            LOGGER.debug(
+                "Native Configuration activation request was refused",
+                exc_info=True,
+            )
+
+    def _reactivate_settings_dialog(self, dialog, delay_ms: int = 0) -> None:
+        if self.settings_dialog is not dialog:
+            return
+        try:
+            if not dialog.isVisible() or dialog.isMinimized():
+                dialog.showNormal()
+            self._activate_settings_dialog(dialog)
+            if delay_ms >= 250 and not dialog.isActiveWindow():
+                QApplication.alert(dialog, 1500)
+            LOGGER.info(
+                "Configuration activation checked after %d ms "
+                "(visible=%s minimized=%s active=%s)",
+                delay_ms,
+                dialog.isVisible(),
+                dialog.isMinimized(),
+                dialog.isActiveWindow(),
+            )
+        except Exception:
+            LOGGER.exception(
+                "Configuration activation retry failed after %d ms",
+                delay_ms,
+            )
+            self._discard_settings_dialog(dialog)
+            try:
+                self.register_hotkeys()
+            except Exception:
+                LOGGER.exception(
+                    "Hotkeys could not be restored after Configuration was lost"
+                )
+
+    def _discard_settings_dialog(self, dialog) -> None:
+        if self.settings_dialog is dialog:
+            self.settings_dialog = None
+        try:
+            dialog.hide()
+            dialog.close()
+        except Exception:
+            LOGGER.debug(
+                "Unusable Configuration window could not be closed",
+                exc_info=True,
+            )
+
+    def _settings_dialog_closed(self, dialog, result: int) -> None:
+        if self.settings_dialog is not dialog:
+            LOGGER.info("Ignored close signal from an old Configuration window")
+            return
+        LOGGER.info("Configuration window closed (result=%s)", result)
         self.settings_dialog = None
         if self.icons is not None:
             self.icons.clear_cache()
@@ -921,6 +1026,7 @@ class PromptMeld:
         )
 
     def _tray_activated(self, reason) -> None:
+        LOGGER.info("Tray icon activated (reason=%s)", reason)
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             QTimer.singleShot(0, self.open_action_settings)
 
