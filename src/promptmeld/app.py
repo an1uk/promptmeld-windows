@@ -162,6 +162,8 @@ class PromptMeld:
         self.available_update: ReleaseInfo | None = None
         self.update_check_in_progress = False
         self.update_download_in_progress = False
+        self.update_check_worker: FunctionWorker | None = None
+        self.update_download_worker: FunctionWorker | None = None
         self.update_last_error = ""
         self.update_current_confirmed = False
         self.update_cancel_event: threading.Event | None = None
@@ -864,6 +866,11 @@ class PromptMeld:
         self._save_update_state()
         self._refresh_update_surfaces()
         current_version = display_version()
+        LOGGER.info(
+            "Update check started (manual=%s current_version=%s)",
+            manual,
+            current_version,
+        )
         worker = FunctionWorker(
             lambda: check_latest_release(current_version)
         )
@@ -872,6 +879,9 @@ class PromptMeld:
                 self._update_check_finished(result, requested_manually)
             )
         )
+        # QThreadPool owns the QRunnable's C++ lifetime, but retaining its
+        # Python wrapper also keeps WorkerSignals alive until the callback.
+        self.update_check_worker = worker
         self.thread_pool.start(worker)
 
     def _update_check_finished(
@@ -879,6 +889,7 @@ class PromptMeld:
         result: object,
         manual: bool,
     ) -> None:
+        self.update_check_worker = None
         self.update_check_in_progress = False
         if not isinstance(result, UpdateCheckResult):
             result = UpdateCheckResult(
@@ -904,9 +915,7 @@ class PromptMeld:
                 ),
             )
             self._save_update_state()
-            if manual:
-                self._show_update_available(result.release)
-            elif should_notify:
+            if not manual and should_notify:
                 next_step = (
                     "install it"
                     if result.release.installable
@@ -928,23 +937,32 @@ class PromptMeld:
                 cached_release=None,
             )
             self._save_update_state()
-            if manual:
-                QMessageBox.information(
-                    self.settings_dialog,
-                    "PromptMeld is up to date",
-                    f"Version {display_version()} is the latest stable version.",
-                )
         else:
             self.update_last_error = result.error or "The update check failed."
             self.update_current_confirmed = False
             LOGGER.warning("Update check failed: %s", self.update_last_error)
-            if manual:
-                QMessageBox.warning(
-                    self.settings_dialog,
-                    "Could not check for updates",
-                    self.update_last_error,
-                )
+        LOGGER.info("Update check finished (status=%s)", result.status)
+        # Update Configuration before presenting any standalone result. A
+        # modal message can otherwise open behind the Configuration window and
+        # leave its visible status saying "Checking" until that hidden message
+        # is dismissed.
         self._refresh_update_surfaces()
+        if not manual or self.settings_dialog is not None:
+            return
+        if result.status == "available" and result.release is not None:
+            self._show_update_available(result.release)
+        elif result.status == "current":
+            QMessageBox.information(
+                None,
+                "PromptMeld is up to date",
+                f"Version {display_version()} is the latest stable version.",
+            )
+        else:
+            QMessageBox.warning(
+                None,
+                "Could not check for updates",
+                self.update_last_error,
+            )
 
     def _show_update_available(self, release: ReleaseInfo) -> None:
         message = QMessageBox(self.settings_dialog)
@@ -1117,6 +1135,7 @@ class PromptMeld:
                 current,
             )
         )
+        self.update_download_worker = worker
         self.thread_pool.start(worker)
         self._refresh_update_surfaces()
 
@@ -1142,6 +1161,7 @@ class PromptMeld:
         result: object,
         release: ReleaseInfo,
     ) -> None:
+        self.update_download_worker = None
         self.update_download_in_progress = False
         self.update_cancel_event = None
         if self.update_progress_dialog is not None:
