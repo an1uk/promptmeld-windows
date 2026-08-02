@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import replace
+from html import escape
 from importlib.resources import files
 from pathlib import Path
 
@@ -39,6 +40,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -356,12 +358,15 @@ class ActionSettingsDialog(QDialog):
         )
         self.resulting_text_length.setCurrentIndex(max(0, selected_length))
         self.resulting_text_length.setMinimumWidth(140)
-        self.resulting_text_length.setToolTip(
+        self.resulting_text_length_help = self._help_button(
             "This is also the remembered selection in the launcher. Default "
-            "adds no text-length instruction to the prompt."
+            "adds no text-length instruction to the prompt. The other choices "
+            "add qualitative length guidance.",
+            "Explain resulting text length",
         )
         length_row.addWidget(length_label)
         length_row.addWidget(self.resulting_text_length)
+        length_row.addWidget(self.resulting_text_length_help)
         length_row.addSpacing(20)
         formatting_label = QLabel("Formatting")
         formatting_label.setObjectName("formLabel")
@@ -375,12 +380,14 @@ class ActionSettingsDialog(QDialog):
             max(0, selected_formatting)
         )
         self.resulting_text_formatting.setMinimumWidth(190)
-        self.resulting_text_formatting.setToolTip(
+        self.resulting_text_formatting_help = self._help_button(
             "Default adds no formatting instruction. The other choices either "
-            "prevent new formatting or request restrained helpful formatting."
+            "prevent new formatting or request restrained helpful formatting.",
+            "Explain resulting text formatting",
         )
         length_row.addWidget(formatting_label)
         length_row.addWidget(self.resulting_text_formatting)
+        length_row.addWidget(self.resulting_text_formatting_help)
         length_row.addStretch(1)
         self.writing_block_default = QCheckBox(
             "Request a copyable writing block when available"
@@ -388,19 +395,18 @@ class ActionSettingsDialog(QDialog):
         self.writing_block_default.setChecked(
             voice_settings.writing_block_enabled
         )
-        self.writing_block_default.setToolTip(
-            "This is also the remembered state of the checkbox in the launcher."
+        self.writing_block_help = self._help_button(
+            "This is also the remembered state of the launcher option. Writing "
+            "blocks are editable and copyable in ChatGPT, but their availability "
+            "depends on ChatGPT.",
+            "Explain copyable writing blocks",
         )
-        output_description = QLabel(
-            "Length choices add qualitative guidance; Default adds none. "
-            "Writing blocks are editable and copyable in ChatGPT, but their "
-            "availability depends on ChatGPT."
-        )
-        output_description.setObjectName("muted")
-        output_description.setWordWrap(True)
+        writing_block_row = QHBoxLayout()
+        writing_block_row.addWidget(self.writing_block_default)
+        writing_block_row.addWidget(self.writing_block_help)
+        writing_block_row.addStretch(1)
         output_layout.addLayout(length_row)
-        output_layout.addWidget(self.writing_block_default)
-        output_layout.addWidget(output_description)
+        output_layout.addLayout(writing_block_row)
 
         submission_group = QGroupBox("Submission")
         submission_layout = QVBoxLayout(submission_group)
@@ -410,66 +416,80 @@ class ActionSettingsDialog(QDialog):
         self.auto_submit_default.setChecked(
             voice_settings.auto_submit_enabled
         )
-        self.auto_submit_default.setToolTip(
-            "This is also the remembered state of the checkbox in the launcher."
+        self.auto_submit_help = self._help_button(
+            f"This is also the remembered state of the launcher checkbox. When "
+            f"automatic submission is off, {APP_NAME} pastes the complete prompt "
+            "without submitting it, so you can choose the model or reasoning "
+            "level before pressing Enter.",
+            "Explain automatic submission",
         )
         self.replace_selected_text_default = QCheckBox(
-            "Replace selected text automatically when possible"
+            "Replace the original selection with the generated result"
         )
         self.replace_selected_text_default.setChecked(
             voice_settings.replace_selected_text_enabled
         )
-        self.replace_selected_text_default.setToolTip(
-            "Only applies to selections detected in editable controls and when "
-            "automatic submission is enabled."
+        self.replace_selected_text_help = self._help_button(
+            "After ChatGPT responds, paste the generated result over the original "
+            "selection when it came from an editable field. Automatic submission "
+            "must be enabled. The original text may be lost if the result is "
+            "wrong or the paste fails. "
+            "With Temporary Chat enabled, the original is not retained in "
+            "ChatGPT. Consider enabling Windows Clipboard History (Win+V) or "
+            "using a clipboard manager first; clipboard history may also retain "
+            "sensitive text.",
+            "Explain replacing the original selection",
         )
+        self.replace_selected_text_warning = QLabel(
+            "Warning: may irreversibly overwrite the original text"
+        )
+        self.replace_selected_text_warning.setObjectName("warning")
         self.copy_generated_text_default = QCheckBox(
-            "Copy generated text to the clipboard"
+            "Copy the generated result to the clipboard"
         )
         self.copy_generated_text_default.setChecked(
             voice_settings.copy_generated_text_enabled
         )
-        self.copy_generated_text_default.setToolTip(
-            "Only applies after ChatGPT has generated a response, so automatic "
-            "submission must be enabled."
+        self.copy_generated_text_help = self._help_button(
+            "After ChatGPT responds, leave the generated result on the clipboard. "
+            "Automatic submission must be enabled. This can be used on its own "
+            "or together with replacement of the original selection.",
+            "Explain copying the generated result",
         )
-        self.output_safety_warning = QLabel(
-            "Warning: automatic replacement is destructive. The selected text "
-            "may be lost if the generated result is wrong or the paste fails. "
-            "With Temporary Chat enabled, the original is not retained in "
-            "ChatGPT and may not be recoverable. Consider enabling Windows "
-            "Clipboard History (Win+V) or using a clipboard manager such as "
-            "CopyQ first; clipboard history can retain the original selection "
-            "for recovery, but it may also store sensitive text."
-        )
-        self.output_safety_warning.setObjectName("warning")
-        self.output_safety_warning.setWordWrap(True)
         self.temporary_chat_default = QCheckBox(
             "Turn on Temporary Chat by default"
         )
         self.temporary_chat_default.setChecked(
             voice_settings.temporary_chat_enabled
         )
-        self.temporary_chat_default.setToolTip(
-            "This is also the remembered state of the checkbox in the launcher. "
-            "Temporary chats are opened outside ChatGPT Projects."
+        self.temporary_chat_help = self._help_button(
+            "This is also the remembered state of the launcher checkbox. "
+            "Temporary Chat opens a top-level chat and skips the configured "
+            "Project because temporary chats cannot be used inside Projects. "
+            "ChatGPT may show a one-time explanation which you must review and "
+            "confirm yourself.",
+            "Explain Temporary Chat",
         )
-        self.submission_description = QLabel(
-            f"When automatic submission is off, {APP_NAME} pastes the complete "
-            "prompt without pressing Enter so you can choose the model or "
-            "reasoning level first. Temporary Chat opens a top-level chat and "
-            "skips the configured Project because temporary chats cannot be "
-            "used inside Projects. ChatGPT may show a one-time explanation "
-            "which you must review and confirm yourself."
-        )
-        self.submission_description.setObjectName("muted")
-        self.submission_description.setWordWrap(True)
-        submission_layout.addWidget(self.auto_submit_default)
-        submission_layout.addWidget(self.replace_selected_text_default)
-        submission_layout.addWidget(self.copy_generated_text_default)
-        submission_layout.addWidget(self.output_safety_warning)
-        submission_layout.addWidget(self.temporary_chat_default)
-        submission_layout.addWidget(self.submission_description)
+        for option, help_button in (
+            (self.auto_submit_default, self.auto_submit_help),
+            (
+                self.replace_selected_text_default,
+                self.replace_selected_text_help,
+            ),
+            (
+                self.copy_generated_text_default,
+                self.copy_generated_text_help,
+            ),
+            (self.temporary_chat_default, self.temporary_chat_help),
+        ):
+            option_row = QHBoxLayout()
+            option_row.addWidget(option)
+            option_row.addWidget(help_button)
+            if option is self.replace_selected_text_default:
+                option_row.addSpacing(8)
+                option_row.addWidget(self.replace_selected_text_warning)
+            option_row.addStretch(1)
+            submission_layout.addLayout(option_row)
 
         voice_group = QGroupBox("Preserve my natural voice")
         voice_layout = QVBoxLayout(voice_group)
@@ -479,17 +499,18 @@ class ActionSettingsDialog(QDialog):
         self.natural_voice_default.setChecked(
             voice_settings.natural_voice_enabled
         )
-        self.natural_voice_default.setToolTip(
-            "This is also the remembered state of the checkbox in the launcher."
-        )
-        self.voice_description = QLabel(
-            "When enabled, this modifier helps retain your vocabulary, level of "
+        self.natural_voice_help = self._help_button(
+            "This is also the remembered state of the launcher checkbox. When "
+            "enabled, this modifier helps retain your vocabulary, level of "
             "formality, and personal phrasing. It may help make the result less "
             "likely to be flagged by AI-detection tools, but those tools are "
-            "unreliable and avoidance is far from guaranteed."
+            "unreliable and avoidance is far from guaranteed.",
+            "Explain preserving natural voice",
         )
-        self.voice_description.setObjectName("muted")
-        self.voice_description.setWordWrap(True)
+        natural_voice_row = QHBoxLayout()
+        natural_voice_row.addWidget(self.natural_voice_default)
+        natural_voice_row.addWidget(self.natural_voice_help)
+        natural_voice_row.addStretch(1)
         modifier_label = QLabel("Instruction added to the prompt")
         modifier_label.setObjectName("formLabel")
         self.natural_voice_instruction = QPlainTextEdit()
@@ -512,8 +533,7 @@ class ActionSettingsDialog(QDialog):
         reset_row.addWidget(voice_note)
         reset_row.addStretch(1)
         reset_row.addWidget(self.reset_voice_button)
-        voice_layout.addWidget(self.natural_voice_default)
-        voice_layout.addWidget(self.voice_description)
+        voice_layout.addLayout(natural_voice_row)
         voice_layout.addWidget(modifier_label)
         voice_layout.addWidget(self.natural_voice_instruction)
         voice_layout.addLayout(reset_row)
@@ -526,22 +546,19 @@ class ActionSettingsDialog(QDialog):
         self.guided_drafting_default.setChecked(
             voice_settings.guided_drafting_enabled
         )
-        guided_description = QLabel(
+        self.guided_drafting_help = self._help_button(
             "When essential context is missing, ChatGPT can ask up to three "
             "concise questions, with choices where helpful, before drafting. "
-            "It drafts immediately when the selected text is already sufficient."
-        )
-        guided_description.setObjectName("muted")
-        guided_description.setWordWrap(True)
-        guided_note = QLabel(
+            "It drafts immediately when the selected text is already sufficient. "
             "Questions and answers stay in the ChatGPT chat. Each writing action "
-            "must also be marked as supporting guided drafting."
+            "must also be marked as supporting guided drafting.",
+            "Explain guided drafting",
         )
-        guided_note.setObjectName("muted")
-        guided_note.setWordWrap(True)
-        guided_layout.addWidget(self.guided_drafting_default)
-        guided_layout.addWidget(guided_description)
-        guided_layout.addWidget(guided_note)
+        guided_row = QHBoxLayout()
+        guided_row.addWidget(self.guided_drafting_default)
+        guided_row.addWidget(self.guided_drafting_help)
+        guided_row.addStretch(1)
+        guided_layout.addLayout(guided_row)
 
         content = QHBoxLayout()
         content.setSpacing(18)
@@ -1350,6 +1367,26 @@ class ActionSettingsDialog(QDialog):
         label.setObjectName("formLabel")
         return label
 
+    @staticmethod
+    def _help_button(text: str, accessible_name: str) -> QToolButton:
+        button = QToolButton()
+        button.setText("?")
+        button.setObjectName("helpIcon")
+        button.setAccessibleName(accessible_name)
+        button.setAccessibleDescription(text)
+        tooltip_text = escape(text).replace(
+            " Warning:",
+            "<br><br><b>Warning:</b>",
+        )
+        button.setToolTip(
+            "<qt><table width='340' cellspacing='0' cellpadding='0'>"
+            f"<tr><td>{tooltip_text}</td></tr></table></qt>"
+        )
+        button.setAutoRaise(True)
+        button.setFixedSize(20, 20)
+        button.setCursor(Qt.CursorShape.WhatsThisCursor)
+        return button
+
     def _set_instruction_colour(self) -> None:
         cursor = self.instruction.textCursor()
         cursor.select(QTextCursor.SelectionType.Document)
@@ -1786,6 +1823,29 @@ class ActionSettingsDialog(QDialog):
                     font-style: italic;
                 }
                 QLabel#muted { color: #697381; }
+                QToolButton#helpIcon {
+                    color: #244fae;
+                    background-color: #eef3ff;
+                    border: 1px solid #9bafe2;
+                    border-radius: 9px;
+                    padding: 0;
+                    font-weight: 700;
+                }
+                QToolButton#helpIcon:hover { background-color: #dce7ff; }
+                QLabel#warning {
+                    color: #8a1c1c;
+                    background-color: #fff0f0;
+                    border: 1px solid #d89a9a;
+                    border-radius: 5px;
+                    padding: 3px 6px;
+                    font-weight: 600;
+                }
+                QToolTip {
+                    color: #202631;
+                    background-color: #ffffff;
+                    border: 1px solid #aeb8c5;
+                    padding: 5px;
+                }
                 QLabel#formLabel { color: #3f4855; }
                 QLabel#inlineLabel { color: #697381; padding: 0 3px; }
                 QLabel#codeValue {
@@ -1978,6 +2038,29 @@ class ActionSettingsDialog(QDialog):
                 font-style: italic;
             }
             QLabel#muted { color: #9298a5; }
+            QToolButton#helpIcon {
+                color: #d9e2ff;
+                background-color: #2b3347;
+                border: 1px solid #6679ad;
+                border-radius: 9px;
+                padding: 0;
+                font-weight: 700;
+            }
+            QToolButton#helpIcon:hover { background-color: #364468; }
+            QLabel#warning {
+                color: #ffd1d1;
+                background-color: #3b2326;
+                border: 1px solid #8a4a50;
+                border-radius: 5px;
+                padding: 3px 6px;
+                font-weight: 600;
+            }
+            QToolTip {
+                color: #f4f5f7;
+                background-color: #22252c;
+                border: 1px solid #596273;
+                padding: 5px;
+            }
             QLabel#formLabel { color: #aeb4c0; }
             QLabel#inlineLabel { color: #9298a5; padding: 0 3px; }
             QLabel#codeValue {

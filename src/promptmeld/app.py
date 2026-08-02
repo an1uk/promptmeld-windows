@@ -137,11 +137,16 @@ class PromptMeld:
         self.tray = QSystemTrayIcon(app_icon, qt_app)
         self.tray.setToolTip(APP_NAME)
         self.menu = QMenu()
-        self.open_launcher_action = self.menu.addAction("Open launcher")
-        self.open_launcher_action.triggered.connect(self.capture_and_show)
-        self.menu.addSeparator()
         self.configuration_action = self.menu.addAction("Configuration…")
-        self.configuration_action.triggered.connect(self.open_action_settings)
+        self.configuration_action.triggered.connect(
+            lambda: QTimer.singleShot(0, self.open_action_settings)
+        )
+        self.menu.setDefaultAction(self.configuration_action)
+        self.open_launcher_action = self.menu.addAction("Launcher hotkey")
+        self.open_launcher_action.triggered.connect(
+            self.show_launcher_shortcut_help
+        )
+        self.menu.addSeparator()
         self.startup_action = self.menu.addAction("Start with Windows")
         self.startup_action.setCheckable(True)
         self.startup_action.setChecked(self.startup.is_enabled())
@@ -168,6 +173,7 @@ class PromptMeld:
         self.actions = load_actions(self.paths.actions_file)
         self.registry = ActionRegistry(self.actions, self.usage)
         self.capture = SelectionCapture(self.settings.capture_timeout_ms)
+        self._update_tray_shortcut_action()
         if self.popup is not None:
             self.popup.set_registry(
                 self.registry,
@@ -180,6 +186,7 @@ class PromptMeld:
                 self.settings.resulting_text_length,
                 self.settings.writing_block_enabled,
                 self.settings.resulting_text_formatting,
+                self.settings.replace_selected_text_enabled,
             )
             self.popup.set_theme(self.settings.theme)
 
@@ -207,6 +214,7 @@ class PromptMeld:
                 self.settings.resulting_text_length,
                 self.settings.writing_block_enabled,
                 self.settings.resulting_text_formatting,
+                self.settings.replace_selected_text_enabled,
             )
             self.popup.action_requested.connect(self.run_action)
             self.popup.custom_requested.connect(self.run_custom)
@@ -215,6 +223,9 @@ class PromptMeld:
             )
             self.popup.auto_submit_changed.connect(
                 self.set_auto_submit_enabled
+            )
+            self.popup.replace_selected_text_changed.connect(
+                self.set_replace_selected_text_enabled
             )
             self.popup.temporary_chat_changed.connect(
                 self.set_temporary_chat_enabled
@@ -321,7 +332,9 @@ class PromptMeld:
         except SelectionCaptureError as exc:
             self.notify(APP_NAME, str(exc), QSystemTrayIcon.MessageIcon.Warning)
             return
-        self._ensure_popup().show_at_cursor()
+        popup = self._ensure_popup()
+        popup.set_source_is_editable(self.current_selection.source_is_editable)
+        popup.show_at_cursor()
 
     def capture_and_submit(self, action: WritingAction) -> None:
         try:
@@ -504,6 +517,27 @@ class PromptMeld:
             if self.popup is not None:
                 self.popup.set_auto_submit_enabled(
                     previous.auto_submit_enabled
+                )
+            self.notify(
+                "Setting could not be saved",
+                str(exc),
+                QSystemTrayIcon.MessageIcon.Warning,
+            )
+            return
+        self.settings = updated
+
+    def set_replace_selected_text_enabled(self, enabled: bool) -> None:
+        if enabled == self.settings.replace_selected_text_enabled:
+            return
+        previous = self.settings
+        updated = replace(previous, replace_selected_text_enabled=enabled)
+        try:
+            save_settings(self.paths.settings_file, updated)
+        except OSError as exc:
+            LOGGER.exception("Could not save automatic replacement setting")
+            if self.popup is not None:
+                self.popup.set_replace_selected_text_enabled(
+                    previous.replace_selected_text_enabled
                 )
             self.notify(
                 "Setting could not be saved",
@@ -747,9 +781,15 @@ class PromptMeld:
             )
 
     def open_action_settings(self) -> None:
-        if self.settings_dialog is not None and self.settings_dialog.isVisible():
-            self.settings_dialog.raise_()
-            self.settings_dialog.activateWindow()
+        # Tool windows can remain topmost while hidden or while an automation
+        # worker is finishing. Clear them before presenting Configuration so it
+        # cannot open behind a manually closed launcher/progress window.
+        if self.popup is not None:
+            self.popup.hide()
+        if self.automation_progress is not None:
+            self.automation_progress.hide()
+        if self.settings_dialog is not None:
+            self._present_settings_dialog(self.settings_dialog)
             return
         from .settings_ui import ActionSettingsDialog
 
@@ -766,16 +806,43 @@ class PromptMeld:
                 ),
                 hotkey_availability=self.hotkeys.is_available,
             )
-        except Exception:
-            self.register_hotkeys()
-            raise
+        except Exception as exc:
+            LOGGER.exception("Configuration window could not be created")
+            try:
+                self.register_hotkeys()
+            except Exception:
+                LOGGER.exception(
+                    "Hotkeys could not be restored after Configuration failed"
+                )
+            self.notify(
+                "Configuration could not be opened",
+                str(exc),
+                QSystemTrayIcon.MessageIcon.Critical,
+                8000,
+            )
+            return
         self.settings_dialog.actions_saved.connect(
             self.reload_configuration_after_save
         )
         self.settings_dialog.finished.connect(self._settings_dialog_closed)
-        self.settings_dialog.show()
-        self.settings_dialog.raise_()
-        self.settings_dialog.activateWindow()
+        self._present_settings_dialog(self.settings_dialog)
+
+    def _present_settings_dialog(self, dialog) -> None:
+        dialog.showNormal()
+        dialog.raise_()
+        dialog.activateWindow()
+        # The tray menu and topmost tool window finish closing asynchronously
+        # on Windows. Activate once more after that native transition.
+        QTimer.singleShot(
+            75,
+            lambda current=dialog: self._reactivate_settings_dialog(current),
+        )
+
+    def _reactivate_settings_dialog(self, dialog) -> None:
+        if self.settings_dialog is not dialog or not dialog.isVisible():
+            return
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _settings_dialog_closed(self, result: int) -> None:
         self.settings_dialog = None
@@ -838,9 +905,24 @@ class PromptMeld:
             f"Use {self.settings.popup_hotkey} or the Actions Ring to open it.",
         )
 
+    def _update_tray_shortcut_action(self) -> None:
+        self.open_launcher_action.setText(
+            f"Launcher hotkey: {self.settings.popup_hotkey}"
+        )
+
+    def show_launcher_shortcut_help(self) -> None:
+        self.notify(
+            "Open the PromptMeld launcher",
+            "Select text in an editable application, then press "
+            f"{self.settings.popup_hotkey}. Double-click the tray icon to open "
+            "Configuration.",
+            QSystemTrayIcon.MessageIcon.Information,
+            6500,
+        )
+
     def _tray_activated(self, reason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
-            self.capture_and_show()
+            QTimer.singleShot(0, self.open_action_settings)
 
     def quit(self) -> None:
         self.hotkeys.unregister_all()

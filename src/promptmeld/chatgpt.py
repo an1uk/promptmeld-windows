@@ -100,6 +100,7 @@ class ChatGPTDesktop:
         "Type a message",
     )
     COMPOSER_CLASSES = ("prosemirror",)
+    SEND_BUTTON_NAMES = ("Send", "Send message")
     CHAT_MODE_NAME = "Chat"
     TEMPORARY_CHAT_ON_NAME = "Turn on temporary chat"
     TEMPORARY_CHAT_OFF_NAME = "Turn off temporary chat"
@@ -223,16 +224,25 @@ class ChatGPTDesktop:
                 composer,
                 prompt,
                 window=window,
+                project_name=project_name,
+                temporary_chat=temporary_chat,
             )
+            window = self._refresh_chatgpt_window() or window
+            if not self._destination_is_ready_in(
+                window,
+                project_name,
+                temporary_chat=temporary_chat,
+            ):
+                raise ChatGPTAutomationError(
+                    "The ChatGPT destination changed while inserting the prompt."
+                )
             if auto_submit:
                 self._report_progress(
                     "finishing",
                     "Submitting the verified prompt",
                 )
-                window = self._refresh_chatgpt_window() or window
                 composer = self._find_composer(window) or composer
-                composer.set_focus()
-                self.send_keys("{ENTER}", pause=0.02)
+                self._submit_verified_prompt(window, composer)
             else:
                 self._report_progress(
                     "finishing",
@@ -584,6 +594,15 @@ class ChatGPTDesktop:
             window,
             project_name,
         )
+        if project_action is None:
+            # Mode changes replace Chromium's sidebar subtree. Reacquire the
+            # window when the existing wrapper does not expose the Project's
+            # exact new-chat button, before falling back to a generic row.
+            window = self._refresh_chatgpt_window() or window
+            project_action = self._find_project_new_chat_control(
+                window,
+                project_name,
+            )
         if project_action is not None:
             LOGGER.info(
                 "Using visible project new-chat fast path for '%s'",
@@ -747,7 +766,7 @@ class ChatGPTDesktop:
             return True
 
         self._activate_control(switcher)
-        mode_item = self._wait_for_control(
+        mode_item = self._wait_for_refreshed_control(
             window,
             lambda control: (
                 control.element_info.control_type == "MenuItem"
@@ -755,31 +774,42 @@ class ChatGPTDesktop:
                     self.CHATGPT_MODE_ITEM_PREFIX
                 )
             ),
+            timeout_seconds=min(self.timeout_seconds, 2.0),
         )
         if mode_item is None:
             return False
         self._activate_control(mode_item)
         return self._wait_for_condition(
-            lambda: bool(
-                (
-                    current := self._find_control(
-                        window,
-                        lambda control: (
-                            control.element_info.control_type == "Button"
-                            and (
-                                control.element_info.name or ""
-                            ).startswith(self.MODE_SWITCH_PREFIX)
-                        ),
-                    )
-                )
-                and current.element_info.name.endswith("ChatGPT")
-            )
+            lambda: self._chatgpt_mode_is_active(window),
+            timeout_seconds=min(self.timeout_seconds, 4.0),
         )
+
+    def _chatgpt_mode_is_active(self, window) -> bool:
+        def is_active_in(candidate_window) -> bool:
+            switcher = self._find_control(
+                candidate_window,
+                lambda control: (
+                    control.element_info.control_type == "Button"
+                    and (control.element_info.name or "").startswith(
+                        self.MODE_SWITCH_PREFIX
+                    )
+                ),
+            )
+            return bool(
+                switcher is not None
+                and switcher.element_info.name.endswith("ChatGPT")
+            )
+
+        if is_active_in(window):
+            return True
+        refreshed = self._refresh_chatgpt_window()
+        return bool(refreshed is not None and is_active_in(refreshed))
 
     def _open_chat_home(self, window) -> bool:
         # The global mode switch can leave an existing Codex page visible.
-        # Starting a top-level new chat exposes the Chat/Work toggle; choosing
-        # Chat then gives us the ChatGPT Projects view.
+        # Starting a top-level new chat gives us the ChatGPT Projects view.
+        # Older desktop builds then expose a Chat/Work toggle; newer builds go
+        # straight to a ChatGPT composer and do not expose that toggle at all.
         new_chat = self._find_control(
             window,
             self._is_top_new_chat_control,
@@ -787,26 +817,34 @@ class ChatGPTDesktop:
         if new_chat is not None:
             self._activate_control(new_chat)
 
-        chat = self._wait_for_control(
-            window,
-            self._is_chat_mode_control,
-        )
-        if chat is None:
-            return False
-        self._activate_control(chat)
-        return self._wait_for_condition(
-            lambda: bool(
-                (
-                    current := self._find_control(
-                        window,
-                        self._is_chat_mode_control,
-                    )
-                )
-                and "text-token-text-primary"
-                in (current.element_info.class_name or "")
-                and self._find_chat_composer(window) is not None
+        deadline = time.monotonic() + self.timeout_seconds
+        chat_activated = False
+        while time.monotonic() < deadline:
+            current_window = self._refresh_chatgpt_window() or window
+            chat = self._find_control(
+                current_window,
+                self._is_chat_mode_control,
             )
-        )
+            if chat is None:
+                if self._top_level_chat_is_ready_in(current_window):
+                    return True
+            else:
+                if not chat_activated:
+                    self._activate_control(chat)
+                    chat_activated = True
+                current_chat = self._find_control(
+                    current_window,
+                    self._is_chat_mode_control,
+                )
+                if (
+                    current_chat is not None
+                    and "text-token-text-primary"
+                    in (current_chat.element_info.class_name or "")
+                    and self._find_composer(current_window) is not None
+                ):
+                    return True
+            time.sleep(0.1)
+        return False
 
     @staticmethod
     def _is_top_new_chat_control(control) -> bool:
@@ -826,6 +864,37 @@ class ChatGPTDesktop:
             info.control_type == "Button"
             and (info.name or "") == self.CHAT_MODE_NAME
             and "text-token-text-" in class_name
+        )
+
+    def _top_level_chat_is_ready_in(self, window) -> bool:
+        controls = self._descendants(window)
+        if controls is None:
+            return False
+        chatgpt_mode_is_active = self._find_control(
+            window,
+            lambda control: (
+                self._control_is_available(control)
+                and control.element_info.control_type == "Button"
+                and (control.element_info.name or "").startswith(
+                    self.MODE_SWITCH_PREFIX
+                )
+                and (control.element_info.name or "").endswith("ChatGPT")
+            ),
+        ) is not None
+        project_is_active = self._find_control(
+            window,
+            lambda control: (
+                self._control_is_available(control)
+                and control.element_info.control_type == "Button"
+                and (control.element_info.name or "").strip().startswith(
+                    "Change project:"
+                )
+            ),
+        ) is not None
+        return bool(
+            chatgpt_mode_is_active
+            and not project_is_active
+            and self._find_composer_in(controls) is not None
         )
 
     def _find_project_control(self, window, project_name: str):
@@ -908,7 +977,7 @@ class ChatGPTDesktop:
         )
         if self._wait_for_condition(
             lambda: self._project_chat_is_ready(window, project_name),
-            timeout_seconds=min(self.timeout_seconds, 2.0),
+            timeout_seconds=self.timeout_seconds,
         ):
             return True
 
@@ -1018,7 +1087,7 @@ class ChatGPTDesktop:
         self._activate_control(control)
         if self._wait_for_condition(
             lambda: self._project_chat_is_ready(window, project_name),
-            timeout_seconds=min(self.timeout_seconds, 2.0),
+            timeout_seconds=self.timeout_seconds,
         ):
             return True
 
@@ -1300,19 +1369,26 @@ class ChatGPTDesktop:
             return False
         expected = f"Change project: {project_name}"
         project_is_active = any(
-            control.element_info.control_type == "Button"
+            self._control_is_available(control)
+            and control.element_info.control_type == "Button"
             and (control.element_info.name or "").strip() == expected
             for control in controls
         )
         if not project_is_active:
             return False
+        return self._find_composer_in(controls) is not None
+
+    def _destination_is_ready_in(
+        self,
+        window,
+        project_name: str,
+        *,
+        temporary_chat: bool,
+    ) -> bool:
         return (
-            self._find_named_control_in(
-                controls,
-                names=self.COMPOSER_NAMES,
-                control_types=("Edit", "Document"),
-            )
-            is not None
+            self._temporary_chat_is_ready_in(window)
+            if temporary_chat
+            else self._project_chat_is_ready_in(window, project_name)
         )
 
     def _project_composer_transition_is_ready(
@@ -1384,8 +1460,17 @@ class ChatGPTDesktop:
         return self._find_composer_in(controls)
 
     def _find_composer_in(self, controls):
+        available_controls = []
+        for control in controls:
+            try:
+                if control.element_info.control_type not in ("Edit", "Document"):
+                    continue
+            except Exception:
+                continue
+            if self._control_is_available(control):
+                available_controls.append(control)
         named = self._find_named_control_in(
-            controls,
+            available_controls,
             names=self.COMPOSER_NAMES,
             control_types=("Edit", "Document"),
         )
@@ -1396,17 +1481,68 @@ class ChatGPTDesktop:
         # composer as an Edit control with class "ProseMirror". Keep this
         # fallback deliberately narrow so search boxes and other edits are never
         # treated as the message composer.
-        for control in controls:
-            info = control.element_info
-            if (
-                info.control_type == "Edit"
-                and (info.class_name or "").strip().casefold()
-                in self.COMPOSER_CLASSES
-                and bool(getattr(info, "enabled", True))
-                and bool(getattr(info, "visible", True))
-            ):
+        for control in available_controls:
+            if self._is_prosemirror_composer(control):
                 return control
         return None
+
+    @staticmethod
+    def _control_is_available(control) -> bool:
+        try:
+            return bool(
+                getattr(control.element_info, "enabled", True)
+            ) and bool(
+                getattr(control.element_info, "visible", True)
+            )
+        except Exception:
+            # Chromium replaces UIA nodes while navigating. A wrapper can go
+            # stale between descendants() and reading its state; skip it and
+            # allow the freshly enumerated composer to win instead.
+            return False
+
+    def _is_prosemirror_composer(self, composer) -> bool:
+        if composer.element_info.control_type != "Edit":
+            return False
+        class_tokens = {
+            token.casefold()
+            for token in (composer.element_info.class_name or "").split()
+        }
+        return bool(class_tokens.intersection(self.COMPOSER_CLASSES))
+
+    def _submit_verified_prompt(self, window, composer) -> None:
+        if not self._is_prosemirror_composer(composer):
+            composer.set_focus()
+            self.send_keys("{ENTER}", pause=0.02)
+            return
+        send_button = self._wait_for_send_button(window, 1.25)
+        if send_button is None:
+            # Electron can render a keyboard paste before React updates the
+            # composer state. A no-op edit emits the missing input event.
+            composer.set_focus()
+            composer.type_keys(
+                "{SPACE}{BACKSPACE}",
+                pause=0.02,
+                set_foreground=True,
+            )
+            send_button = self._wait_for_send_button(window, 1.25)
+        if send_button is not None:
+            self._activate_control(send_button)
+            return
+        composer.set_focus()
+        self.send_keys("{ENTER}", pause=0.02)
+
+    def _wait_for_send_button(self, window, timeout_seconds: float):
+        names = {name.casefold() for name in self.SEND_BUTTON_NAMES}
+        return self._wait_for_refreshed_control(
+            window,
+            lambda control: (
+                control.element_info.control_type == "Button"
+                and (control.element_info.name or "").strip().casefold()
+                in names
+                and self._control_is_available(control)
+            ),
+            timeout_seconds=timeout_seconds,
+        )
 
     def _find_chat_composer(self, window):
         controls = self._descendants(window)
@@ -1424,34 +1560,41 @@ class ChatGPTDesktop:
         prompt: str,
         *,
         window=None,
+        project_name: str | None = None,
+        temporary_chat: bool = False,
     ) -> str:
         """Insert and verify a prompt without trusting a blind global paste."""
 
-        for method_name in ("set_edit_text", "set_text"):
-            set_text = getattr(composer, method_name, None)
-            if not callable(set_text):
-                continue
-            try:
-                set_text(prompt)
-                self._report_progress(
-                    "inserting-prompt",
-                    "Verifying the complete prompt in ChatGPT",
-                )
-                if self._wait_for_composer_prompt(
-                    composer,
-                    prompt,
-                    window=window,
-                ):
-                    LOGGER.info(
-                        "Inserted prompt through ChatGPT composer UI Automation"
+        # Chromium exposes ChatGPT's contenteditable ProseMirror composer as an
+        # Edit control, but its synchronous UIA ValuePattern.SetValue call can
+        # stop responding indefinitely. Paste through that verified control
+        # instead. Ordinary native Edit controls may still use direct UIA text.
+        if not self._is_prosemirror_composer(composer):
+            for method_name in ("set_edit_text", "set_text"):
+                set_text = getattr(composer, method_name, None)
+                if not callable(set_text):
+                    continue
+                try:
+                    set_text(prompt)
+                    self._report_progress(
+                        "inserting-prompt",
+                        "Verifying the complete prompt in ChatGPT",
                     )
-                    return "uia"
-            except Exception:
-                LOGGER.debug(
-                    "ChatGPT composer UIA text input was unavailable",
-                    exc_info=True,
-                )
-            break
+                    if self._wait_for_composer_prompt(
+                        composer,
+                        prompt,
+                        window=window,
+                    ):
+                        LOGGER.info(
+                            "Inserted prompt through ChatGPT composer UI Automation"
+                        )
+                        return "uia"
+                except Exception:
+                    LOGGER.debug(
+                        "ChatGPT composer UIA text input was unavailable",
+                        exc_info=True,
+                    )
+                break
 
         self.clipboard_writer(prompt)
         type_keys = getattr(composer, "type_keys", None)
@@ -1466,10 +1609,8 @@ class ChatGPTDesktop:
                     "inserting-prompt",
                     "Verifying the complete prompt in ChatGPT",
                 )
-                if self._wait_for_composer_prompt(
-                    composer,
-                    prompt,
-                    window=window,
+                if self._composer_prompt_is_verified(
+                    composer, prompt, window=window
                 ):
                     LOGGER.info(
                         "Pasted prompt through the targeted ChatGPT composer"
@@ -1482,6 +1623,21 @@ class ChatGPTDesktop:
                 )
 
         try:
+            if window is not None:
+                current_window = self._refresh_chatgpt_window() or window
+                if (
+                    (project_name is not None or temporary_chat)
+                    and not self._destination_is_ready_in(
+                        current_window,
+                        project_name or "",
+                        temporary_chat=temporary_chat,
+                    )
+                ):
+                    raise ChatGPTAutomationError(
+                        "The ChatGPT destination changed before the paste retry."
+                    )
+                current_window.set_focus()
+                composer = self._find_composer(current_window) or composer
             composer.set_focus()
             self.send_keys("^a", pause=0.02)
             self.send_keys("^v", pause=0.02)
@@ -1489,15 +1645,15 @@ class ChatGPTDesktop:
                 "inserting-prompt",
                 "Verifying the complete prompt in ChatGPT",
             )
-            if self._wait_for_composer_prompt(
-                composer,
-                prompt,
-                window=window,
+            if self._composer_prompt_is_verified(
+                composer, prompt, window=window
             ):
                 LOGGER.info(
                     "Pasted and verified prompt through focused keyboard input"
                 )
                 return "clipboard"
+        except ChatGPTAutomationError:
+            raise
         except Exception:
             LOGGER.debug(
                 "Focused ChatGPT composer paste was unavailable",
@@ -1507,6 +1663,85 @@ class ChatGPTDesktop:
         raise ChatGPTAutomationError(
             "The verified ChatGPT composer did not accept the generated prompt."
         )
+
+    def _composer_prompt_is_verified(
+        self,
+        composer,
+        prompt: str,
+        *,
+        window=None,
+    ) -> bool:
+        if self._is_prosemirror_composer(composer):
+            return self._verify_prosemirror_prompt_via_clipboard(
+                composer,
+                prompt,
+            )
+        return self._wait_for_composer_prompt(
+            composer,
+            prompt,
+            window=window,
+        )
+
+    def _verify_prosemirror_prompt_via_clipboard(
+        self,
+        composer,
+        prompt: str,
+    ) -> bool:
+        """Verify Chromium's editor without its unreliable UIA value read."""
+
+        type_keys = getattr(composer, "type_keys", None)
+        if not callable(type_keys):
+            return False
+        marker = f"PromptMeld clipboard verification {time.monotonic_ns()}"
+        try:
+            self.clipboard_writer(marker)
+            type_keys(
+                "^a^c",
+                pause=0.02,
+                set_foreground=True,
+            )
+            deadline = time.monotonic() + min(
+                max(self.timeout_seconds, 0.2),
+                0.75,
+            )
+            copied = self.clipboard_reader()
+            while copied == marker and time.monotonic() < deadline:
+                time.sleep(0.02)
+                copied = self.clipboard_reader()
+            verified = (
+                isinstance(copied, str)
+                and self._normalise_composer_text(copied)
+                == self._normalise_composer_text(prompt)
+            )
+            if verified:
+                # Copy leaves the whole editor selected. Collapse the selection
+                # so Enter submits rather than replacing the verified prompt.
+                type_keys(
+                    "{END}",
+                    pause=0.02,
+                    set_foreground=True,
+                )
+                return True
+        except Exception:
+            LOGGER.debug(
+                "ChatGPT ProseMirror clipboard verification was unavailable",
+                exc_info=True,
+            )
+
+        # Leave the known prompt in the editor for the existing retry path.
+        try:
+            self.clipboard_writer(prompt)
+            type_keys(
+                "^v",
+                pause=0.02,
+                set_foreground=True,
+            )
+        except Exception:
+            LOGGER.debug(
+                "Could not restore the prompt after clipboard verification",
+                exc_info=True,
+            )
+        return False
 
     def _wait_for_composer_prompt(
         self,
@@ -1635,10 +1870,16 @@ class ChatGPTDesktop:
         controls = cls._descendants(window)
         if controls is None:
             return None
-        return next(
-            (control for control in controls if predicate(control)),
-            None,
-        )
+        for control in controls:
+            try:
+                if predicate(control):
+                    return control
+            except Exception:
+                # Electron can invalidate individual UIA wrappers while a new
+                # page is rendering. Ignore that stale candidate and continue
+                # through the current accessibility snapshot.
+                continue
+        return None
 
     def _wait_for_control(
         self,
@@ -1654,6 +1895,26 @@ class ChatGPTDesktop:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             control = self._find_control(window, predicate)
+            if control is not None:
+                return control
+            time.sleep(0.1)
+        return None
+
+    def _wait_for_refreshed_control(
+        self,
+        window,
+        predicate,
+        timeout_seconds: float | None = None,
+    ):
+        timeout = (
+            self.timeout_seconds
+            if timeout_seconds is None
+            else timeout_seconds
+        )
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            current_window = self._refresh_chatgpt_window() or window
+            control = self._find_control(current_window, predicate)
             if control is not None:
                 return control
             time.sleep(0.1)

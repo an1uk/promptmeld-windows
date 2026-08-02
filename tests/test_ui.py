@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMessageBox,
+    QSystemTrayIcon,
 )
 
 
@@ -254,6 +255,121 @@ def test_popup_exposes_remembered_auto_submit_toggle(qtbot, tmp_path):
 
     assert signal.args == [True]
     assert popup.auto_submit_enabled is True
+
+
+def test_popup_exposes_paste_result_back_for_editable_sources(
+    qtbot,
+    tmp_path,
+):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        ),
+        auto_submit_enabled=True,
+        replace_selected_text_enabled=False,
+    )
+    qtbot.addWidget(popup)
+
+    assert popup.replace_selected_text.text() == "Paste result back"
+    assert popup.replace_selected_text.isEnabled() is True
+    with qtbot.waitSignal(
+        popup.replace_selected_text_changed
+    ) as signal:
+        popup.replace_selected_text.setChecked(True)
+
+    assert signal.args == [True]
+    assert popup.replace_selected_text_enabled is True
+
+    popup.set_source_is_editable(False)
+    assert popup.replace_selected_text.isEnabled() is False
+    popup.set_source_is_editable(True)
+    popup.set_auto_submit_enabled(False)
+    assert popup.replace_selected_text.isEnabled() is False
+
+
+def test_launcher_paste_result_back_toggle_is_saved(qtbot, tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    app = object.__new__(PromptMeld)
+    app.settings = AppSettings(replace_selected_text_enabled=False)
+    app.paths = paths
+    app.popup = None
+    app.notify = lambda *args: None
+
+    app.set_replace_selected_text_enabled(True)
+
+    assert load_settings(paths.settings_file).replace_selected_text_enabled is True
+
+
+def test_open_configuration_hides_tool_windows_and_reuses_dialog(qtbot):
+    events: list[str] = []
+
+    class ToolWindow:
+        def hide(self):
+            events.append("hide-tool")
+
+    class SettingsDialog:
+        def showNormal(self):
+            events.append("show-normal")
+
+        def raise_(self):
+            events.append("raise")
+
+        def activateWindow(self):
+            events.append("activate")
+
+        def isVisible(self):
+            return True
+
+    app = object.__new__(PromptMeld)
+    app.popup = ToolWindow()
+    app.automation_progress = ToolWindow()
+    app.settings_dialog = SettingsDialog()
+
+    app.open_action_settings()
+
+    assert events == [
+        "hide-tool",
+        "hide-tool",
+        "show-normal",
+        "raise",
+        "activate",
+    ]
+
+
+def test_tray_double_click_opens_configuration_not_launcher(qtbot):
+    events: list[str] = []
+    app = object.__new__(PromptMeld)
+    app.open_action_settings = lambda: events.append("configuration")
+    app.capture_and_show = lambda: events.append("launcher")
+
+    app._tray_activated(QSystemTrayIcon.ActivationReason.DoubleClick)
+    qtbot.wait(1)
+
+    assert events == ["configuration"]
+
+
+def test_tray_launcher_entry_is_a_current_hotkey_reminder():
+    class Action:
+        text = ""
+
+        def setText(self, text: str):
+            self.text = text
+
+    notifications: list[tuple] = []
+    app = object.__new__(PromptMeld)
+    app.settings = AppSettings(popup_hotkey="Ctrl+Shift+F8")
+    app.open_launcher_action = Action()
+    app.notify = lambda *args: notifications.append(args)
+
+    app._update_tray_shortcut_action()
+    app.show_launcher_shortcut_help()
+
+    assert app.open_launcher_action.text == "Launcher hotkey: Ctrl+Shift+F8"
+    assert "Select text" in notifications[0][1]
+    assert "Ctrl+Shift+F8" in notifications[0][1]
+    assert "Double-click" in notifications[0][1]
 
 
 def test_popup_exposes_remembered_temporary_chat_toggle(qtbot, tmp_path):
@@ -1070,7 +1186,7 @@ def test_natural_voice_help_explains_ai_detection_limit(qtbot, tmp_path):
     )
     qtbot.addWidget(dialog)
 
-    help_text = dialog.voice_description.text()
+    help_text = dialog.natural_voice_help.accessibleDescription()
     assert "AI-detection tools" in help_text
     assert "avoidance is far from guaranteed" in help_text
 
@@ -1086,10 +1202,103 @@ def test_submission_help_explains_model_selection(qtbot, tmp_path):
 
     assert dialog.auto_submit_default.isChecked() is False
     assert dialog.temporary_chat_default.isChecked() is False
-    help_text = dialog.submission_description.text()
-    assert "without pressing Enter" in help_text
-    assert "model or reasoning level" in help_text
-    assert "must review and confirm yourself" in help_text
+    assert "width='340'" in dialog.auto_submit_help.toolTip()
+    assert "model or reasoning level" in dialog.auto_submit_help.toolTip()
+    assert "must review and confirm yourself" in (
+        dialog.temporary_chat_help.toolTip()
+    )
+
+
+def test_copy_generated_text_tooltip_has_readable_theme_contrast(
+    qtbot,
+    tmp_path,
+):
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.theme.setCurrentIndex(dialog.theme.findData("light"))
+    dialog._apply_style()
+    light_style = dialog.styleSheet()
+    assert "QToolTip" in light_style
+    assert "color: #202631" in light_style
+    assert "background-color: #ffffff" in light_style
+    assert "Copy the generated result to the clipboard" in (
+        dialog.copy_generated_text_default.text()
+    )
+    assert dialog.copy_generated_text_help.text() == "?"
+    assert dialog.copy_generated_text_help.toolTip()
+
+    dialog.theme.setCurrentIndex(dialog.theme.findData("dark"))
+    dialog._apply_style()
+    dark_style = dialog.styleSheet()
+    assert "color: #f4f5f7" in dark_style
+    assert "background-color: #22252c" in dark_style
+
+
+def test_automatic_replacement_warning_is_attached_to_its_help_icon(
+    qtbot,
+    tmp_path,
+):
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.replace_selected_text_default.text() == (
+        "Replace the original selection with the generated result"
+    )
+    replacement_help = dialog.replace_selected_text_help.toolTip()
+    assert "Clipboard History" in replacement_help
+    assert "Warning:" not in dialog.copy_generated_text_help.toolTip()
+    assert dialog.replace_selected_text_warning.text().startswith(
+        "Warning:"
+    )
+    assert dialog.replace_selected_text_warning.objectName() == "warning"
+
+    dialog.theme.setCurrentIndex(dialog.theme.findData("light"))
+    dialog._apply_style()
+    light_style = dialog.styleSheet()
+    assert "QToolButton#helpIcon" in light_style
+    assert "color: #244fae" in light_style
+    assert "background-color: #eef3ff" in light_style
+
+    dialog.theme.setCurrentIndex(dialog.theme.findData("dark"))
+    dialog._apply_style()
+    dark_style = dialog.styleSheet()
+    assert "color: #d9e2ff" in dark_style
+    assert "background-color: #2b3347" in dark_style
+
+
+def test_defaults_style_uses_compact_help_icons_for_explanations(
+    qtbot,
+    tmp_path,
+):
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+
+    for help_button in (
+        dialog.resulting_text_length_help,
+        dialog.resulting_text_formatting_help,
+        dialog.writing_block_help,
+        dialog.natural_voice_help,
+        dialog.guided_drafting_help,
+    ):
+        assert help_button.text() == "?"
+        assert "width='340'" in help_button.toolTip()
+        assert help_button.accessibleDescription()
 
 
 def test_action_settings_saves_a_badged_folder_icon(qtbot, tmp_path):

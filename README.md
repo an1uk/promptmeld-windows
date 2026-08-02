@@ -90,6 +90,13 @@ repository.
 2. Press `Ctrl+Alt+Space`.
 3. Choose a writing action.
 
+The keyboard shortcut is the primary way to open the launcher because it
+preserves focus and the current selection in the source application.
+Double-click the PromptMeld notification-area icon to open **Configuration…**.
+The tray menu shows the currently configured launcher shortcut as a reminder;
+selecting that entry displays brief usage guidance rather than attempting to
+capture text after the tray has taken focus.
+
 PromptMeld builds the instruction, opens ChatGPT, selects or creates the
 appropriate PromptMeld Project, starts a fresh chat, and inserts the prompt.
 Automatic submission is off by default, so you can review the prompt and

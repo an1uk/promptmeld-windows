@@ -39,6 +39,7 @@ class LauncherPopup(QWidget):
     custom_requested = Signal(str, str, str, bool, str)
     natural_voice_changed = Signal(bool)
     auto_submit_changed = Signal(bool)
+    replace_selected_text_changed = Signal(bool)
     temporary_chat_changed = Signal(bool)
     guided_drafting_changed = Signal(bool)
     resulting_text_length_changed = Signal(str)
@@ -60,6 +61,7 @@ class LauncherPopup(QWidget):
         resulting_text_length: str = "default",
         writing_block_enabled: bool = False,
         resulting_text_formatting: str = "default",
+        replace_selected_text_enabled: bool = False,
     ):
         super().__init__()
         self.registry = registry
@@ -68,6 +70,8 @@ class LauncherPopup(QWidget):
         self.folder_icons = dict(folder_icons or {})
         self.natural_voice_enabled = natural_voice_enabled
         self.auto_submit_enabled = auto_submit_enabled
+        self.replace_selected_text_enabled = replace_selected_text_enabled
+        self.source_is_editable = True
         self.temporary_chat_enabled = temporary_chat_enabled
         self.guided_drafting_enabled = guided_drafting_enabled
         self.resulting_text_length_value = resulting_text_length
@@ -170,6 +174,14 @@ class LauncherPopup(QWidget):
             "When off, the prompt is pasted into ChatGPT but left unsent so you "
             "can choose the model or reasoning level before pressing Enter."
         )
+        self.replace_selected_text = QCheckBox("Paste result back")
+        self.replace_selected_text.setChecked(
+            self.replace_selected_text_enabled
+        )
+        self.replace_selected_text.setToolTip(
+            "After ChatGPT responds, replace the selected text in its original "
+            "editable box. Requires automatic submission."
+        )
         self.guided_drafting = QCheckBox("Guided questions")
         self.guided_drafting.setChecked(self.guided_drafting_enabled)
         self.guided_drafting.setToolTip(
@@ -193,6 +205,7 @@ class LauncherPopup(QWidget):
         temporary_row = QHBoxLayout()
         temporary_row.addWidget(self.temporary_chat)
         temporary_row.addStretch(1)
+        temporary_row.addWidget(self.replace_selected_text)
         layout.addLayout(temporary_row)
 
         self.output_menu = QMenu(self)
@@ -367,6 +380,9 @@ class LauncherPopup(QWidget):
         self.list.itemDoubleClicked.connect(self._run_action_item)
         self.natural_voice.toggled.connect(self._natural_voice_toggled)
         self.auto_submit.toggled.connect(self._auto_submit_toggled)
+        self.replace_selected_text.toggled.connect(
+            self._replace_selected_text_toggled
+        )
         self.temporary_chat.toggled.connect(self._temporary_chat_toggled)
         self.guided_drafting.toggled.connect(self._guided_drafting_toggled)
         for drag_handle in self._drag_handles:
@@ -378,6 +394,7 @@ class LauncherPopup(QWidget):
                 self._system_colour_scheme_changed
             )
         self._apply_style()
+        self._update_replace_selected_text_availability()
         self.refresh()
 
     def set_registry(
@@ -392,6 +409,7 @@ class LauncherPopup(QWidget):
         resulting_text_length: str | None = None,
         writing_block_enabled: bool | None = None,
         resulting_text_formatting: str | None = None,
+        replace_selected_text_enabled: bool | None = None,
     ) -> None:
         self.registry = registry
         if home_most_used_count is not None:
@@ -412,6 +430,10 @@ class LauncherPopup(QWidget):
             self.set_writing_block_enabled(writing_block_enabled)
         if resulting_text_formatting is not None:
             self.set_resulting_text_formatting(resulting_text_formatting)
+        if replace_selected_text_enabled is not None:
+            self.set_replace_selected_text_enabled(
+                replace_selected_text_enabled
+            )
         self.refresh()
 
     def set_natural_voice_enabled(self, enabled: bool) -> None:
@@ -429,6 +451,22 @@ class LauncherPopup(QWidget):
         self.auto_submit.blockSignals(True)
         self.auto_submit.setChecked(enabled)
         self.auto_submit.blockSignals(False)
+        self._update_replace_selected_text_availability()
+
+    def set_replace_selected_text_enabled(self, enabled: bool) -> None:
+        self.replace_selected_text_enabled = enabled
+        self.replace_selected_text.blockSignals(True)
+        self.replace_selected_text.setChecked(enabled)
+        self.replace_selected_text.blockSignals(False)
+
+    def set_source_is_editable(self, editable: bool) -> None:
+        self.source_is_editable = editable
+        self._update_replace_selected_text_availability()
+
+    def _update_replace_selected_text_availability(self) -> None:
+        self.replace_selected_text.setEnabled(
+            self.auto_submit_enabled and self.source_is_editable
+        )
 
     def set_guided_drafting_enabled(self, enabled: bool) -> None:
         self.guided_drafting_enabled = enabled
@@ -549,7 +587,12 @@ class LauncherPopup(QWidget):
 
     def _auto_submit_toggled(self, enabled: bool) -> None:
         self.auto_submit_enabled = enabled
+        self._update_replace_selected_text_availability()
         self.auto_submit_changed.emit(enabled)
+
+    def _replace_selected_text_toggled(self, enabled: bool) -> None:
+        self.replace_selected_text_enabled = enabled
+        self.replace_selected_text_changed.emit(enabled)
 
     def _guided_drafting_toggled(self, enabled: bool) -> None:
         self.guided_drafting_enabled = enabled
