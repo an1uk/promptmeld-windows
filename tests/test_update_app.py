@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 
 import pytest
+from PySide6.QtCore import QThreadPool
 
 from promptmeld import app as app_module
 from promptmeld.app import PromptMeld
@@ -112,6 +113,57 @@ def test_manual_update_check_bypasses_automatic_update_setting():
     assert app.update_check_in_progress is True
     assert app.update_state.last_attempt_utc
     assert len(app.thread_pool.workers) == 1
+    assert app.update_check_worker is app.thread_pool.workers[0]
+
+
+def test_current_manual_check_updates_configuration_inline(monkeypatch):
+    app = bare_update_app()
+    app.settings_dialog = object()
+    information_calls = []
+    monkeypatch.setattr(
+        app_module.QMessageBox,
+        "information",
+        lambda *args: information_calls.append(args),
+    )
+
+    app._update_check_finished(
+        UpdateCheckResult(status="current", release=installable_release()),
+        manual=True,
+    )
+
+    assert app.update_check_in_progress is False
+    assert app.update_current_confirmed is True
+    assert information_calls == []
+
+
+def test_manual_check_worker_completes_and_clears_checking_state(
+    monkeypatch,
+    qtbot,
+):
+    app = object.__new__(PromptMeld)
+    app.update_check_in_progress = False
+    app.update_download_in_progress = False
+    app.update_check_worker = None
+    app.update_last_error = ""
+    app.update_current_confirmed = False
+    app.update_state = UpdateState()
+    app.available_update = None
+    app.settings_dialog = object()
+    app.thread_pool = QThreadPool.globalInstance()
+    app._save_update_state = lambda: None
+    app._refresh_update_surfaces = lambda: None
+    monkeypatch.setattr(app_module, "display_version", lambda: "0.1.1")
+    monkeypatch.setattr(
+        app_module,
+        "check_latest_release",
+        lambda version: UpdateCheckResult(status="current"),
+    )
+
+    app.check_for_updates(manual=True)
+    qtbot.waitUntil(lambda: not app.update_check_in_progress, timeout=3_000)
+
+    assert app.update_check_worker is None
+    assert app.update_current_confirmed is True
 
 
 def test_installer_launch_failure_restores_mutex_and_hotkeys(
