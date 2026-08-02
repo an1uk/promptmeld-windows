@@ -1,22 +1,26 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 import sys
+import threading
 import time
 from dataclasses import replace
 from importlib.resources import files
 from logging.handlers import RotatingFileHandler
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QThreadPool, QTimer
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import Qt, QThreadPool, QTimer, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QMenu,
     QMessageBox,
+    QProgressDialog,
     QSystemTrayIcon,
 )
 
+from . import display_version
 from .actions import ActionRegistry
 from .automation_client import (
     shutdown_automation_helper,
@@ -36,6 +40,21 @@ from .prompting import PromptBuilder
 from .single_instance import SingleInstance
 from .startup import StartupManager
 from .usage import UsageTracker
+from .updates import (
+    RELEASES_URL,
+    DownloadResult,
+    ReleaseInfo,
+    UpdateCheckResult,
+    UpdateState,
+    check_is_due,
+    check_latest_release,
+    cleanup_update_downloads,
+    download_installer,
+    is_newer_version,
+    load_update_state,
+    save_update_state,
+    verify_installer_file,
+)
 from .windows import (
     GlobalHotkeyManager,
     SelectionCapture,
@@ -115,9 +134,15 @@ def make_tray_icon() -> QIcon:
 
 
 class PromptMeld:
-    def __init__(self, qt_app: QApplication, paths: AppPaths):
+    def __init__(
+        self,
+        qt_app: QApplication,
+        paths: AppPaths,
+        single_instance: SingleInstance | None = None,
+    ):
         self.qt_app = qt_app
         self.paths = paths
+        self.single_instance = single_instance
         self.settings = None
         self.registry = None
         self.capture = None
@@ -131,6 +156,24 @@ class PromptMeld:
         self.startup = StartupManager()
         self.startup.migrate_legacy_registration()
         self.settings_dialog: ActionSettingsDialog | None = None
+        self.update_state_path = paths.data_dir / "update-state.json"
+        self.update_downloads_dir = paths.data_dir / "updates"
+        self.update_state = load_update_state(self.update_state_path)
+        self.available_update: ReleaseInfo | None = None
+        self.update_check_in_progress = False
+        self.update_download_in_progress = False
+        self.update_last_error = ""
+        self.update_current_confirmed = False
+        self.update_cancel_event: threading.Event | None = None
+        self.update_progress_dialog: QProgressDialog | None = None
+        cleanup_update_downloads(self.update_downloads_dir)
+        cached_release = self.update_state.cached_release
+        if cached_release is not None:
+            try:
+                if is_newer_version(cached_release.version, display_version()):
+                    self.available_update = cached_release
+            except ValueError:
+                LOGGER.warning("Ignored invalid cached update version")
 
         app_icon = make_tray_icon()
         qt_app.setWindowIcon(app_icon)
@@ -145,6 +188,10 @@ class PromptMeld:
         self.open_launcher_action = self.menu.addAction("Launcher hotkey")
         self.open_launcher_action.triggered.connect(
             self.show_launcher_shortcut_help
+        )
+        self.update_action = self.menu.addAction("Check for updates...")
+        self.update_action.triggered.connect(
+            lambda: self.check_for_updates(manual=True)
         )
         self.menu.addSeparator()
         self.startup_action = self.menu.addAction("Start with Windows")
@@ -167,6 +214,9 @@ class PromptMeld:
         )
         self.register_hotkeys()
         self.tray.show()
+        self._refresh_update_surfaces()
+        if getattr(sys, "frozen", False):
+            QTimer.singleShot(10_000, self._scheduled_update_check)
 
     def _load_components(self, first_load: bool = False) -> None:
         self.settings = load_settings(self.paths.settings_file)
@@ -762,6 +812,12 @@ class PromptMeld:
             self.icons.clear_cache()
         self._reload_configuration(register_hotkeys=False)
         self._apply_startup_preference()
+        self._refresh_update_surfaces()
+        if (
+            getattr(sys, "frozen", False)
+            and self.settings.check_for_updates_enabled
+        ):
+            QTimer.singleShot(0, self._scheduled_update_check)
 
     def _reload_configuration(self, register_hotkeys: bool = True) -> None:
         try:
@@ -780,6 +836,434 @@ class PromptMeld:
                 8000,
             )
 
+    def _save_update_state(self) -> None:
+        try:
+            save_update_state(self.update_state_path, self.update_state)
+        except OSError:
+            LOGGER.exception("Update state could not be saved")
+
+    def _scheduled_update_check(self) -> None:
+        if (
+            not getattr(sys, "frozen", False)
+            or not self.settings.check_for_updates_enabled
+            or self.update_check_in_progress
+            or self.update_download_in_progress
+            or not check_is_due(self.update_state)
+        ):
+            return
+        self.check_for_updates(manual=False)
+
+    def check_for_updates(self, *, manual: bool = True) -> None:
+        if self.update_check_in_progress or self.update_download_in_progress:
+            if manual:
+                self._sync_settings_update_status(self.settings_dialog)
+            return
+        self.update_check_in_progress = True
+        self.update_last_error = ""
+        self.update_state = self.update_state.with_attempt()
+        self._save_update_state()
+        self._refresh_update_surfaces()
+        current_version = display_version()
+        worker = FunctionWorker(
+            lambda: check_latest_release(current_version)
+        )
+        worker.signals.finished.connect(
+            lambda result, requested_manually=manual: (
+                self._update_check_finished(result, requested_manually)
+            )
+        )
+        self.thread_pool.start(worker)
+
+    def _update_check_finished(
+        self,
+        result: object,
+        manual: bool,
+    ) -> None:
+        self.update_check_in_progress = False
+        if not isinstance(result, UpdateCheckResult):
+            result = UpdateCheckResult(
+                status="error",
+                error="GitHub returned an unexpected update result.",
+            )
+
+        if result.status == "available" and result.release is not None:
+            self.available_update = result.release
+            self.update_last_error = ""
+            self.update_current_confirmed = False
+            should_notify = (
+                self.update_state.last_notified_version
+                != result.release.version
+            )
+            self.update_state = replace(
+                self.update_state,
+                cached_release=result.release,
+                last_notified_version=(
+                    result.release.version
+                    if should_notify
+                    else self.update_state.last_notified_version
+                ),
+            )
+            self._save_update_state()
+            if manual:
+                self._show_update_available(result.release)
+            elif should_notify:
+                next_step = (
+                    "install it"
+                    if result.release.installable
+                    else "view the release"
+                )
+                self.notify(
+                    "PromptMeld update available",
+                    f"Version {result.release.version} is available. Open the "
+                    f"PromptMeld tray menu or Configuration to {next_step}.",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    8000,
+                )
+        elif result.status == "current":
+            self.available_update = None
+            self.update_last_error = ""
+            self.update_current_confirmed = True
+            self.update_state = replace(
+                self.update_state,
+                cached_release=None,
+            )
+            self._save_update_state()
+            if manual:
+                QMessageBox.information(
+                    self.settings_dialog,
+                    "PromptMeld is up to date",
+                    f"Version {display_version()} is the latest stable version.",
+                )
+        else:
+            self.update_last_error = result.error or "The update check failed."
+            self.update_current_confirmed = False
+            LOGGER.warning("Update check failed: %s", self.update_last_error)
+            if manual:
+                QMessageBox.warning(
+                    self.settings_dialog,
+                    "Could not check for updates",
+                    self.update_last_error,
+                )
+        self._refresh_update_surfaces()
+
+    def _show_update_available(self, release: ReleaseInfo) -> None:
+        message = QMessageBox(self.settings_dialog)
+        message.setWindowTitle("PromptMeld update available")
+        message.setIcon(QMessageBox.Icon.Information)
+        message.setText(
+            f"PromptMeld {release.version} is available.\n\n"
+            f"You are using version {display_version()}."
+        )
+        install_button = None
+        if release.installable and getattr(sys, "frozen", False):
+            install_button = message.addButton(
+                "Download and install",
+                QMessageBox.ButtonRole.AcceptRole,
+            )
+        release_button = message.addButton(
+            "View release notes",
+            QMessageBox.ButtonRole.ActionRole,
+        )
+        message.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+        if not release.installable:
+            message.setInformativeText(
+                release.install_error
+                or "This release can only be downloaded from GitHub."
+            )
+        elif not getattr(sys, "frozen", False):
+            message.setInformativeText(
+                "Installer updates are disabled while PromptMeld is running "
+                "from a development source tree."
+            )
+        message.exec()
+        clicked = message.clickedButton()
+        if install_button is not None and clicked is install_button:
+            self.download_update()
+        elif clicked is release_button:
+            self.open_update_release()
+
+    def _refresh_update_surfaces(self) -> None:
+        if self.update_download_in_progress:
+            self.update_action.setText("Downloading update...")
+            self.update_action.setEnabled(False)
+        elif self.update_check_in_progress:
+            self.update_action.setText("Checking for updates...")
+            self.update_action.setEnabled(False)
+        elif self.available_update is not None:
+            self.update_action.setText(
+                f"Update available: v{self.available_update.version}..."
+            )
+            self.update_action.setEnabled(True)
+        else:
+            self.update_action.setText("Check for updates...")
+            self.update_action.setEnabled(not self.update_download_in_progress)
+        self._sync_settings_update_status(self.settings_dialog)
+
+    def _sync_settings_update_status(self, dialog) -> None:
+        if dialog is None or not hasattr(dialog, "set_update_status"):
+            return
+        try:
+            if self.update_download_in_progress:
+                dialog.set_update_status(
+                    "Downloading and verifying the PromptMeld installer...",
+                    checking=True,
+                    release_available=self.available_update is not None,
+                )
+                return
+            if self.update_check_in_progress:
+                dialog.set_update_status(
+                    "Checking the latest stable GitHub release...",
+                    checking=True,
+                    release_available=self.available_update is not None,
+                )
+                return
+            release = self.available_update
+            if release is not None:
+                installable = (
+                    release.installable and getattr(sys, "frozen", False)
+                )
+                status = f"PromptMeld {release.version} is available."
+                if release.install_error:
+                    status = f"{status} {release.install_error}"
+                dialog.set_update_status(
+                    status,
+                    release_available=True,
+                    install_available=installable,
+                    version=release.version,
+                )
+                return
+            if self.update_last_error:
+                dialog.set_update_status(
+                    f"Last check failed: {self.update_last_error}"
+                )
+                return
+            if self.update_current_confirmed:
+                status = (
+                    f"PromptMeld {display_version()} is the latest stable "
+                    "version found."
+                )
+            elif self.update_state.last_attempt_utc:
+                status = (
+                    "An update check was attempted earlier. Choose Check now "
+                    "to refresh the result."
+                )
+            else:
+                status = "Updates have not been checked yet."
+            dialog.set_update_status(status)
+        except RuntimeError:
+            LOGGER.debug("Configuration closed while update status changed")
+
+    def open_update_release(self) -> None:
+        url = (
+            self.available_update.release_url
+            if self.available_update is not None
+            else RELEASES_URL
+        )
+        if not QDesktopServices.openUrl(QUrl(url)):
+            self.notify(
+                "Could not open GitHub",
+                url,
+                QSystemTrayIcon.MessageIcon.Warning,
+            )
+
+    def download_update(self) -> None:
+        release = self.available_update
+        if self.update_download_in_progress:
+            return
+        if release is None:
+            self.check_for_updates(manual=True)
+            return
+        if not release.installable or not getattr(sys, "frozen", False):
+            self.open_update_release()
+            return
+
+        self.update_download_in_progress = True
+        self.update_cancel_event = threading.Event()
+        progress = QProgressDialog(
+            f"Downloading PromptMeld {release.version}...",
+            "Cancel",
+            0,
+            int(release.installer_size or 0),
+            self.settings_dialog,
+        )
+        progress.setWindowTitle("PromptMeld update")
+        progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.canceled.connect(self.update_cancel_event.set)
+        self.update_progress_dialog = progress
+        progress.show()
+
+        current_version = display_version()
+        cancel_event = self.update_cancel_event
+        worker = FunctionWorker(
+            lambda report: download_installer(
+                release,
+                self.update_downloads_dir,
+                current_version=current_version,
+                report_progress=lambda downloaded, total: report(
+                    downloaded,
+                    total,
+                ),
+                is_cancelled=cancel_event.is_set,
+            ),
+            with_progress=True,
+        )
+        worker.signals.progress.connect(self._update_download_progress)
+        worker.signals.finished.connect(
+            lambda result, current=release: self._update_download_finished(
+                result,
+                current,
+            )
+        )
+        self.thread_pool.start(worker)
+        self._refresh_update_surfaces()
+
+    def _update_download_progress(self, downloaded: object, total: object) -> None:
+        progress = self.update_progress_dialog
+        if progress is None:
+            return
+        try:
+            downloaded_bytes = int(downloaded)
+            total_bytes = int(total)
+        except (TypeError, ValueError):
+            return
+        progress.setMaximum(max(1, total_bytes))
+        progress.setValue(min(downloaded_bytes, total_bytes))
+        progress.setLabelText(
+            f"Downloading PromptMeld... "
+            f"{downloaded_bytes / 1_048_576:.1f} of "
+            f"{total_bytes / 1_048_576:.1f} MB"
+        )
+
+    def _update_download_finished(
+        self,
+        result: object,
+        release: ReleaseInfo,
+    ) -> None:
+        self.update_download_in_progress = False
+        self.update_cancel_event = None
+        if self.update_progress_dialog is not None:
+            self.update_progress_dialog.close()
+            self.update_progress_dialog.deleteLater()
+            self.update_progress_dialog = None
+        self._refresh_update_surfaces()
+
+        if not isinstance(result, DownloadResult):
+            result = DownloadResult(error="The updater returned an invalid result.")
+        if result.cancelled:
+            return
+        if not result.succeeded or result.path is None:
+            QMessageBox.warning(
+                self.settings_dialog,
+                "Update download failed",
+                result.error or "The installer could not be downloaded.",
+            )
+            return
+        self._confirm_install_update(result.path, release)
+
+    def _confirm_install_update(self, installer_path, release: ReleaseInfo) -> None:
+        response = QMessageBox.question(
+            self.settings_dialog,
+            "Install PromptMeld update",
+            f"PromptMeld {release.version} has been downloaded and verified.\n\n"
+            "PromptMeld will close and the normal installer will open. Your "
+            "configuration and writing actions will be kept.",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Ok,
+        )
+        if response != QMessageBox.StandardButton.Ok:
+            return
+        if not self._resolve_unsaved_settings_before_update():
+            return
+        self._launch_update_installer(installer_path, release)
+
+    def _resolve_unsaved_settings_before_update(self) -> bool:
+        dialog = self.settings_dialog
+        if dialog is None or not dialog.has_unsaved_changes():
+            return True
+        message = QMessageBox(dialog)
+        message.setWindowTitle("Unsaved Configuration changes")
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setText(
+            "Configuration contains unsaved changes. Save them before "
+            "installing the update?"
+        )
+        save_button = message.addButton(
+            "Save changes and install",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        discard_button = message.addButton(
+            "Discard changes and install",
+            QMessageBox.ButtonRole.DestructiveRole,
+        )
+        message.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        message.exec()
+        clicked = message.clickedButton()
+        if clicked is save_button:
+            return bool(dialog.save_changes())
+        return clicked is discard_button
+
+    def _launch_update_installer(
+        self,
+        installer_path,
+        release: ReleaseInfo,
+    ) -> None:
+        try:
+            resolved_installer = installer_path.resolve(strict=True)
+            resolved_directory = self.update_downloads_dir.resolve(strict=True)
+            if (
+                resolved_installer.parent != resolved_directory
+                or resolved_installer.name != release.installer_name
+            ):
+                raise OSError("The verified installer path was not recognised.")
+            verification_error = verify_installer_file(
+                release,
+                resolved_installer,
+            )
+            if verification_error:
+                raise OSError(verification_error)
+        except OSError as exc:
+            QMessageBox.warning(
+                self.settings_dialog,
+                "Update could not be installed",
+                str(exc),
+            )
+            return
+
+        self.hotkeys.unregister_all()
+        shutdown_automation_helper()
+        if self.single_instance is not None:
+            self.single_instance.release()
+        try:
+            subprocess.Popen(
+                [str(resolved_installer)],
+                cwd=str(resolved_directory),
+                close_fds=True,
+            )
+        except OSError as exc:
+            LOGGER.exception("Verified update installer could not be started")
+            mutex_restored = (
+                self.single_instance is None
+                or self.single_instance.reacquire_mutex()
+            )
+            if mutex_restored and self.settings_dialog is None:
+                self.register_hotkeys()
+            QMessageBox.critical(
+                self.settings_dialog,
+                "Update installer could not start",
+                f"{exc}\n\nThe verified installer remains at:\n"
+                f"{resolved_installer}",
+            )
+            if not mutex_restored:
+                self.qt_app.quit()
+            return
+
+        LOGGER.info("Starting verified PromptMeld %s installer", release.version)
+        self.tray.hide()
+        self.qt_app.quit()
+
     def open_action_settings(self) -> None:
         # Tool windows can remain topmost while hidden or while an automation
         # worker is finishing. Clear them before presenting Configuration so it
@@ -795,6 +1279,7 @@ class PromptMeld:
         if self.settings_dialog is not None:
             existing_dialog = self.settings_dialog
             try:
+                self._sync_settings_update_status(existing_dialog)
                 self._present_settings_dialog(existing_dialog)
                 LOGGER.info("Existing Configuration window presented")
                 return
@@ -812,6 +1297,18 @@ class PromptMeld:
         try:
             dialog = self._create_settings_dialog()
             dialog.actions_saved.connect(self.reload_configuration_after_save)
+            update_signals = (
+                (
+                    "update_check_requested",
+                    lambda: self.check_for_updates(manual=True),
+                ),
+                ("update_release_requested", self.open_update_release),
+                ("update_install_requested", self.download_update),
+            )
+            for signal_name, callback in update_signals:
+                signal = getattr(dialog, signal_name, None)
+                if signal is not None:
+                    signal.connect(callback)
             dialog.finished.connect(
                 lambda result, current=dialog: self._settings_dialog_closed(
                     current,
@@ -819,6 +1316,7 @@ class PromptMeld:
                 )
             )
             self.settings_dialog = dialog
+            self._sync_settings_update_status(dialog)
             self._present_settings_dialog(dialog)
         except Exception as exc:
             LOGGER.exception("Configuration window could not be created")
@@ -1031,6 +1529,10 @@ class PromptMeld:
             QTimer.singleShot(0, self.open_action_settings)
 
     def quit(self) -> None:
+        if self.update_cancel_event is not None:
+            self.update_cancel_event.set()
+        if self.update_progress_dialog is not None:
+            self.update_progress_dialog.close()
         self.hotkeys.unregister_all()
         shutdown_automation_helper()
         if self.automation_progress is not None:
@@ -1060,7 +1562,7 @@ def run() -> int:
         return 0
 
     try:
-        launcher = PromptMeld(qt_app, paths)
+        launcher = PromptMeld(qt_app, paths, instance)
     except (ConfigurationError, OSError) as exc:
         LOGGER.exception("%s failed to start", APP_NAME)
         QMessageBox.critical(None, APP_NAME, str(exc))

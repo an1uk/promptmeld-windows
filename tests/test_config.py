@@ -136,6 +136,7 @@ def test_load_settings_includes_home_and_folder_display_defaults(tmp_path):
     assert settings.folder_icons["Editing"] == "lucide:pencil"
     assert settings.natural_voice_enabled is False
     assert settings.auto_submit_enabled is False
+    assert settings.check_for_updates_enabled is True
     assert settings.replace_selected_text_enabled is False
     assert settings.copy_generated_text_enabled is False
     assert settings.temporary_chat_enabled is False
@@ -156,6 +157,17 @@ def test_load_settings_rejects_invalid_auto_submit_value(tmp_path):
     )
 
     with pytest.raises(ConfigurationError, match="auto_submit_enabled"):
+        load_settings(path)
+
+
+def test_load_settings_rejects_invalid_update_check_value(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"check_for_updates_enabled": "sometimes"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="check_for_updates_enabled"):
         load_settings(path)
 
 

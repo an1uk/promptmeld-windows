@@ -7,7 +7,7 @@ from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
 class WorkerSignals(QObject):
     finished = Signal(object)
-    progress = Signal(str, str)
+    progress = Signal(object, object)
 
 
 class FunctionWorker(QRunnable):

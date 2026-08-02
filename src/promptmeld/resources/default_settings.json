@@ -5,6 +5,7 @@
   "capture_timeout_ms": 1000,
   "automation_timeout_seconds": 8.0,
   "startup_enabled": false,
+  "check_for_updates_enabled": true,
   "chatgpt_uri": "chatgpt:",
   "app_names": ["ChatGPT"],
   "project_uri": "",

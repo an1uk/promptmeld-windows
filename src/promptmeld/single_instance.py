@@ -54,6 +54,13 @@ class SingleInstance:
                 )
                 return False
 
+        return self.reacquire_mutex()
+
+    def reacquire_mutex(self) -> bool:
+        """Acquire only the mutex, without treating our receiver as a rival."""
+
+        if self.handle:
+            return True
         handle = _KERNEL32.CreateMutexW(None, False, self.name)
         if not handle:
             return False

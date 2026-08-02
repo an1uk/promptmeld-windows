@@ -84,6 +84,19 @@ The installer is not yet code-signed, so Microsoft Defender SmartScreen may
 describe it as an unrecognised app. Only install a copy downloaded from this
 repository.
 
+### Updates
+
+Installed copies check the latest stable GitHub release at most once per day.
+When a newer version is available, PromptMeld shows one Windows notification
+and keeps an **Update available** entry in its notification-area menu. Choose
+that entry, or use **Check now** in **Configuration > General > Updates**, to
+download the installer.
+
+PromptMeld verifies the installer filename, size, download location, and the
+SHA-256 digest published by GitHub before it can be opened. The normal visible
+installer then performs the update and offers to relaunch PromptMeld. Automatic
+checks can be disabled in Configuration; manual checks remain available.
+
 ## Use
 
 1. Select text in another application.

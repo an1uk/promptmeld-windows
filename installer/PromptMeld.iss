@@ -1,6 +1,6 @@
 #define MyAppName "PromptMeld"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #error MyAppVersion must be supplied by scripts\build-installer.ps1
 #endif
 #ifndef MyAppMutex
   #define MyAppMutex "Local\PromptMeld-v1"

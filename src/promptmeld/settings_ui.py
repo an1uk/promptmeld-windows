@@ -243,6 +243,9 @@ class HotkeyCaptureEdit(QLineEdit):
 
 class ActionSettingsDialog(QDialog):
     actions_saved = Signal()
+    update_check_requested = Signal()
+    update_install_requested = Signal()
+    update_release_requested = Signal()
     ITEM_KIND_ROLE = Qt.ItemDataRole.UserRole + 1
 
     def __init__(
@@ -847,6 +850,46 @@ class ActionSettingsDialog(QDialog):
         )
         self.start_with_windows.setChecked(voice_settings.startup_enabled)
         startup_layout.addWidget(self.start_with_windows)
+        updates_group = QGroupBox("Updates")
+        updates_layout = QVBoxLayout(updates_group)
+        self.check_for_updates = QCheckBox(
+            "Check automatically for PromptMeld updates"
+        )
+        self.check_for_updates.setChecked(
+            voice_settings.check_for_updates_enabled
+        )
+        update_explanation = QLabel(
+            "PromptMeld checks the latest stable GitHub release at most once "
+            "per day. No writing or configuration content is sent."
+        )
+        update_explanation.setObjectName("muted")
+        update_explanation.setWordWrap(True)
+        self.update_status = QLabel("Update status has not been checked yet.")
+        self.update_status.setObjectName("muted")
+        self.update_status.setWordWrap(True)
+        update_buttons = QHBoxLayout()
+        self.check_updates_button = QPushButton("Check now")
+        self.view_update_release_button = QPushButton("View release notes")
+        self.install_update_button = QPushButton("Download and install")
+        self.view_update_release_button.setEnabled(False)
+        self.install_update_button.setEnabled(False)
+        self.check_updates_button.clicked.connect(
+            self.update_check_requested.emit
+        )
+        self.view_update_release_button.clicked.connect(
+            self.update_release_requested.emit
+        )
+        self.install_update_button.clicked.connect(
+            self.update_install_requested.emit
+        )
+        update_buttons.addWidget(self.check_updates_button)
+        update_buttons.addWidget(self.view_update_release_button)
+        update_buttons.addStretch(1)
+        update_buttons.addWidget(self.install_update_button)
+        updates_layout.addWidget(self.check_for_updates)
+        updates_layout.addWidget(update_explanation)
+        updates_layout.addWidget(self.update_status)
+        updates_layout.addLayout(update_buttons)
         about_group = QGroupBox(f"About {APP_NAME}")
         about_layout = QVBoxLayout(about_group)
         self.version_label = QLabel(f"Version {display_version()}")
@@ -869,6 +912,7 @@ class ActionSettingsDialog(QDialog):
         general_layout.addWidget(appearance_group)
         general_layout.addWidget(launcher_group)
         general_layout.addWidget(startup_group)
+        general_layout.addWidget(updates_group)
         general_layout.addWidget(about_group)
         general_layout.addStretch(1)
         defaults_page = QWidget()
@@ -886,6 +930,7 @@ class ActionSettingsDialog(QDialog):
         self.tabs.addTab(hotkeys_page, "Hotkeys")
         self.tabs.addTab(defaults_page, "Defaults & style")
         self.tabs.currentChanged.connect(self._tab_changed)
+        self.check_for_updates.stateChanged.connect(self._mark_unsaved)
         root.addWidget(self.tabs, 1)
 
         self.buttons = QDialogButtonBox(
@@ -1432,6 +1477,7 @@ class ActionSettingsDialog(QDialog):
             self.popup_hotkey,
             str(self.theme.currentData() or "auto"),
             self.start_with_windows.isChecked(),
+            self.check_for_updates.isChecked(),
             self.most_used_count.value(),
             self.primary_language.currentText().strip(),
             str(self.resulting_text_length.currentData() or "default"),
@@ -1595,7 +1641,7 @@ class ActionSettingsDialog(QDialog):
             DEFAULT_NATURAL_VOICE_INSTRUCTION
         )
 
-    def _save(self) -> None:
+    def _save(self) -> bool:
         self._commit_current()
         try:
             actions = self._validated_actions()
@@ -1606,6 +1652,9 @@ class ActionSettingsDialog(QDialog):
                     popup_hotkey=self.popup_hotkey,
                     theme=str(self.theme.currentData() or "auto"),
                     startup_enabled=self.start_with_windows.isChecked(),
+                    check_for_updates_enabled=(
+                        self.check_for_updates.isChecked()
+                    ),
                     home_most_used_count=self.most_used_count.value(),
                     folder_icons=folder_icons,
                     natural_voice_enabled=(
@@ -1647,13 +1696,44 @@ class ActionSettingsDialog(QDialog):
             save_actions(self.paths.actions_file, actions)
         except (ValueError, OSError) as exc:
             QMessageBox.warning(self, "Cannot save actions", str(exc))
-            return
+            return False
         self.actions = actions
         self.folder_icons = folder_icons
         self._saved_state = self._configuration_state()
         self._set_close_button_dirty(False)
         self.actions_saved.emit()
         self._set_save_status("Changes saved", saved=True)
+        return True
+
+    def has_unsaved_changes(self) -> bool:
+        return bool(
+            self._saved_state is not None
+            and self._configuration_state() != self._saved_state
+        )
+
+    def save_changes(self) -> bool:
+        return self._save()
+
+    def set_update_status(
+        self,
+        message: str,
+        *,
+        checking: bool = False,
+        release_available: bool = False,
+        install_available: bool = False,
+        version: str = "",
+    ) -> None:
+        self.update_status.setText(message)
+        self.check_updates_button.setEnabled(not checking)
+        self.view_update_release_button.setEnabled(release_available)
+        self.install_update_button.setEnabled(
+            install_available and not checking
+        )
+        self.install_update_button.setText(
+            f"Download and install v{version}"
+            if install_available and version
+            else "Download and install"
+        )
 
     def _validated_folder_icons(
         self,
