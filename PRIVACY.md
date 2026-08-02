@@ -1,8 +1,9 @@
 # PromptMeld privacy
 
 PromptMeld runs on your Windows computer. It does not contain telemetry,
-analytics, advertising, an OpenAI API client, or any other cloud service of its
-own.
+analytics, advertising, or an OpenAI API client. Its only direct network
+feature is the optional GitHub release check and installer download described
+below.
 
 ## The short version
 
@@ -21,8 +22,11 @@ own.
   completed prompts, or ChatGPT responses to disk.
 - The automation progress window shows stage descriptions only, not the
   selected text or completed prompt.
-- PromptMeld makes no network requests. The ChatGPT desktop app communicates
-  with OpenAI after text is inserted into it.
+- By default, PromptMeld checks GitHub at most once per day for a stable update.
+  This can be disabled in Configuration. No selected text, prompt, response, or
+  configuration content is included in the request.
+- The ChatGPT desktop app communicates with OpenAI after text is inserted into
+  it.
 
 ## What happens to selected text
 
@@ -113,6 +117,10 @@ PromptMeld stores the following files under `%LOCALAPPDATA%\PromptMeld`:
 - `settings.json`: launcher and writing-style preferences.
 - `usage.json`: per-action usage counts and last-used timestamps for ranking.
 - `promptmeld.log`: operational messages, timings, and errors.
+- `update-state.json`: the last update attempt, cached public release metadata,
+  and the last version for which a notification was shown.
+- `updates\`: a verified installer while an update is being applied; old update
+  downloads are removed on a later launch.
 - `icons\`: images you import for actions or folders.
 - Migration backups of older configuration files, when applicable.
 
@@ -121,8 +129,21 @@ instructions, completed prompts, clipboard contents, or ChatGPT responses.
 
 ## Network access
 
-PromptMeld itself makes no network requests and does not send information to
-the PromptMeld developer, Logitech, or an analytics provider.
+When automatic update checks are enabled, PromptMeld makes a standard HTTPS
+request to GitHub's public API at most once per day to read the latest stable
+release metadata. A manual check makes the same request. Downloading an update
+retrieves the selected installer from GitHub's release infrastructure.
+
+These requests contain a PromptMeld version User-Agent but no selected text,
+prompts, ChatGPT responses, writing actions, preferences, machine identifier,
+or analytics identifier. As with an ordinary visit to GitHub, GitHub and its
+content-delivery providers receive normal connection information such as the
+IP address and request headers. Automatic checks can be disabled under
+**Configuration > General > Updates**; manual checks and the GitHub release
+link remain available.
+
+PromptMeld does not send information to the PromptMeld developer, Logitech, or
+an analytics provider.
 
 The separate ChatGPT desktop app requires network access to provide its
 service. Optional Logitech integration starts PromptMeld actions but is not

@@ -111,6 +111,7 @@ class AppSettings:
     capture_timeout_ms: int = 1000
     automation_timeout_seconds: float = 8.0
     startup_enabled: bool = False
+    check_for_updates_enabled: bool = True
     chatgpt_uri: str = "chatgpt:"
     app_names: tuple[str, ...] = ("ChatGPT",)
     project_uri: str = ""

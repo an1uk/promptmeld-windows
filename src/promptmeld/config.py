@@ -373,6 +373,11 @@ def load_settings(path: Path) -> AppSettings:
     natural_voice_enabled = raw.get("natural_voice_enabled", False)
     if not isinstance(natural_voice_enabled, bool):
         raise ConfigurationError("natural_voice_enabled must be true or false.")
+    check_for_updates_enabled = raw.get("check_for_updates_enabled", True)
+    if not isinstance(check_for_updates_enabled, bool):
+        raise ConfigurationError(
+            "check_for_updates_enabled must be true or false."
+        )
     auto_submit_enabled = raw.get("auto_submit_enabled", False)
     if not isinstance(auto_submit_enabled, bool):
         raise ConfigurationError("auto_submit_enabled must be true or false.")
@@ -468,6 +473,7 @@ def load_settings(path: Path) -> AppSettings:
         "capture_timeout_ms",
         "automation_timeout_seconds",
         "startup_enabled",
+        "check_for_updates_enabled",
         "chatgpt_uri",
         "app_names",
         "project_uri",
@@ -493,6 +499,7 @@ def load_settings(path: Path) -> AppSettings:
         capture_timeout_ms=capture_timeout_ms,
         automation_timeout_seconds=automation_timeout_seconds,
         startup_enabled=bool(raw.get("startup_enabled", False)),
+        check_for_updates_enabled=check_for_updates_enabled,
         chatgpt_uri=str(raw.get("chatgpt_uri", "chatgpt:")).strip() or "chatgpt:",
         app_names=tuple(item.strip() for item in app_names),
         project_uri=str(raw.get("project_uri", "")).strip(),
@@ -527,6 +534,7 @@ def settings_to_dict(settings: AppSettings) -> dict[str, object]:
         "capture_timeout_ms": settings.capture_timeout_ms,
         "automation_timeout_seconds": settings.automation_timeout_seconds,
         "startup_enabled": settings.startup_enabled,
+        "check_for_updates_enabled": settings.check_for_updates_enabled,
         "chatgpt_uri": settings.chatgpt_uri,
         "app_names": list(settings.app_names),
         "project_uri": settings.project_uri,

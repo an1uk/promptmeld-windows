@@ -53,7 +53,7 @@ if (-not (Test-Path -LiteralPath $versionFile)) {
     throw "The packaged application does not contain its generated VERSION file."
 }
 $version = (Get-Content -Raw -LiteralPath $versionFile).Trim()
-if ($version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+if ($version -notmatch '^\d+\.\d+\.\d+$') {
     throw "The packaged application version is invalid: $version"
 }
 

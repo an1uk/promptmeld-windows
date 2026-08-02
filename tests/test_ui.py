@@ -24,6 +24,7 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import (
+    QDialog,
     QDialogButtonBox,
     QHeaderView,
     QLabel,
@@ -309,23 +310,25 @@ def test_open_configuration_hides_tool_windows_and_reuses_dialog(qtbot):
         def hide(self):
             events.append("hide-tool")
 
-    class SettingsDialog:
+    class SettingsDialog(QDialog):
         def showNormal(self):
             events.append("show-normal")
+            super().showNormal()
 
         def raise_(self):
             events.append("raise")
+            super().raise_()
 
         def activateWindow(self):
             events.append("activate")
-
-        def isVisible(self):
-            return True
+            super().activateWindow()
 
     app = object.__new__(PromptMeld)
     app.popup = ToolWindow()
     app.automation_progress = ToolWindow()
-    app.settings_dialog = SettingsDialog()
+    dialog = SettingsDialog()
+    qtbot.addWidget(dialog)
+    app.settings_dialog = dialog
 
     app.open_action_settings()
 
@@ -336,6 +339,62 @@ def test_open_configuration_hides_tool_windows_and_reuses_dialog(qtbot):
         "raise",
         "activate",
     ]
+    app.settings_dialog = None
+    dialog.close()
+
+
+def test_open_configuration_recreates_an_unusable_dialog(qtbot):
+    events: list[str] = []
+
+    class StaleSettingsDialog:
+        def windowState(self):
+            raise RuntimeError("Internal C++ object already deleted")
+
+        def hide(self):
+            events.append("discard-stale")
+
+        def close(self):
+            events.append("close-stale")
+
+    class FreshSettingsDialog(QDialog):
+        def showNormal(self):
+            events.append("show-fresh")
+            super().showNormal()
+
+    class SignalStub:
+        def connect(self, callback):
+            self.callback = callback
+
+    class Hotkeys:
+        def unregister_all(self):
+            events.append("unregister-hotkeys")
+
+    app = object.__new__(PromptMeld)
+    app.popup = None
+    app.automation_progress = None
+    app.settings_dialog = StaleSettingsDialog()
+    app.hotkeys = Hotkeys()
+    app.icons = None
+    app.register_hotkeys = lambda: events.append("register-hotkeys")
+    app.reload_configuration_after_save = lambda: None
+    app.notify = lambda *args: events.append("notify")
+
+    fresh = FreshSettingsDialog()
+    fresh.actions_saved = SignalStub()
+    qtbot.addWidget(fresh)
+    app._create_settings_dialog = lambda: fresh
+
+    app.open_action_settings()
+
+    assert app.settings_dialog is fresh
+    assert events == [
+        "discard-stale",
+        "close-stale",
+        "unregister-hotkeys",
+        "show-fresh",
+    ]
+    app.settings_dialog = None
+    fresh.close()
 
 
 def test_tray_double_click_opens_configuration_not_launcher(qtbot):
@@ -995,6 +1054,7 @@ def test_general_preferences_are_separate_from_writing_defaults(
         dialog.most_used_count,
         dialog.primary_language,
         dialog.start_with_windows,
+        dialog.check_for_updates,
     ):
         assert general_page.isAncestorOf(control)
         assert not defaults_page.isAncestorOf(control)
@@ -1011,6 +1071,8 @@ def test_general_tab_shows_about_version_and_github_link(qtbot, tmp_path):
 
     assert dialog.tabs.currentIndex() == 0
     assert dialog.version_label.text().startswith("Version ")
+    assert dialog.check_for_updates.isChecked() is True
+    assert dialog.check_updates_button.text() == "Check now"
     assert "github.com/an1uk/promptmeld-windows" in dialog.github_link.text()
     assert dialog.github_link.openExternalLinks()
     assert (
@@ -1081,6 +1143,48 @@ def test_start_with_windows_option_is_saved(qtbot, tmp_path):
     dialog._save()
 
     assert load_settings(paths.settings_file).startup_enabled is True
+
+
+def test_automatic_update_check_option_is_saved(qtbot, tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    paths.settings_file.write_text("{}", encoding="utf-8")
+    settings = load_settings(paths.settings_file)
+    dialog = ActionSettingsDialog(
+        [WritingAction("edit", "Edit", (), "Improve this.")],
+        paths,
+        ActionIconProvider(tmp_path),
+        settings.popup_hotkey,
+        settings,
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.check_for_updates.setChecked(False)
+    assert dialog.has_unsaved_changes() is True
+    assert dialog.save_changes() is True
+
+    assert load_settings(paths.settings_file).check_for_updates_enabled is False
+
+
+def test_configuration_update_status_controls_available_actions(qtbot, tmp_path):
+    dialog = ActionSettingsDialog(
+        [WritingAction("edit", "Edit", (), "Improve this.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.set_update_status(
+        "PromptMeld 0.1.1 is available.",
+        release_available=True,
+        install_available=True,
+        version="0.1.1",
+    )
+
+    assert dialog.view_update_release_button.isEnabled() is True
+    assert dialog.install_update_button.isEnabled() is True
+    assert "0.1.1" in dialog.install_update_button.text()
 
 
 def test_action_settings_saves_most_used_count(qtbot, tmp_path):

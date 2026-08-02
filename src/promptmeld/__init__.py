@@ -1,9 +1,17 @@
 """PromptMeld application package."""
 
 import sys
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as distribution_version
 from pathlib import Path
 
-__version__ = "0.1.0"
+
+try:
+    __version__ = distribution_version("promptmeld")
+except PackageNotFoundError:
+    # Packaged releases use the generated VERSION file below. This fallback is
+    # only for an unpackaged source tree that has not been installed.
+    __version__ = "0.0.0"
 
 
 def display_version() -> str:

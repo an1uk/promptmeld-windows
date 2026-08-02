@@ -4,6 +4,11 @@ PromptMeld is designed to be configured through **Configuration…** in
 the notification-area menu. Direct JSON editing remains available for advanced
 use and troubleshooting.
 
+The **General** tab also controls daily GitHub update checks. Automatic checks
+are enabled by default and can be disabled without removing the manual
+**Check now** option. When an update is available, the same section provides
+the release notes and verified installer actions.
+
 ## Action manager
 
 The action manager lets you:

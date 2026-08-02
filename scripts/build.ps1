@@ -18,30 +18,19 @@ if (-not $versionMatch.Success) {
     throw "The project version must use the numeric major.minor.patch format."
 }
 
-$buildDirectory = Join-Path $projectRoot "build"
-$buildNumberFile = Join-Path $buildDirectory "build-number.txt"
-New-Item -ItemType Directory -Path $buildDirectory -Force | Out-Null
-$buildNumber = 0
-if (Test-Path -LiteralPath $buildNumberFile) {
-    $savedBuildNumber = Get-Content -Raw -LiteralPath $buildNumberFile
-    if (-not [int]::TryParse($savedBuildNumber.Trim(), [ref]$buildNumber)) {
-        throw "The saved build number is invalid: $buildNumberFile"
-    }
-}
-$buildNumber++
-Set-Content -LiteralPath $buildNumberFile -Value $buildNumber -Encoding ASCII
-
 $major = [int]$versionMatch.Groups[1].Value
 $minor = [int]$versionMatch.Groups[2].Value
 $patch = [int]$versionMatch.Groups[3].Value
 $baseVersion = "$major.$minor.$patch"
-$buildVersion = "$baseVersion.$buildNumber"
+$buildVersion = $baseVersion
+$buildDirectory = Join-Path $projectRoot "build"
+New-Item -ItemType Directory -Path $buildDirectory -Force | Out-Null
 $versionInfoPath = Join-Path $buildDirectory "windows-version-info.txt"
 $versionInfo = @"
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=($major, $minor, $patch, $buildNumber),
-    prodvers=($major, $minor, $patch, $buildNumber),
+    filevers=($major, $minor, $patch, 0),
+    prodvers=($major, $minor, $patch, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,

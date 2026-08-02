@@ -57,15 +57,15 @@ if an unreviewed dependency or binary appears.
 The installer is written to:
 
 ```text
-dist\installer\PromptMeld-Setup-v0.1.0.1.exe
+dist\installer\PromptMeld-Setup-v0.1.1.exe
 ```
 
 Building the installer requires
 [Inno Setup 6](https://jrsoftware.org/isinfo.php). The installed application
-does not. The first three version components come from `pyproject.toml`; the
-fourth is a local build number that increments whenever `scripts\build.ps1`
-runs. The same four-part version is embedded in both executables and used in
-the installer filename.
+does not. The three-part semantic version in `pyproject.toml` is the single
+release version source. It is written to the packaged `VERSION` file, used in
+the installer filename, and embedded in the Windows version resource with a
+fourth numeric component of zero.
 
 ## Release checklist
 
@@ -76,5 +76,9 @@ the installer filename.
    uninstallation.
 5. If signing is available, sign the application executables, installer, and
    uninstaller and verify their Authenticode signatures.
-6. Calculate the final installer SHA-256 hash after signing.
-7. Create a version tag and GitHub release, then attach the installer.
+6. Confirm the installer is named exactly
+   `PromptMeld-Setup-v<major>.<minor>.<patch>.exe`.
+7. Create a matching `v<major>.<minor>.<patch>` tag and a non-draft,
+   non-prerelease GitHub release, then attach that single installer.
+8. Confirm GitHub reports a SHA-256 digest for the uploaded asset and that the
+   release is returned by the repository's latest stable release endpoint.
