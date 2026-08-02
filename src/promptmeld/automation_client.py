@@ -235,7 +235,7 @@ def submit_via_worker(
         raw = _request_from_helper(
             payload,
             max(
-                75.0 if settings.temporary_chat_enabled else 20.0,
+                75.0,
                 settings.automation_timeout_seconds + 12.0,
             ),
             progress_callback,
