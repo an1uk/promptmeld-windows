@@ -103,6 +103,18 @@ Actionable failures remain visible, while Configuration can copy
 privacy-filtered diagnostics or open the local log folder. For the detailed
 automation sequence, see [ChatGPT automation and fallback behaviour](AUTOMATION.md).
 
+## Backup and restore
+
+Use **Configuration > Backup & recovery** to save actions, settings,
+application profiles, hotkeys, and installed custom icons in one portable ZIP
+file. The backup excludes usage history, logs, update state, selected text,
+prompts, and responses.
+
+Before restoring a validated backup, PromptMeld automatically saves the current
+configuration as a separate safety backup. The restored configuration is then
+reloaded immediately. The same tab contains privacy-filtered diagnostics and
+log-folder access.
+
 ## Temporary Chat
 
 Turn on **Temporary Chat** in the launcher or an application profile when you

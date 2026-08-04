@@ -130,8 +130,22 @@ removable. Existing configurations receive the starter set only when their
 earlier application settings are still untouched; user changes and deletions
 are preserved.
 
+## Backup, restore, and diagnostics
+
+The **Backup & recovery** tab creates one portable ZIP file containing saved
+writing actions, settings, application profiles, hotkeys, and installed custom
+icons. Usage history, logs, update state, selected text, prompts, and responses
+are not included. If Configuration has unsaved changes, PromptMeld offers to
+save and include them or back up the last saved configuration.
+
+Restore validates the archive format, file paths, size, settings, and actions
+before changing anything. PromptMeld automatically creates a single-file
+pre-restore safety backup under `%LOCALAPPDATA%\PromptMeld\backups`, then reloads
+the restored configuration. Unsafe, incomplete, or malformed archives are
+rejected.
+
 The same tab can copy privacy-filtered diagnostics or open the local log
-folder. Diagnostics contain versions, operational result flags and the source
+folder. Diagnostics contain versions, operational result flags, the source
 executable name and safe feature-state flags, but not selected text, prompts,
 responses, writing actions, free-text settings or window titles.
 
@@ -186,6 +200,7 @@ PromptMeld stores editable data in:
 ```text
 %LOCALAPPDATA%\PromptMeld
 |-- actions.json
+|-- backups\
 |-- icons\
 |-- settings.json
 |-- usage.json

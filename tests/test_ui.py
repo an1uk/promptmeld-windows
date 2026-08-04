@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 from promptmeld import settings_ui as settings_ui_module
 from promptmeld.actions import ActionRegistry
@@ -1169,6 +1170,7 @@ def test_general_preferences_are_separate_from_writing_defaults(
         "Writing actions",
         "Hotkeys",
         "Defaults & style",
+        "Backup && recovery",
     ]
     general_page = dialog.tabs.widget(0)
     defaults_page = dialog.tabs.widget(3)
@@ -1674,6 +1676,34 @@ def test_hotkeys_tab_edits_clears_and_reports_clashes(qtbot, tmp_path):
     )
 
 
+def test_hotkeys_sort_unavailable_first_then_by_shortcut_and_empty_last(
+    qtbot,
+    tmp_path,
+):
+    actions = [
+        WritingAction("later", "Later", (), "Later.", "Ctrl+Alt+F10"),
+        WritingAction("empty", "Empty", (), "Empty."),
+        WritingAction("unavailable", "Unavailable", (), "No.", "Ctrl+Alt+F9"),
+        WritingAction("first", "First", (), "First.", "Ctrl+Alt+F2"),
+    ]
+    dialog = ActionSettingsDialog(
+        actions,
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+        hotkey_availability=lambda hotkey: hotkey != "Ctrl+Alt+F9",
+    )
+    qtbot.addWidget(dialog)
+
+    assert [
+        dialog.hotkey_table.item(row, 0).text()
+        for row in range(dialog.hotkey_table.rowCount())
+    ] == ["Unavailable", "First", "Later", "Empty"]
+    assert dialog.hotkey_status_labels["unavailable"].text() == (
+        "Already used by Windows or another app"
+    )
+
+
 def test_hotkeys_tab_saves_a_recorded_launcher_shortcut(qtbot, tmp_path):
     paths = AppPaths.discover(tmp_path)
     paths.ensure()
@@ -1867,6 +1897,13 @@ def test_configuration_exposes_privacy_filtered_diagnostics_actions(
         "Ctrl+Alt+Space",
     )
     qtbot.addWidget(dialog)
+    recovery_index = next(
+        index
+        for index in range(dialog.tabs.count())
+        if dialog.tabs.tabText(index) == "Backup && recovery"
+    )
+    recovery_page = dialog.tabs.widget(recovery_index)
+    assert recovery_page.isAncestorOf(dialog.copy_diagnostics_button)
     copy_requested = QSignalSpy(dialog.diagnostics_copy_requested)
     open_requested = QSignalSpy(dialog.diagnostics_open_requested)
 
@@ -1881,3 +1918,94 @@ def test_configuration_exposes_privacy_filtered_diagnostics_actions(
 
     assert copy_requested.count() == 1
     assert open_requested.count() == 1
+
+
+def test_configuration_creates_one_backup_file(qtbot, tmp_path, monkeypatch):
+    paths = AppPaths.discover(tmp_path)
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        paths,
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+    destination = tmp_path / "portable-backup"
+    created = []
+    monkeypatch.setattr(
+        settings_ui_module.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(destination), ""),
+    )
+    monkeypatch.setattr(
+        settings_ui_module,
+        "create_configuration_backup",
+        lambda supplied_paths, supplied_destination: (
+            created.append((supplied_paths, supplied_destination))
+            or SimpleNamespace(action_count=3, icon_count=2)
+        ),
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
+
+    qtbot.mouseClick(
+        dialog.create_backup_button,
+        Qt.MouseButton.LeftButton,
+    )
+
+    assert created == [(paths, tmp_path / "portable-backup.zip")]
+
+
+def test_configuration_restore_confirms_reloads_and_closes(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
+    paths = AppPaths.discover(tmp_path)
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        paths,
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+    archive = tmp_path / "portable-backup.zip"
+    safety = tmp_path / "PromptMeld-pre-restore.zip"
+    restored = []
+    monkeypatch.setattr(
+        settings_ui_module.QFileDialog,
+        "getOpenFileName",
+        lambda *args, **kwargs: (str(archive), ""),
+    )
+    monkeypatch.setattr(
+        settings_ui_module,
+        "inspect_configuration_backup",
+        lambda supplied: SimpleNamespace(
+            created_at="2026-08-05T12:00:00+00:00",
+            app_version="0.1.5",
+            action_count=26,
+            icon_count=2,
+        ),
+    )
+    monkeypatch.setattr(
+        settings_ui_module,
+        "restore_configuration_backup",
+        lambda supplied_paths, supplied_archive: (
+            restored.append((supplied_paths, supplied_archive))
+            or SimpleNamespace(safety_backup=safety)
+        ),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
+    restore_signal = QSignalSpy(dialog.configuration_restored)
+
+    qtbot.mouseClick(
+        dialog.restore_backup_button,
+        Qt.MouseButton.LeftButton,
+    )
+
+    assert restored == [(paths, archive)]
+    assert restore_signal.count() == 1
+    assert dialog.result() == QDialog.DialogCode.Accepted

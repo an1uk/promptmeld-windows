@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import datetime
 from html import escape
 from importlib.resources import files
 from pathlib import Path
@@ -55,6 +56,12 @@ from .config import (
     save_actions,
     save_settings,
 )
+from .configuration_backup import (
+    ConfigurationBackupError,
+    create_configuration_backup,
+    inspect_configuration_backup,
+    restore_configuration_backup,
+)
 from .branding import APP_NAME, REPOSITORY_URL, TAGLINE
 from .icons import ActionIconProvider
 from .models import (
@@ -95,6 +102,16 @@ class NoWheelSpinBox(QSpinBox):
 
     def wheelEvent(self, event) -> None:
         event.ignore()
+
+
+def _hotkey_sort_key(value: str) -> tuple[tuple[int, object], ...]:
+    """Return a natural, case-insensitive key for shortcut display order."""
+
+    return tuple(
+        (0, int(part)) if part.isdigit() else (1, part.casefold())
+        for part in re.split(r"(\d+)", value)
+        if part
+    )
 
 
 class ApplicationProfileDialog(QDialog):
@@ -448,6 +465,7 @@ class ActionSettingsDialog(QDialog):
     update_release_requested = Signal()
     diagnostics_copy_requested = Signal()
     diagnostics_open_requested = Signal()
+    configuration_restored = Signal()
     ITEM_KIND_ROLE = Qt.ItemDataRole.UserRole + 1
 
     def __init__(
@@ -1033,7 +1051,7 @@ class ActionSettingsDialog(QDialog):
         hotkey_note.setWordWrap(True)
         self.check_hotkeys_button = QPushButton("Check availability")
         self.check_hotkeys_button.clicked.connect(
-            lambda: self._update_hotkey_statuses(check_windows=True)
+            self._refresh_hotkey_rows
         )
         hotkey_footer.addWidget(hotkey_note, 1)
         hotkey_footer.addWidget(self.check_hotkeys_button)
@@ -1215,7 +1233,52 @@ class ActionSettingsDialog(QDialog):
         policies_layout.addLayout(policy_footer)
         applications_layout.addWidget(policies_group, 1)
 
-        diagnostics_group = QGroupBox("Diagnostics and recovery")
+        recovery_page = QWidget()
+        recovery_page.setObjectName("settingsPage")
+        recovery_layout = QVBoxLayout(recovery_page)
+        recovery_layout.setContentsMargins(22, 18, 22, 18)
+        recovery_layout.setSpacing(16)
+
+        backup_group = QGroupBox("Configuration backup")
+        backup_layout = QVBoxLayout(backup_group)
+        backup_note = QLabel(
+            "Create one portable ZIP file containing writing actions, settings, "
+            "application profiles, hotkeys, and installed custom icons. Usage "
+            "history, logs, update state, selected text, prompts and responses "
+            "are not included."
+        )
+        backup_note.setObjectName("muted")
+        backup_note.setWordWrap(True)
+        backup_buttons = QHBoxLayout()
+        self.create_backup_button = QPushButton("Create backup\u2026")
+        self.create_backup_button.setAccessibleName(
+            "Create configuration backup file"
+        )
+        backup_buttons.addWidget(self.create_backup_button)
+        backup_buttons.addStretch(1)
+        backup_layout.addWidget(backup_note)
+        backup_layout.addLayout(backup_buttons)
+
+        restore_group = QGroupBox("Restore configuration")
+        restore_layout = QVBoxLayout(restore_group)
+        restore_note = QLabel(
+            "Restore actions, settings, application profiles, hotkeys, and "
+            "custom icons from a PromptMeld backup. A safety backup of the "
+            "current saved configuration is created automatically first."
+        )
+        restore_note.setObjectName("muted")
+        restore_note.setWordWrap(True)
+        restore_buttons = QHBoxLayout()
+        self.restore_backup_button = QPushButton("Restore backup\u2026")
+        self.restore_backup_button.setAccessibleName(
+            "Restore configuration from backup file"
+        )
+        restore_buttons.addWidget(self.restore_backup_button)
+        restore_buttons.addStretch(1)
+        restore_layout.addWidget(restore_note)
+        restore_layout.addLayout(restore_buttons)
+
+        diagnostics_group = QGroupBox("Diagnostics")
         diagnostics_layout = QVBoxLayout(diagnostics_group)
         diagnostics_note = QLabel(
             "Copy privacy-filtered technical information for troubleshooting, "
@@ -1238,7 +1301,17 @@ class ActionSettingsDialog(QDialog):
         diagnostics_buttons.addStretch(1)
         diagnostics_layout.addWidget(diagnostics_note)
         diagnostics_layout.addLayout(diagnostics_buttons)
-        applications_layout.addWidget(diagnostics_group)
+        recovery_layout.addWidget(backup_group)
+        recovery_layout.addWidget(restore_group)
+        recovery_layout.addWidget(diagnostics_group)
+        recovery_layout.addStretch(1)
+
+        self.create_backup_button.clicked.connect(
+            self._create_configuration_backup
+        )
+        self.restore_backup_button.clicked.connect(
+            self._restore_configuration_backup
+        )
 
         self._load_application_profiles(
             voice_settings.application_profiles
@@ -1270,6 +1343,7 @@ class ActionSettingsDialog(QDialog):
         self.tabs.addTab(actions_page, "Writing actions")
         self.tabs.addTab(hotkeys_page, "Hotkeys")
         self.tabs.addTab(defaults_page, "Defaults & style")
+        self.tabs.addTab(recovery_page, "Backup && recovery")
         self.tabs.currentChanged.connect(self._tab_changed)
         self.check_for_updates.stateChanged.connect(self._mark_unsaved)
         root.addWidget(self.tabs, 1)
@@ -1420,6 +1494,8 @@ class ActionSettingsDialog(QDialog):
         self._refresh_hotkey_rows()
 
     def _refresh_hotkey_rows(self) -> None:
+        check_windows = self.hotkey_availability is not None
+        assessments = self._hotkey_assessments(check_windows=check_windows)
         self.hotkey_table.setRowCount(0)
         self.launcher_hotkey_editor.set_hotkey(self.popup_hotkey)
         self.hotkey_editors = {
@@ -1428,10 +1504,22 @@ class ActionSettingsDialog(QDialog):
         self.hotkey_status_labels = {
             "__popup__": self.launcher_hotkey_status,
         }
-        assigned_actions = [action for action in self.actions if action.hotkey]
-        unassigned_actions = [
-            action for action in self.actions if not action.hotkey
-        ]
+        def action_sort_key(action: WritingAction) -> tuple:
+            state = assessments.get(action.id, ("unchecked", ""))[0]
+            priority = (
+                2
+                if not action.hotkey
+                else 0
+                if state == "error"
+                else 1
+            )
+            return (
+                priority,
+                _hotkey_sort_key(action.hotkey or ""),
+                action.name.casefold(),
+            )
+
+        ordered_actions = sorted(self.actions, key=action_sort_key)
         rows = [
             (
                 action.id,
@@ -1442,7 +1530,7 @@ class ActionSettingsDialog(QDialog):
                 ),
                 action.hotkey or "",
             )
-            for action in (*assigned_actions, *unassigned_actions)
+            for action in ordered_actions
         ]
         self.hotkey_table.setRowCount(len(rows))
         for row, (command_id, name, hotkey) in enumerate(rows):
@@ -1502,9 +1590,8 @@ class ActionSettingsDialog(QDialog):
             self.hotkey_editors[command_id] = editor
             self.hotkey_status_labels[command_id] = status
             self.hotkey_table.setRowHeight(row, 46)
-        self._update_hotkey_statuses(
-            check_windows=self.hotkey_availability is not None
-        )
+        for command_id, (state, message) in assessments.items():
+            self._set_hotkey_status(command_id, state, message)
 
     def _hotkey_changed(self, command_id: str, hotkey: str) -> None:
         if command_id == "__popup__":
@@ -1520,6 +1607,16 @@ class ActionSettingsDialog(QDialog):
         self._update_hotkey_statuses(check_windows=True)
 
     def _update_hotkey_statuses(self, check_windows: bool = False) -> None:
+        for command_id, (state, message) in self._hotkey_assessments(
+            check_windows=check_windows
+        ).items():
+            self._set_hotkey_status(command_id, state, message)
+
+    def _hotkey_assessments(
+        self,
+        *,
+        check_windows: bool,
+    ) -> dict[str, tuple[str, str]]:
         entries = [
             ("__popup__", "Open launcher", self.popup_hotkey, True),
             *[
@@ -1534,6 +1631,7 @@ class ActionSettingsDialog(QDialog):
         ]
         parsed_entries: dict[str, tuple[int, int]] = {}
         names = {command_id: name for command_id, name, _, _ in entries}
+        assessments: dict[str, tuple[str, str]] = {}
 
         for command_id, _, hotkey, enabled in entries:
             if not hotkey:
@@ -1543,16 +1641,15 @@ class ActionSettingsDialog(QDialog):
                     if command_id == "__popup__"
                     else "Not assigned"
                 )
-                self._set_hotkey_status(command_id, state, message)
+                assessments[command_id] = (state, message)
                 continue
             try:
                 parsed = parse_hotkey(hotkey)
             except HotkeyParseError as exc:
-                self._set_hotkey_status(command_id, "error", str(exc))
+                assessments[command_id] = ("error", str(exc))
                 continue
             if not enabled:
-                self._set_hotkey_status(
-                    command_id,
+                assessments[command_id] = (
                     "inactive",
                     "Inactive while action is disabled",
                 )
@@ -1576,8 +1673,7 @@ class ActionSettingsDialog(QDialog):
                     for other in command_ids
                     if other != command_id
                 ]
-                self._set_hotkey_status(
-                    command_id,
+                assessments[command_id] = (
                     "error",
                     f"Clashes with {', '.join(others)}",
                 )
@@ -1586,18 +1682,13 @@ class ActionSettingsDialog(QDialog):
             if command_id not in parsed_entries or command_id in clashing:
                 continue
             if not check_windows or self.hotkey_availability is None:
-                self._set_hotkey_status(
-                    command_id,
-                    "unchecked",
-                    "Not checked",
-                )
+                assessments[command_id] = ("unchecked", "Not checked")
                 continue
             try:
                 available = self.hotkey_availability(hotkey)
             except Exception:
                 available = False
-            self._set_hotkey_status(
-                command_id,
+            assessments[command_id] = (
                 "available" if available else "error",
                 (
                     "Available"
@@ -1605,6 +1696,7 @@ class ActionSettingsDialog(QDialog):
                     else "Already used by Windows or another app"
                 ),
             )
+        return assessments
 
     def _set_hotkey_status(
         self,
@@ -2113,6 +2205,127 @@ class ActionSettingsDialog(QDialog):
             self.icon_combo.setCurrentIndex(-1)
             self.icon_combo.setEditText(filename)
             self._update_icon_preview()
+
+    def _create_configuration_backup(self) -> None:
+        if self.has_unsaved_changes():
+            response = QMessageBox.question(
+                self,
+                "Unsaved configuration changes",
+                "Save the current changes before creating the backup?\n\n"
+                "Choose Yes to save and include them. Choose No to back up "
+                "the last saved configuration while keeping these editor "
+                "changes open.",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes,
+            )
+            if response == QMessageBox.StandardButton.Cancel:
+                return
+            if response == QMessageBox.StandardButton.Yes and not self._save():
+                return
+
+        default_name = (
+            f"PromptMeld-backup-{datetime.now().strftime('%Y-%m-%d')}.zip"
+        )
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Create PromptMeld configuration backup",
+            str(Path.home() / default_name),
+            "PromptMeld backup (*.zip)",
+        )
+        if not filename:
+            return
+        destination = Path(filename)
+        if destination.suffix.casefold() != ".zip":
+            destination = destination.with_name(destination.name + ".zip")
+        if destination.exists():
+            overwrite = QMessageBox.question(
+                self,
+                "Replace existing backup?",
+                f"A file already exists at:\n\n{destination}\n\nReplace it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if overwrite != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            summary = create_configuration_backup(self.paths, destination)
+        except (ConfigurationBackupError, OSError) as exc:
+            QMessageBox.warning(
+                self,
+                "Backup could not be created",
+                str(exc),
+            )
+            return
+        QMessageBox.information(
+            self,
+            "Configuration backup created",
+            f"Saved one backup file containing {summary.action_count} writing "
+            f"actions and {summary.icon_count} custom icon(s):\n\n"
+            f"{destination}",
+        )
+
+    def _restore_configuration_backup(self) -> None:
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Restore PromptMeld configuration backup",
+            str(Path.home()),
+            "PromptMeld backup (*.zip)",
+        )
+        if not filename:
+            return
+        archive = Path(filename)
+        try:
+            summary = inspect_configuration_backup(archive)
+        except (ConfigurationBackupError, OSError) as exc:
+            QMessageBox.warning(
+                self,
+                "Backup cannot be restored",
+                str(exc),
+            )
+            return
+
+        unsaved_note = (
+            "\n\nUnsaved changes currently shown in Configuration will be "
+            "discarded."
+            if self.has_unsaved_changes()
+            else ""
+        )
+        response = QMessageBox.question(
+            self,
+            "Restore configuration backup?",
+            f"Backup created: {summary.created_at}\n"
+            f"PromptMeld version: {summary.app_version or 'Unknown'}\n"
+            f"Writing actions: {summary.action_count}\n"
+            f"Custom icons: {summary.icon_count}\n\n"
+            "This will replace the saved actions and settings. PromptMeld "
+            "will first create an automatic safety backup."
+            f"{unsaved_note}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if response != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            result = restore_configuration_backup(self.paths, archive)
+        except (ConfigurationBackupError, OSError) as exc:
+            QMessageBox.warning(
+                self,
+                "Configuration could not be restored",
+                str(exc),
+            )
+            return
+
+        QMessageBox.information(
+            self,
+            "Configuration restored",
+            "The backup was restored successfully. Configuration will close "
+            "so PromptMeld can reload it.\n\n"
+            f"Safety backup:\n{result.safety_backup}",
+        )
+        self.configuration_restored.emit()
+        self.accept()
 
     def _load_starter_set(self) -> None:
         response = QMessageBox.question(

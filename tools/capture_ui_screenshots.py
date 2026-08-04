@@ -148,6 +148,9 @@ def main() -> int:
         dialog.tabs.setCurrentIndex(4)
         app.processEvents()
         dialog.grab().save(str(docs / "manage-defaults.png"))
+        dialog.tabs.setCurrentIndex(5)
+        app.processEvents()
+        dialog.grab().save(str(docs / "manage-backup-recovery.png"))
         dialog.tabs.setCurrentIndex(2)
         first_folder = dialog.action_list.topLevelItem(0)
         if first_folder is not None:

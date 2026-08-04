@@ -74,8 +74,9 @@ example Outlook configuration.
 ## Configure
 
 Configuration manages writing actions, folders, icons, shortcuts, writing
-defaults, updates, and application-specific profiles. Editable files are kept
-under `%LOCALAPPDATA%\PromptMeld`.
+defaults, updates, application-specific profiles, single-file backups,
+restoration, and diagnostics. Editable files are kept under
+`%LOCALAPPDATA%\PromptMeld`.
 
 See [Configuration and customisation](docs/CONFIGURATION.md) for the interface,
 JSON formats, local files, and migration behaviour.

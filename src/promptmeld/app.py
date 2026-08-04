@@ -1608,6 +1608,10 @@ class PromptMeld:
                 ("update_install_requested", self.download_update),
                 ("diagnostics_copy_requested", self.copy_diagnostics),
                 ("diagnostics_open_requested", self.open_log_folder),
+                (
+                    "configuration_restored",
+                    self.reload_configuration_after_save,
+                ),
             )
             for signal_name, callback in update_signals:
                 signal = getattr(dialog, signal_name, None)
