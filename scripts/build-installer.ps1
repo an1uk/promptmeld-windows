@@ -1,5 +1,6 @@
 param(
-    [switch]$SkipApplicationBuild
+    [switch]$SkipApplicationBuild,
+    [switch]$AllowSameVersion
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,14 +58,25 @@ if ($version -notmatch '^\d+\.\d+\.\d+$') {
     throw "The packaged application version is invalid: $version"
 }
 
+$installer = Join-Path (
+    Join-Path $projectRoot "dist\installer"
+) "PromptMeld-Setup-v$version.exe"
+if (
+    (Test-Path -LiteralPath $installer) -and
+    -not $AllowSameVersion
+) {
+    throw (
+        "An installer already exists for v$version. Increase the version in " +
+        "pyproject.toml before producing a new distributable build. Use " +
+        "-AllowSameVersion only when deliberately reproducing the same release."
+    )
+}
+
 & $compiler "/DMyAppVersion=$version" $installerScript
 if ($LASTEXITCODE -ne 0) {
     throw "Inno Setup failed to build the installer."
 }
 
-$installer = Join-Path (
-    Join-Path $projectRoot "dist\installer"
-) "PromptMeld-Setup-v$version.exe"
 if (-not (Test-Path -LiteralPath $installer)) {
     throw "The installer compiler completed without producing $installer."
 }
