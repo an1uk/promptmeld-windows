@@ -26,6 +26,17 @@
     "slack.exe": "copy",
     "winword.exe": "replace"
   },
+  "application_profiles": {
+    "chrome.exe": {"return_mode": "copy"},
+    "firefox.exe": {"return_mode": "copy"},
+    "ms-teams.exe": {"return_mode": "copy", "recipient_audience": "colleague_peer", "resulting_text_length": "short", "resulting_text_formatting": "plain"},
+    "msedge.exe": {"return_mode": "copy"},
+    "notepad.exe": {"return_mode": "replace", "resulting_text_formatting": "plain"},
+    "olk.exe": {"return_mode": "copy", "resulting_text_formatting": "plain"},
+    "outlook.exe": {"return_mode": "copy", "resulting_text_formatting": "plain"},
+    "slack.exe": {"return_mode": "copy", "recipient_audience": "colleague_peer", "resulting_text_length": "short", "resulting_text_formatting": "plain"},
+    "winword.exe": {"return_mode": "replace"}
+  },
   "temporary_chat_enabled": false,
   "primary_language": "English (UK)",
   "guided_drafting_enabled": false,
@@ -33,7 +44,7 @@
   "writing_block_enabled": false,
   "resulting_text_formatting": "default",
   "starter_action_version": 2,
-  "starter_application_policy_version": 1,
+  "starter_application_policy_version": 2,
   "folder_icons": {
     "Editing": "lucide:pencil",
     "Editing/Reviews": "lucide:heart",

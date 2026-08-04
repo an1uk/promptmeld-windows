@@ -36,12 +36,19 @@ from .config import (
     load_settings,
     save_settings,
 )
-from .models import CapturedSelection, SubmissionResult, WritingAction
+from .models import (
+    AppSettings,
+    CapturedSelection,
+    SubmissionResult,
+    WritingAction,
+)
 from .paths import AppPaths
 from .prompting import PromptBuilder
 from .returning import (
+    EffectiveApplicationProfile,
     ReturnDecision,
     application_display_name,
+    resolve_application_profile,
     resolve_return_decision,
 )
 from .single_instance import SingleInstance
@@ -428,15 +435,37 @@ class PromptMeld:
             self.notify(APP_NAME, str(exc), QSystemTrayIcon.MessageIcon.Warning)
             return
         popup = self._ensure_popup()
+        effective = resolve_application_profile(
+            self.settings,
+            self.current_selection,
+        )
+        effective_settings = self._settings_with_application_profile(effective)
         popup.set_source_is_editable(self.current_selection.source_is_editable)
         popup.set_source_context(
             self.current_selection.source_app,
             resolve_return_decision(
-                self.settings,
+                effective_settings,
                 self.current_selection,
             ),
+            effective,
         )
         popup.show_at_cursor()
+
+    def _settings_with_application_profile(
+        self,
+        effective: EffectiveApplicationProfile,
+    ) -> AppSettings:
+        return replace(
+            self.settings,
+            auto_submit_enabled=effective.auto_submit_enabled,
+            temporary_chat_enabled=effective.temporary_chat_enabled,
+            natural_voice_enabled=effective.natural_voice_enabled,
+            guided_drafting_enabled=effective.guided_drafting_enabled,
+            writing_block_enabled=effective.writing_block_enabled,
+            primary_language=effective.primary_language,
+            resulting_text_length=effective.resulting_text_length,
+            resulting_text_formatting=effective.resulting_text_formatting,
+        )
 
     def capture_and_submit(self, action: WritingAction) -> None:
         try:
@@ -450,9 +479,9 @@ class PromptMeld:
         self,
         action_id: str,
         additional_information: str = "",
-        editing_strength: str = "default",
-        preserve_facts: bool = True,
-        recipient_audience: str = "unspecified",
+        editing_strength: str | None = None,
+        preserve_facts: bool | None = None,
+        recipient_audience: str | None = None,
     ) -> None:
         action = self.registry.get(action_id)
         if action is None or self.current_selection is None:
@@ -475,9 +504,9 @@ class PromptMeld:
         self,
         instruction: str,
         additional_information: str = "",
-        editing_strength: str = "default",
-        preserve_facts: bool = True,
-        recipient_audience: str = "unspecified",
+        editing_strength: str | None = None,
+        preserve_facts: bool | None = None,
+        recipient_audience: str | None = None,
     ) -> None:
         if self.current_selection is None:
             self.notify(
@@ -488,30 +517,48 @@ class PromptMeld:
             return
         if not self._confirm_automatic_replacement(self.current_selection):
             return
+        effective = resolve_application_profile(
+            self.settings,
+            self.current_selection,
+        )
         try:
             prompt = self.prompt_builder.build_custom(
                 instruction,
                 self.current_selection,
-                natural_voice_enabled=self.settings.natural_voice_enabled,
+                natural_voice_enabled=effective.natural_voice_enabled,
                 natural_voice_instruction=(
                     self.settings.natural_voice_instruction
                 ),
-                primary_language=self.settings.primary_language,
-                resulting_text_length=self.settings.resulting_text_length,
-                writing_block_enabled=self.settings.writing_block_enabled,
-                resulting_text_formatting=(
-                    self.settings.resulting_text_formatting
-                ),
+                primary_language=effective.primary_language,
+                resulting_text_length=effective.resulting_text_length,
+                writing_block_enabled=effective.writing_block_enabled,
+                resulting_text_formatting=effective.resulting_text_formatting,
                 additional_information=additional_information,
-                editing_strength=editing_strength,
-                preserve_facts=preserve_facts,
-                recipient_audience=recipient_audience,
+                editing_strength=(
+                    effective.editing_strength
+                    if editing_strength is None
+                    else editing_strength
+                ),
+                preserve_facts=(
+                    effective.preserve_facts
+                    if preserve_facts is None
+                    else preserve_facts
+                ),
+                recipient_audience=(
+                    effective.recipient_audience
+                    if recipient_audience is None
+                    else recipient_audience
+                ),
             )
         except ValueError as exc:
             self.notify(APP_NAME, str(exc), QSystemTrayIcon.MessageIcon.Warning)
             return
         self.usage.record("__custom__")
-        self._submit_prompt(prompt, selection=self.current_selection)
+        self._submit_prompt(
+            prompt,
+            selection=self.current_selection,
+            effective_profile=effective,
+        )
 
     def _submit_action(
         self,
@@ -519,39 +566,49 @@ class PromptMeld:
         selection: CapturedSelection,
         *,
         additional_information: str = "",
-        editing_strength: str = "default",
-        preserve_facts: bool = True,
-        recipient_audience: str = "unspecified",
+        editing_strength: str | None = None,
+        preserve_facts: bool | None = None,
+        recipient_audience: str | None = None,
     ) -> None:
         if not self._confirm_automatic_replacement(selection):
             return
+        effective = resolve_application_profile(self.settings, selection)
         prompt = self.prompt_builder.build(
             action,
             selection,
-            natural_voice_enabled=self.settings.natural_voice_enabled,
+            natural_voice_enabled=effective.natural_voice_enabled,
             natural_voice_instruction=self.settings.natural_voice_instruction,
-            primary_language=self.settings.primary_language,
-            guided_drafting_enabled=(
-                self.settings.guided_drafting_enabled
-            ),
-            resulting_text_length=self.settings.resulting_text_length,
-            writing_block_enabled=self.settings.writing_block_enabled,
-            resulting_text_formatting=(
-                self.settings.resulting_text_formatting
-            ),
+            primary_language=effective.primary_language,
+            guided_drafting_enabled=effective.guided_drafting_enabled,
+            resulting_text_length=effective.resulting_text_length,
+            writing_block_enabled=effective.writing_block_enabled,
+            resulting_text_formatting=effective.resulting_text_formatting,
             additional_information=additional_information,
-            editing_strength=editing_strength,
-            preserve_facts=preserve_facts,
-            recipient_audience=recipient_audience,
+            editing_strength=(
+                effective.editing_strength
+                if editing_strength is None
+                else editing_strength
+            ),
+            preserve_facts=(
+                effective.preserve_facts
+                if preserve_facts is None
+                else preserve_facts
+            ),
+            recipient_audience=(
+                effective.recipient_audience
+                if recipient_audience is None
+                else recipient_audience
+            ),
         )
         self.usage.record(action.id)
         self._submit_prompt(
             prompt,
             project_name=project_name_for_action(
-                self.settings.project_name,
+                effective.project_name,
                 action,
             ),
             selection=selection,
+            effective_profile=effective,
         )
 
     def _confirm_automatic_replacement(
@@ -736,6 +793,7 @@ class PromptMeld:
         prompt: str,
         project_name: str | None = None,
         selection: CapturedSelection | None = None,
+        effective_profile: EffectiveApplicationProfile | None = None,
     ) -> None:
         if self.automation_worker is not None:
             self.notify(
@@ -744,9 +802,13 @@ class PromptMeld:
                 QSystemTrayIcon.MessageIcon.Information,
             )
             return
-        project_name = project_name or self.settings.project_name
-        settings = self.settings
         selection = selection or self.current_selection
+        effective_profile = effective_profile or resolve_application_profile(
+            self.settings,
+            selection,
+        )
+        settings = self._settings_with_application_profile(effective_profile)
+        project_name = project_name or effective_profile.project_name
         return_decision = resolve_return_decision(settings, selection)
         if return_decision.fallback_reason:
             self.notify(

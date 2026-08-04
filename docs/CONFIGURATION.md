@@ -97,24 +97,38 @@ or unsuitable. PromptMeld preserves the original in memory and exposes
 source selection changed or replacement cannot be verified, PromptMeld copies
 the generated result and leaves the original alone.
 
-## Application-specific result handling
+## Application-specific defaults
 
-The **Applications** tab overrides the overall generated-result defaults for
-individual executable names. Each application can inherit the defaults,
-replace its original selection, copy the result only, or leave the result in
-ChatGPT. Common Microsoft Office applications, browsers, Teams, Notepad and
-Visual Studio Code are available from the picker; another executable name can
-be typed directly. A replacement policy safely falls back to copying when the
-source does not expose an editable control.
+The **Applications** tab gives each source executable an optional profile.
+Double-click a row, or select it and choose **Configure selected**, to open its
+dedicated configuration page. Common Microsoft Office applications, browsers,
+Teams, Notepad and Visual Studio Code are available from the picker; another
+executable name can be typed directly.
 
-New configurations include conservative starter policies. Microsoft Word and
-Notepad replace a verified editable selection; Outlook, New Outlook, Chrome,
-Edge, Firefox, Teams and Slack copy the generated result instead. These rows
-both demonstrate the feature and provide useful starting behaviour. They take
-effect only when automatic submission is enabled and remain fully editable or
-removable. Existing configurations with an empty policy list receive them once;
-existing custom policies are preserved, and policies removed afterwards are
-not restored automatically.
+An application profile can override:
+
+- Recipient or audience, including workplace, customer, support, public and
+  general-reader choices.
+- Primary language, result length and plain or formatted output.
+- Editing strength and whether facts and specifics must be preserved.
+- Natural voice, guided drafting and copyable writing blocks.
+- The base ChatGPT Project name, automatic submission and Temporary Chat.
+- Whether the generated result replaces the verified source selection, is
+  copied to the clipboard, or remains in ChatGPT.
+
+Every option can inherit its overall **Defaults & style** or launcher value, so
+a profile only needs to describe what is genuinely different. A replacement
+profile still safely falls back to copying when the source does not expose an
+editable control.
+
+New configurations include conservative starter profiles. Microsoft Word and
+Notepad replace a verified editable selection. Outlook, New Outlook, Chrome,
+Edge, Firefox, Teams and Slack copy the generated result instead. Outlook and
+Notepad use plain text, while Teams and Slack demonstrate short, plain-text
+wording for a colleague or peer. These profiles remain fully editable or
+removable. Existing configurations receive the starter set only when their
+earlier application settings are still untouched; user changes and deletions
+are preserved.
 
 The same tab can copy privacy-filtered diagnostics or open the local log
 folder. Diagnostics contain versions, operational result flags and the source
@@ -226,9 +240,17 @@ Home-screen, submission, language, and style settings are stored in
   "auto_submit_enabled": false,
   "replace_selected_text_enabled": false,
   "copy_generated_text_enabled": false,
-  "application_return_policies": {
-    "winword.exe": "replace",
-    "chrome.exe": "copy"
+  "application_profiles": {
+    "winword.exe": {
+      "return_mode": "replace"
+    },
+    "outlook.exe": {
+      "return_mode": "copy",
+      "recipient_audience": "customer_client",
+      "resulting_text_formatting": "plain",
+      "natural_voice": "on",
+      "project_name": "Client correspondence"
+    }
   },
   "natural_voice_enabled": false,
   "natural_voice_instruction": "Preserve the writer's individual voice...",
@@ -252,10 +274,10 @@ an additive one-time migration. PromptMeld first creates
 `actions.pre-correspondence-v2-backup.json`; existing actions and edits are
 preserved, and actions deleted after migration are not added again.
 
-Existing configurations with no application policies receive the recommended
-application starter policies through a separate one-time migration. Any
-existing policies are left unchanged, and deleting all starter policies does
-not cause them to return on the next launch.
+Existing configurations with no application profiles receive the recommended
+starter profiles through a separate one-time migration. The exact earlier
+starter policy set is enriched with the new writing defaults; customised or
+deleted profiles are left unchanged and are not restored on the next launch.
 
 When upgrading from Writing Launcher, PromptMeld copies
 `%LOCALAPPDATA%\WritingLauncher` to `%LOCALAPPDATA%\PromptMeld` on first run.

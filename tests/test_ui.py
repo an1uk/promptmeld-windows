@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+from promptmeld import settings_ui as settings_ui_module
 from promptmeld.actions import ActionRegistry
 from promptmeld.app import PromptMeld, make_tray_icon
 from promptmeld.automation_progress import AutomationProgressWindow
@@ -7,14 +10,20 @@ from promptmeld.config import load_actions, load_settings
 from promptmeld.icons import ActionIconProvider
 from promptmeld.models import (
     AppSettings,
+    ApplicationProfile,
+    CapturedSelection,
     DEFAULT_NATURAL_VOICE_INSTRUCTION,
     SubmissionResult,
     WritingAction,
 )
 from promptmeld.paths import AppPaths
-from promptmeld.returning import ReturnDecision
+from promptmeld.returning import (
+    ReturnDecision,
+    resolve_application_profile,
+)
 from promptmeld.settings_ui import (
     ActionSettingsDialog,
+    ApplicationProfileDialog,
     BranchArrowStyle,
     HotkeyCaptureEdit,
     NoWheelComboBox,
@@ -350,6 +359,51 @@ def test_launcher_shows_application_result_policy(qtbot, tmp_path):
     popup.set_source_is_editable(True)
     popup.set_auto_submit_enabled(False)
     assert popup.replace_selected_text.isEnabled() is False
+
+
+def test_launcher_applies_application_guidance_defaults(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        ),
+    )
+    qtbot.addWidget(popup)
+    settings = AppSettings(
+        application_profiles={
+            "outlook.exe": ApplicationProfile(
+                recipient_audience="customer_client",
+                editing_strength="improve",
+                preserve_facts="off",
+                natural_voice="on",
+                auto_submit="on",
+                resulting_text_length="short",
+            )
+        }
+    )
+    selection = CapturedSelection(
+        "Text",
+        123,
+        "Message",
+        True,
+        "outlook.exe",
+    )
+    effective = resolve_application_profile(settings, selection)
+
+    popup.set_source_context(
+        "outlook.exe",
+        ReturnDecision(application="outlook.exe"),
+        effective,
+    )
+    popup.show_at_cursor()
+
+    assert popup.recipient_audience_value == "customer_client"
+    assert popup.editing_strength_value == "improve"
+    assert popup.preserve_facts_enabled is False
+    assert popup.natural_voice.isChecked() is True
+    assert popup.natural_voice.isEnabled() is False
+    assert popup.auto_submit.isChecked() is True
+    assert popup.output_button.isEnabled() is False
 
 
 def test_launcher_paste_result_back_toggle_is_saved(qtbot, tmp_path):
@@ -1714,15 +1768,92 @@ def test_application_result_policy_is_accessible_and_saved(qtbot, tmp_path):
 
     assert dialog.application_policy_table.rowCount() == 1
     assert dialog.application_policy_table.accessibleName() == (
-        "Application result policies"
+        "Application profiles"
     )
-    selector = dialog.application_policy_table.cellWidget(0, 1)
-    assert selector.currentData() == "copy"
-    selector.setCurrentIndex(selector.findData("replace"))
+    profile = dialog._application_profiles()["chrome.exe"]
+    assert profile.return_mode == "copy"
+    dialog._application_profile_values["chrome.exe"] = replace(
+        profile,
+        return_mode="replace",
+        recipient_audience="public_online",
+    )
     assert dialog._save() is True
-    assert load_settings(paths.settings_file).application_return_policies == {
+    saved = load_settings(paths.settings_file)
+    assert saved.application_return_policies == {
         "chrome.exe": "replace"
     }
+    assert saved.application_profiles[
+        "chrome.exe"
+    ].recipient_audience == "public_online"
+
+
+def test_application_profile_dialog_edits_useful_writing_defaults(
+    qtbot,
+):
+    editor = ApplicationProfileDialog(
+        "outlook.exe",
+        ApplicationProfile(return_mode="copy"),
+        AppSettings(primary_language="English (UK)"),
+    )
+    qtbot.addWidget(editor)
+    editor.audience.setCurrentIndex(
+        editor.audience.findData("customer_client")
+    )
+    editor.length.setCurrentIndex(editor.length.findData("short"))
+    editor.auto_submit.setCurrentIndex(editor.auto_submit.findData("on"))
+    editor.project_name.setText("Email writing")
+
+    profile = editor.profile()
+
+    assert profile.recipient_audience == "customer_client"
+    assert profile.resulting_text_length == "short"
+    assert profile.auto_submit == "on"
+    assert profile.project_name == "Email writing"
+
+
+def test_double_clicking_application_opens_its_profile_editor(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+        AppSettings(
+            application_profiles={
+                "outlook.exe": ApplicationProfile(return_mode="copy")
+            }
+        ),
+    )
+    qtbot.addWidget(dialog)
+
+    class FakeProfileDialog:
+        def __init__(self, application, profile, overall, parent):
+            assert application == "outlook.exe"
+            self._profile = replace(
+                profile,
+                recipient_audience="colleague_peer",
+            )
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def profile(self):
+            return self._profile
+
+    monkeypatch.setattr(
+        settings_ui_module,
+        "ApplicationProfileDialog",
+        FakeProfileDialog,
+    )
+
+    dialog.application_policy_table.cellDoubleClicked.emit(0, 0)
+
+    assert dialog._application_profiles()[
+        "outlook.exe"
+    ].recipient_audience == "colleague_peer"
 
 
 def test_configuration_exposes_privacy_filtered_diagnostics_actions(

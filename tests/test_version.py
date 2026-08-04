@@ -28,7 +28,7 @@ def test_release_version_is_tracked_semver_without_local_build_counter():
         root / "scripts" / "build-installer.ps1"
     ).read_text(encoding="utf-8")
 
-    assert metadata["project"]["version"] == "0.1.4"
+    assert metadata["project"]["version"] == "0.1.5"
     assert "build-number.txt" not in build_script
     assert "$buildVersion = $baseVersion" in build_script
     assert "[switch]$AllowSameVersion" in installer_script

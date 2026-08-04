@@ -31,7 +31,7 @@ from .models import (
     RESULTING_TEXT_FORMATTING_OPTIONS,
     RESULTING_TEXT_LENGTH_OPTIONS,
 )
-from .returning import ReturnDecision
+from .returning import EffectiveApplicationProfile, ReturnDecision
 from .theme import resolve_theme
 
 
@@ -82,6 +82,10 @@ class LauncherPopup(QWidget):
         self.editing_strength_value = "default"
         self.preserve_facts_enabled = True
         self.recipient_audience_value = "unspecified"
+        self.application_editing_strength_default = "default"
+        self.application_preserve_facts_default = True
+        self.application_audience_default = "unspecified"
+        self.application_overridden_fields: frozenset[str] = frozenset()
         self.theme = theme
         self.current_folder = ""
         self._dragging = False
@@ -514,9 +518,21 @@ class LauncherPopup(QWidget):
         self,
         source_app: str,
         decision: ReturnDecision,
+        effective: EffectiveApplicationProfile | None = None,
     ) -> None:
         self.application_policy_override = decision.overridden
-        self.source_context.setText(f"Result: {decision.summary}")
+        self.application_overridden_fields = (
+            effective.overridden_fields if effective is not None else frozenset()
+        )
+        profile_note = (
+            f" \u00b7 {len(self.application_overridden_fields)} application default"
+            + ("s" if len(self.application_overridden_fields) != 1 else "")
+            if self.application_overridden_fields
+            else ""
+        )
+        self.source_context.setText(
+            f"Result: {decision.summary}{profile_note}"
+        )
         self.source_context.setAccessibleDescription(
             decision.fallback_reason or decision.summary
         )
@@ -543,6 +559,44 @@ class LauncherPopup(QWidget):
         self.replace_selected_text.setAccessibleDescription(
             self.replace_selected_text.toolTip()
         )
+        if effective is not None:
+            self.set_natural_voice_enabled(effective.natural_voice_enabled)
+            self.set_auto_submit_enabled(effective.auto_submit_enabled)
+            self.set_temporary_chat_enabled(effective.temporary_chat_enabled)
+            self.set_guided_drafting_enabled(
+                effective.guided_drafting_enabled
+            )
+            self.set_resulting_text_length(effective.resulting_text_length)
+            self.set_resulting_text_formatting(
+                effective.resulting_text_formatting
+            )
+            self.set_writing_block_enabled(effective.writing_block_enabled)
+            self.application_editing_strength_default = (
+                effective.editing_strength
+            )
+            self.application_preserve_facts_default = effective.preserve_facts
+            self.application_audience_default = effective.recipient_audience
+            self.natural_voice.setEnabled(
+                "natural_voice" not in self.application_overridden_fields
+            )
+            self.auto_submit.setEnabled(
+                "auto_submit" not in self.application_overridden_fields
+            )
+            self.temporary_chat.setEnabled(
+                "temporary_chat" not in self.application_overridden_fields
+            )
+            self.guided_drafting.setEnabled(
+                "guided_drafting" not in self.application_overridden_fields
+            )
+            self.output_button.setEnabled(
+                not self.application_overridden_fields.intersection(
+                    {
+                        "resulting_text_length",
+                        "resulting_text_formatting",
+                        "writing_block",
+                    }
+                )
+            )
         self._update_replace_selected_text_availability()
 
     def _focus_search(self) -> None:
@@ -756,9 +810,11 @@ class LauncherPopup(QWidget):
         self.search.clear()
         self.custom.clear()
         self.additional_information.clear()
-        self.set_editing_strength("default")
-        self.set_preserve_facts_enabled(True)
-        self.set_recipient_audience("unspecified")
+        self.set_editing_strength(self.application_editing_strength_default)
+        self.set_preserve_facts_enabled(
+            self.application_preserve_facts_default
+        )
+        self.set_recipient_audience(self.application_audience_default)
         self.refresh()
         cursor = QCursor.pos()
         screen = self.screen()

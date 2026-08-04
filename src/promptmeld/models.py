@@ -106,6 +106,25 @@ class SubmissionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ApplicationProfile:
+    """Writing and delivery defaults for one source executable."""
+
+    return_mode: str = "default"
+    recipient_audience: str = "inherit"
+    primary_language: str = ""
+    resulting_text_length: str = "inherit"
+    resulting_text_formatting: str = "inherit"
+    editing_strength: str = "inherit"
+    preserve_facts: str = "inherit"
+    natural_voice: str = "inherit"
+    guided_drafting: str = "inherit"
+    writing_block: str = "inherit"
+    auto_submit: str = "inherit"
+    temporary_chat: str = "inherit"
+    project_name: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class AppSettings:
     project_name: str = DEFAULT_PROJECT_NAME
     theme: str = "auto"
@@ -125,6 +144,9 @@ class AppSettings:
     replace_selected_text_enabled: bool = False
     copy_generated_text_enabled: bool = False
     application_return_policies: dict[str, str] = field(default_factory=dict)
+    application_profiles: dict[str, ApplicationProfile] = field(
+        default_factory=dict
+    )
     temporary_chat_enabled: bool = False
     primary_language: str = "English (UK)"
     guided_drafting_enabled: bool = False

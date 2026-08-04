@@ -19,7 +19,10 @@ from promptmeld.config import (
     save_settings,
 )
 from promptmeld.paths import AppPaths
-from promptmeld.returning import RECOMMENDED_APPLICATION_RETURN_POLICIES
+from promptmeld.returning import (
+    RECOMMENDED_APPLICATION_PROFILES,
+    RECOMMENDED_APPLICATION_RETURN_POLICIES,
+)
 
 
 def test_load_actions(tmp_path):
@@ -222,6 +225,65 @@ def test_invalid_application_return_policy_is_rejected(tmp_path):
         load_settings(path)
 
 
+def test_application_profile_writing_defaults_round_trip(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "application_profiles": {
+                    "OUTLOOK.EXE": {
+                        "return_mode": "copy",
+                        "recipient_audience": "customer_client",
+                        "primary_language": "English (US)",
+                        "resulting_text_length": "short",
+                        "resulting_text_formatting": "plain",
+                        "editing_strength": "improve",
+                        "preserve_facts": "on",
+                        "natural_voice": "off",
+                        "guided_drafting": "on",
+                        "writing_block": "off",
+                        "auto_submit": "on",
+                        "temporary_chat": "off",
+                        "project_name": "Email writing",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(path)
+    profile = settings.application_profiles["outlook.exe"]
+    assert profile.recipient_audience == "customer_client"
+    assert profile.primary_language == "English (US)"
+    assert profile.auto_submit == "on"
+    assert profile.project_name == "Email writing"
+
+    save_settings(path, settings)
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["application_profiles"]["outlook.exe"][
+        "editing_strength"
+    ] == "improve"
+    assert saved["application_return_policies"]["outlook.exe"] == "copy"
+
+
+def test_invalid_application_profile_option_is_rejected(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "application_profiles": {
+                    "outlook.exe": {"recipient_audience": "everyone"}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="recipient_audience"):
+        load_settings(path)
+
+
 def test_new_configuration_contains_recommended_application_policies(
     tmp_path,
 ):
@@ -234,7 +296,8 @@ def test_new_configuration_contains_recommended_application_policies(
         settings.application_return_policies
         == RECOMMENDED_APPLICATION_RETURN_POLICIES
     )
-    assert settings.starter_application_policy_version == 1
+    assert settings.application_profiles == RECOMMENDED_APPLICATION_PROFILES
+    assert settings.starter_application_policy_version == 2
 
 
 def test_empty_application_policies_receive_recommendations_only_once(
@@ -259,15 +322,49 @@ def test_empty_application_policies_receive_recommendations_only_once(
         migrated.application_return_policies
         == RECOMMENDED_APPLICATION_RETURN_POLICIES
     )
-    assert migrated.starter_application_policy_version == 1
+    assert migrated.application_profiles == RECOMMENDED_APPLICATION_PROFILES
+    assert migrated.starter_application_policy_version == 2
 
     save_settings(
         paths.settings_file,
-        replace(migrated, application_return_policies={}),
+        replace(
+            migrated,
+            application_return_policies={},
+            application_profiles={},
+        ),
     )
     ensure_user_configuration(paths)
 
     assert load_settings(paths.settings_file).application_return_policies == {}
+
+
+def test_v1_starter_policies_are_enriched_with_writing_defaults(tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    paths.settings_file.write_text(
+        json.dumps(
+            {
+                "application_return_policies": (
+                    RECOMMENDED_APPLICATION_RETURN_POLICIES
+                ),
+                "starter_application_policy_version": 1,
+                "starter_action_version": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ensure_user_configuration(paths)
+
+    settings = load_settings(paths.settings_file)
+    assert settings.application_profiles == RECOMMENDED_APPLICATION_PROFILES
+    assert (
+        settings.application_profiles["outlook.exe"].resulting_text_formatting
+        == "plain"
+    )
+    assert settings.application_profiles["ms-teams.exe"].recipient_audience == (
+        "colleague_peer"
+    )
 
 
 def test_existing_application_policies_are_preserved_during_migration(
@@ -291,7 +388,10 @@ def test_existing_application_policies_are_preserved_during_migration(
     assert settings.application_return_policies == {
         "thunderbird.exe": "copy"
     }
-    assert settings.starter_application_policy_version == 1
+    assert settings.application_profiles["thunderbird.exe"].return_mode == (
+        "copy"
+    )
+    assert settings.starter_application_policy_version == 2
 
 
 def test_load_settings_rejects_invalid_temporary_chat_value(tmp_path):

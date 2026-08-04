@@ -120,11 +120,19 @@ choose ChatGPT settings before sending it.
 The **Submission** section of Configuration can optionally copy generated text
 to the clipboard or replace the selected text in an editable field after
 ChatGPT responds. The **Applications** tab can override this for Word, Outlook,
-browsers, text editors, messaging apps, or any named executable. For example,
-Word can replace automatically while Chrome copies results only.
-New and previously empty configurations start with that conservative pattern:
-Word and Notepad replace verified selections, while Outlook, browsers, Teams
-and Slack copy results for manual placement.
+browsers, text editors, messaging apps, or any named executable. Double-click
+an application to open its own configuration page. It can set a different
+audience, language, length, formatting, editing strength, factual protection,
+natural-voice and guided-drafting behaviour, writing-block preference,
+ChatGPT Project, submission mode, Temporary Chat mode, and result handling.
+
+![Example Microsoft Outlook application configuration](docs/configure-application.png)
+
+New and previously empty configurations start with a conservative pattern:
+Word and Notepad replace verified selections; Outlook and browsers copy results
+for manual placement; Outlook and Notepad prefer plain text; and Teams and
+Slack start with short, plain-text wording for a colleague or peer. Every value
+can be changed or returned to the overall default.
 
 Before replacement, PromptMeld returns to the original window and verifies
 that the same source text is still selected. If focus, selection, editability,
@@ -210,8 +218,8 @@ Choose **Configuration…** from the notification-area menu to add,
 organise, edit, duplicate, disable, or delete actions. The same window controls
 folder icons, natural-voice wording, primary language, guided drafting, and
 automatic submission, along with output length, formatting, and writing-block
-preferences. Application-specific result handling and diagnostics have their
-own **Applications** tab.
+preferences. Application-specific writing and delivery profiles, plus local
+diagnostics, have their own **Applications** tab.
 
 PromptMeld keeps its editable configuration under:
 
