@@ -3,7 +3,7 @@ from __future__ import annotations
 from importlib.resources import files
 
 from PySide6.QtCore import QEvent, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QCursor, QKeyEvent
+from PySide6.QtGui import QColor, QCursor, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -31,6 +31,7 @@ from .models import (
     RESULTING_TEXT_FORMATTING_OPTIONS,
     RESULTING_TEXT_LENGTH_OPTIONS,
 )
+from .returning import EffectiveApplicationProfile, ReturnDecision
 from .theme import resolve_theme
 
 
@@ -72,6 +73,7 @@ class LauncherPopup(QWidget):
         self.auto_submit_enabled = auto_submit_enabled
         self.replace_selected_text_enabled = replace_selected_text_enabled
         self.source_is_editable = True
+        self.application_policy_override = False
         self.temporary_chat_enabled = temporary_chat_enabled
         self.guided_drafting_enabled = guided_drafting_enabled
         self.resulting_text_length_value = resulting_text_length
@@ -80,6 +82,10 @@ class LauncherPopup(QWidget):
         self.editing_strength_value = "default"
         self.preserve_facts_enabled = True
         self.recipient_audience_value = "unspecified"
+        self.application_editing_strength_default = "default"
+        self.application_preserve_facts_default = True
+        self.application_audience_default = "unspecified"
+        self.application_overridden_fields: frozenset[str] = frozenset()
         self.theme = theme
         self.current_folder = ""
         self._dragging = False
@@ -115,7 +121,7 @@ class LauncherPopup(QWidget):
         self.close_button.setAccessibleName("Close launcher")
         self.close_button.setToolTip("Close launcher")
         self.close_button.setFixedSize(28, 28)
-        self.close_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.close_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.title.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -150,9 +156,30 @@ class LauncherPopup(QWidget):
         self.location.hide()
         layout.addWidget(self.location)
 
+        self.source_context = QLabel()
+        self.source_context.setObjectName("breadcrumb")
+        self.source_context.setWordWrap(True)
+        self.source_context.setAccessibleName("Generated result destination")
+        self.source_context.hide()
+        layout.addWidget(self.source_context)
+
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search writing actions…")
         self.search.setClearButtonEnabled(True)
+        self.search.setAccessibleName("Search writing actions")
+        self.search.setAccessibleDescription(
+            "Type to filter actions. Press Down Arrow to move to the results."
+        )
+        self.focus_search_shortcut = QShortcut(
+            QKeySequence.StandardKey.Find,
+            self,
+        )
+        self.focus_search_shortcut.activated.connect(self._focus_search)
+        self.close_shortcut = QShortcut(
+            QKeySequence.StandardKey.Close,
+            self,
+        )
+        self.close_shortcut.activated.connect(self.hide)
         layout.addWidget(self.search)
 
         self.list = QListWidget()
@@ -160,6 +187,10 @@ class LauncherPopup(QWidget):
         self.list.setSpacing(2)
         self.list.setIconSize(QSize(36, 36))
         self.list.installEventFilter(self)
+        self.list.setAccessibleName("Writing actions")
+        self.list.setAccessibleDescription(
+            "Use arrow keys to choose an action and Enter to run it."
+        )
         layout.addWidget(self.list, 1)
 
         self.natural_voice = QCheckBox("Preserve my natural voice")
@@ -168,12 +199,16 @@ class LauncherPopup(QWidget):
             "Keep your vocabulary and level of formality, avoid generic filler, "
             "and make only the changes needed for the selected task."
         )
+        self.natural_voice.setAccessibleDescription(
+            self.natural_voice.toolTip()
+        )
         self.auto_submit = QCheckBox("Submit automatically")
         self.auto_submit.setChecked(self.auto_submit_enabled)
         self.auto_submit.setToolTip(
             "When off, the prompt is pasted into ChatGPT but left unsent so you "
             "can choose the model or reasoning level before pressing Enter."
         )
+        self.auto_submit.setAccessibleDescription(self.auto_submit.toolTip())
         self.replace_selected_text = QCheckBox("Paste result back")
         self.replace_selected_text.setChecked(
             self.replace_selected_text_enabled
@@ -182,11 +217,17 @@ class LauncherPopup(QWidget):
             "After ChatGPT responds, replace the selected text in its original "
             "editable box. Requires automatic submission."
         )
+        self.replace_selected_text.setAccessibleDescription(
+            self.replace_selected_text.toolTip()
+        )
         self.guided_drafting = QCheckBox("Guided questions")
         self.guided_drafting.setChecked(self.guided_drafting_enabled)
         self.guided_drafting.setToolTip(
             "Allow supported writing actions to ask concise questions when "
             "important context is missing."
+        )
+        self.guided_drafting.setAccessibleDescription(
+            self.guided_drafting.toolTip()
         )
         self.temporary_chat = QCheckBox("Turn on temporary chat")
         self.temporary_chat.setChecked(self.temporary_chat_enabled)
@@ -194,6 +235,9 @@ class LauncherPopup(QWidget):
             "Open a top-level Temporary Chat. Temporary chats cannot be used "
             "inside a ChatGPT Project, so the action's configured Project is "
             "skipped."
+        )
+        self.temporary_chat.setAccessibleDescription(
+            self.temporary_chat.toolTip()
         )
         option_row = QHBoxLayout()
         option_row.addWidget(self.natural_voice)
@@ -207,6 +251,13 @@ class LauncherPopup(QWidget):
         temporary_row.addStretch(1)
         temporary_row.addWidget(self.replace_selected_text)
         layout.addLayout(temporary_row)
+        self.setTabOrder(self.search, self.list)
+        self.setTabOrder(self.list, self.natural_voice)
+        self.setTabOrder(self.natural_voice, self.guided_drafting)
+        self.setTabOrder(self.guided_drafting, self.auto_submit)
+        self.setTabOrder(self.auto_submit, self.temporary_chat)
+        self.setTabOrder(self.temporary_chat, self.replace_selected_text)
+        self.setTabOrder(self.replace_selected_text, self.close_button)
 
         self.output_menu = QMenu(self)
         length_menu = self.output_menu.addMenu("Resulting text length")
@@ -463,9 +514,100 @@ class LauncherPopup(QWidget):
         self.source_is_editable = editable
         self._update_replace_selected_text_availability()
 
+    def set_source_context(
+        self,
+        source_app: str,
+        decision: ReturnDecision,
+        effective: EffectiveApplicationProfile | None = None,
+    ) -> None:
+        self.application_policy_override = decision.overridden
+        self.application_overridden_fields = (
+            effective.overridden_fields if effective is not None else frozenset()
+        )
+        profile_note = (
+            f" \u00b7 {len(self.application_overridden_fields)} application default"
+            + ("s" if len(self.application_overridden_fields) != 1 else "")
+            if self.application_overridden_fields
+            else ""
+        )
+        self.source_context.setText(
+            f"Result: {decision.summary}{profile_note}"
+        )
+        self.source_context.setAccessibleDescription(
+            decision.fallback_reason or decision.summary
+        )
+        self.source_context.show()
+        self.replace_selected_text.blockSignals(True)
+        self.replace_selected_text.setChecked(decision.replace_selection)
+        self.replace_selected_text.blockSignals(False)
+        self.replace_selected_text.setText(
+            "Paste result back (application policy)"
+            if decision.overridden
+            else "Paste result back"
+        )
+        self.replace_selected_text.setToolTip(
+            (
+                "This application's result policy is configured under "
+                "Configuration > Applications."
+            )
+            if decision.overridden
+            else (
+                "After ChatGPT responds, replace the selected text in its "
+                "original editable box. Requires automatic submission."
+            )
+        )
+        self.replace_selected_text.setAccessibleDescription(
+            self.replace_selected_text.toolTip()
+        )
+        if effective is not None:
+            self.set_natural_voice_enabled(effective.natural_voice_enabled)
+            self.set_auto_submit_enabled(effective.auto_submit_enabled)
+            self.set_temporary_chat_enabled(effective.temporary_chat_enabled)
+            self.set_guided_drafting_enabled(
+                effective.guided_drafting_enabled
+            )
+            self.set_resulting_text_length(effective.resulting_text_length)
+            self.set_resulting_text_formatting(
+                effective.resulting_text_formatting
+            )
+            self.set_writing_block_enabled(effective.writing_block_enabled)
+            self.application_editing_strength_default = (
+                effective.editing_strength
+            )
+            self.application_preserve_facts_default = effective.preserve_facts
+            self.application_audience_default = effective.recipient_audience
+            self.natural_voice.setEnabled(
+                "natural_voice" not in self.application_overridden_fields
+            )
+            self.auto_submit.setEnabled(
+                "auto_submit" not in self.application_overridden_fields
+            )
+            self.temporary_chat.setEnabled(
+                "temporary_chat" not in self.application_overridden_fields
+            )
+            self.guided_drafting.setEnabled(
+                "guided_drafting" not in self.application_overridden_fields
+            )
+            self.output_button.setEnabled(
+                not self.application_overridden_fields.intersection(
+                    {
+                        "resulting_text_length",
+                        "resulting_text_formatting",
+                        "writing_block",
+                    }
+                )
+            )
+        self._update_replace_selected_text_availability()
+
+    def _focus_search(self) -> None:
+        self.search.setFocus()
+        self.search.selectAll()
+
     def _update_replace_selected_text_availability(self) -> None:
         self.replace_selected_text.setEnabled(
-            self.auto_submit_enabled and self.source_is_editable
+            not self.application_policy_override
+            and self.auto_submit_enabled
+            and self.source_is_editable
         )
 
     def set_guided_drafting_enabled(self, enabled: bool) -> None:
@@ -668,9 +810,11 @@ class LauncherPopup(QWidget):
         self.search.clear()
         self.custom.clear()
         self.additional_information.clear()
-        self.set_editing_strength("default")
-        self.set_preserve_facts_enabled(True)
-        self.set_recipient_audience("unspecified")
+        self.set_editing_strength(self.application_editing_strength_default)
+        self.set_preserve_facts_enabled(
+            self.application_preserve_facts_default
+        )
+        self.set_recipient_audience(self.application_audience_default)
         self.refresh()
         cursor = QCursor.pos()
         screen = self.screen()
@@ -860,6 +1004,21 @@ class LauncherPopup(QWidget):
         return label
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
+        if (
+            event.key() == Qt.Key.Key_F
+            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            self.search.setFocus()
+            self.search.selectAll()
+            event.accept()
+            return
+        if (
+            event.key() == Qt.Key.Key_W
+            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            self.hide()
+            event.accept()
+            return
         if event.key() == Qt.Key.Key_Escape:
             self.hide()
             event.accept()

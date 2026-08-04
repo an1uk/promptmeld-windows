@@ -46,6 +46,8 @@ def test_automation_client_sends_prompt_to_helper(monkeypatch):
         "private prompt",
         "PromptMeld",
         AppSettings(),
+        source_text="private source",
+        source_app="winword.exe",
     )
 
     assert result.submitted is True
@@ -54,6 +56,8 @@ def test_automation_client_sends_prompt_to_helper(monkeypatch):
     assert calls[0][0]["temporary_chat"] is False
     assert calls[0][0]["replace_selected_text"] is False
     assert calls[0][0]["copy_generated_text"] is False
+    assert calls[0][0]["source_text"] == "private source"
+    assert calls[0][0]["source_app"] == "winword.exe"
     assert calls[0][1] == 75.0
 
 
@@ -130,6 +134,33 @@ def test_automation_client_copies_fallback_if_helper_fails(monkeypatch):
     assert result.submitted is False
     assert result.fallback_copied is True
     assert clipboard == ["private prompt"]
+
+
+def test_cancelled_automation_does_not_copy_the_private_prompt(monkeypatch):
+    clipboard = []
+    monkeypatch.setattr(
+        automation_client,
+        "_request_from_helper",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            automation_client.AutomationCancelled("cancelled")
+        ),
+    )
+    monkeypatch.setattr(
+        automation_client,
+        "write_clipboard_text",
+        clipboard.append,
+    )
+
+    result = automation_client.submit_via_worker(
+        "private prompt",
+        "PromptMeld",
+        AppSettings(),
+        is_cancelled=lambda: True,
+    )
+
+    assert result.cancelled is True
+    assert result.fallback_copied is False
+    assert clipboard == []
 
 
 def test_frozen_client_uses_internal_helper(monkeypatch, tmp_path):
@@ -229,3 +260,23 @@ def test_helper_session_streams_progress_before_final_response():
 
     assert progress == [("opening-project", "Opening the project")]
     assert response["submitted"] is True
+
+
+def test_helper_session_observes_cancellation_while_waiting():
+    class FakeProcess:
+        def __init__(self):
+            self.stdin = io.StringIO()
+
+        def poll(self):
+            return None
+
+    session = object.__new__(automation_client._AutomationHelperSession)
+    session.process = FakeProcess()
+    session.responses = queue.Queue()
+
+    with pytest.raises(automation_client.AutomationCancelled):
+        session.request(
+            {"prompt": "private prompt"},
+            1.0,
+            is_cancelled=lambda: True,
+        )

@@ -10,11 +10,20 @@ from typing import Any
 from .branding import DEFAULT_PROJECT_NAME
 from .models import (
     DEFAULT_NATURAL_VOICE_INSTRUCTION,
+    EDITING_STRENGTH_VALUES,
     NATURAL_VOICE_MODES,
+    RECIPIENT_AUDIENCE_VALUES,
     RESULTING_TEXT_FORMATTING_VALUES,
     RESULTING_TEXT_LENGTH_VALUES,
     AppSettings,
+    ApplicationProfile,
     WritingAction,
+)
+from .returning import (
+    APPLICATION_RETURN_MODE_VALUES,
+    APPLICATION_TOGGLE_VALUES,
+    RECOMMENDED_APPLICATION_PROFILES,
+    normalize_application_name,
 )
 from .paths import AppPaths
 
@@ -63,6 +72,7 @@ DEFAULT_FOLDER_ICONS = {
 }
 
 CURRENT_STARTER_ACTION_VERSION = 2
+CURRENT_STARTER_APPLICATION_POLICY_VERSION = 2
 LEGACY_PROJECT_NAMES = {
     "Writing Launcher",
     "WritingAssistant",
@@ -110,6 +120,54 @@ def ensure_user_configuration(paths: AppPaths) -> None:
         force=settings_existed is False and actions_existed,
     )
     _migrate_launcher_defaults(paths)
+    _migrate_application_return_policies(paths)
+
+
+def _migrate_application_return_policies(paths: AppPaths) -> None:
+    """Install safe starter policies once without replacing user choices."""
+
+    settings = load_settings(paths.settings_file)
+    if (
+        settings.starter_application_policy_version
+        >= CURRENT_STARTER_APPLICATION_POLICY_VERSION
+    ):
+        return
+
+    profiles = dict(settings.application_profiles)
+    if (
+        settings.starter_application_policy_version == 0
+        and not profiles
+    ):
+        profiles.update(RECOMMENDED_APPLICATION_PROFILES)
+    elif settings.starter_application_policy_version == 1:
+        minimal_profiles = {
+            application: ApplicationProfile(return_mode=profile.return_mode)
+            for application, profile in profiles.items()
+        }
+        recommended_minimal = {
+            application: ApplicationProfile(return_mode=profile.return_mode)
+            for application, profile in RECOMMENDED_APPLICATION_PROFILES.items()
+        }
+        if profiles == minimal_profiles == recommended_minimal:
+            # Enrich the exact v1 starter set. Any deletion or modification is
+            # treated as a user choice and left untouched.
+            profiles = dict(RECOMMENDED_APPLICATION_PROFILES)
+    policies = {
+        application: profile.return_mode
+        for application, profile in profiles.items()
+        if profile.return_mode != "default"
+    }
+    save_settings(
+        paths.settings_file,
+        replace(
+            settings,
+            application_return_policies=policies,
+            application_profiles=profiles,
+            starter_application_policy_version=(
+                CURRENT_STARTER_APPLICATION_POLICY_VERSION
+            ),
+        ),
+    )
 
 
 def _migrate_launcher_defaults(paths: AppPaths) -> None:
@@ -208,6 +266,140 @@ def normalize_folder(value: str) -> str:
     if any(part in {".", ".."} for part in parts):
         raise ConfigurationError("Folder names cannot be '.' or '..'.")
     return "/".join(parts)
+
+
+_APPLICATION_PROFILE_KEYS = {
+    "return_mode",
+    "recipient_audience",
+    "primary_language",
+    "resulting_text_length",
+    "resulting_text_formatting",
+    "editing_strength",
+    "preserve_facts",
+    "natural_voice",
+    "guided_drafting",
+    "writing_block",
+    "auto_submit",
+    "temporary_chat",
+    "project_name",
+}
+
+
+def _application_profile_from_dict(
+    application: str,
+    raw_profile: object,
+) -> ApplicationProfile:
+    if not isinstance(raw_profile, dict):
+        raise ConfigurationError(
+            f"Application profile for {application} must be an object."
+        )
+    unknown = set(raw_profile) - _APPLICATION_PROFILE_KEYS
+    if unknown:
+        raise ConfigurationError(
+            f"Application profile for {application} contains unknown options: "
+            + ", ".join(sorted(str(key) for key in unknown))
+        )
+
+    def enum_value(key: str, default: str, allowed: tuple[str, ...]) -> str:
+        value = raw_profile.get(key, default)
+        if not isinstance(value, str):
+            raise ConfigurationError(
+                f"Application profile option {key} for {application} must be text."
+            )
+        normalized = value.strip().casefold()
+        if normalized not in allowed:
+            raise ConfigurationError(
+                f"Application profile option {key} for {application} is invalid."
+            )
+        return normalized
+
+    def text_value(key: str) -> str:
+        value = raw_profile.get(key, "")
+        if not isinstance(value, str):
+            raise ConfigurationError(
+                f"Application profile option {key} for {application} must be text."
+            )
+        return value.strip()
+
+    return ApplicationProfile(
+        return_mode=enum_value(
+            "return_mode",
+            "default",
+            APPLICATION_RETURN_MODE_VALUES,
+        ),
+        recipient_audience=enum_value(
+            "recipient_audience",
+            "inherit",
+            ("inherit", *RECIPIENT_AUDIENCE_VALUES),
+        ),
+        primary_language=text_value("primary_language"),
+        resulting_text_length=enum_value(
+            "resulting_text_length",
+            "inherit",
+            ("inherit", *RESULTING_TEXT_LENGTH_VALUES),
+        ),
+        resulting_text_formatting=enum_value(
+            "resulting_text_formatting",
+            "inherit",
+            ("inherit", *RESULTING_TEXT_FORMATTING_VALUES),
+        ),
+        editing_strength=enum_value(
+            "editing_strength",
+            "inherit",
+            ("inherit", *EDITING_STRENGTH_VALUES),
+        ),
+        preserve_facts=enum_value(
+            "preserve_facts",
+            "inherit",
+            APPLICATION_TOGGLE_VALUES,
+        ),
+        natural_voice=enum_value(
+            "natural_voice",
+            "inherit",
+            APPLICATION_TOGGLE_VALUES,
+        ),
+        guided_drafting=enum_value(
+            "guided_drafting",
+            "inherit",
+            APPLICATION_TOGGLE_VALUES,
+        ),
+        writing_block=enum_value(
+            "writing_block",
+            "inherit",
+            APPLICATION_TOGGLE_VALUES,
+        ),
+        auto_submit=enum_value(
+            "auto_submit",
+            "inherit",
+            APPLICATION_TOGGLE_VALUES,
+        ),
+        temporary_chat=enum_value(
+            "temporary_chat",
+            "inherit",
+            APPLICATION_TOGGLE_VALUES,
+        ),
+        project_name=text_value("project_name"),
+    )
+
+
+def _application_profile_to_dict(
+    profile: ApplicationProfile,
+) -> dict[str, str]:
+    return {
+        "return_mode": profile.return_mode,
+        "recipient_audience": profile.recipient_audience,
+        "primary_language": profile.primary_language,
+        "resulting_text_length": profile.resulting_text_length,
+        "resulting_text_formatting": profile.resulting_text_formatting,
+        "editing_strength": profile.editing_strength,
+        "preserve_facts": profile.preserve_facts,
+        "natural_voice": profile.natural_voice,
+        "guided_drafting": profile.guided_drafting,
+        "writing_block": profile.writing_block,
+        "auto_submit": profile.auto_submit,
+        "temporary_chat": profile.temporary_chat,
+        "project_name": profile.project_name,
+    }
 
 
 def _read_json(path: Path) -> Any:
@@ -397,6 +589,60 @@ def load_settings(path: Path) -> AppSettings:
         raise ConfigurationError(
             "copy_generated_text_enabled must be true or false."
         )
+    raw_application_policies = raw.get("application_return_policies", {})
+    if not isinstance(raw_application_policies, dict):
+        raise ConfigurationError(
+            "application_return_policies must be an object."
+        )
+    application_return_policies: dict[str, str] = {}
+    for application, mode in raw_application_policies.items():
+        if not isinstance(application, str) or not isinstance(mode, str):
+            raise ConfigurationError(
+                "Application return policies must map executable names to text."
+            )
+        normalized_application = normalize_application_name(application)
+        normalized_mode = mode.strip().casefold()
+        if not normalized_application or normalized_mode not in (
+            APPLICATION_RETURN_MODE_VALUES
+        ):
+            raise ConfigurationError(
+                "Application return policies must use default, replace, copy, "
+                "or leave."
+            )
+        if normalized_mode != "default":
+            application_return_policies[normalized_application] = (
+                normalized_mode
+            )
+    raw_application_profiles = raw.get("application_profiles", {})
+    if not isinstance(raw_application_profiles, dict):
+        raise ConfigurationError("application_profiles must be an object.")
+    application_profiles: dict[str, ApplicationProfile] = {}
+    for application, raw_profile in raw_application_profiles.items():
+        if not isinstance(application, str):
+            raise ConfigurationError(
+                "Application profile executable names must be text."
+            )
+        normalized_application = normalize_application_name(application)
+        if not normalized_application:
+            raise ConfigurationError(
+                "Application profile executable names cannot be empty."
+            )
+        application_profiles[normalized_application] = (
+            _application_profile_from_dict(
+                normalized_application,
+                raw_profile,
+            )
+        )
+    for application, mode in tuple(application_return_policies.items()):
+        application_profiles.setdefault(
+            application,
+            ApplicationProfile(return_mode=mode),
+        )
+    for application, profile in application_profiles.items():
+        if profile.return_mode == "default":
+            application_return_policies.pop(application, None)
+        else:
+            application_return_policies[application] = profile.return_mode
     temporary_chat_enabled = raw.get("temporary_chat_enabled", False)
     if not isinstance(temporary_chat_enabled, bool):
         raise ConfigurationError(
@@ -465,6 +711,18 @@ def load_settings(path: Path) -> AppSettings:
         raise ConfigurationError(
             "starter_action_version must be at least 1."
         )
+    try:
+        starter_application_policy_version = int(
+            raw.get("starter_application_policy_version", 0)
+        )
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(
+            "starter_application_policy_version must be a whole number."
+        ) from exc
+    if starter_application_policy_version < 0:
+        raise ConfigurationError(
+            "starter_application_policy_version cannot be negative."
+        )
 
     known = {
         "project_name",
@@ -484,6 +742,8 @@ def load_settings(path: Path) -> AppSettings:
         "auto_submit_enabled",
         "replace_selected_text_enabled",
         "copy_generated_text_enabled",
+        "application_return_policies",
+        "application_profiles",
         "temporary_chat_enabled",
         "primary_language",
         "guided_drafting_enabled",
@@ -491,6 +751,7 @@ def load_settings(path: Path) -> AppSettings:
         "writing_block_enabled",
         "resulting_text_formatting",
         "starter_action_version",
+        "starter_application_policy_version",
     }
     return AppSettings(
         project_name=project_name,
@@ -514,6 +775,8 @@ def load_settings(path: Path) -> AppSettings:
         auto_submit_enabled=auto_submit_enabled,
         replace_selected_text_enabled=replace_selected_text_enabled,
         copy_generated_text_enabled=copy_generated_text_enabled,
+        application_return_policies=application_return_policies,
+        application_profiles=application_profiles,
         temporary_chat_enabled=temporary_chat_enabled,
         primary_language=primary_language,
         guided_drafting_enabled=guided_drafting_enabled,
@@ -521,6 +784,9 @@ def load_settings(path: Path) -> AppSettings:
         writing_block_enabled=writing_block_enabled,
         resulting_text_formatting=resulting_text_formatting,
         starter_action_version=starter_action_version,
+        starter_application_policy_version=(
+            starter_application_policy_version
+        ),
         extra={key: value for key, value in raw.items() if key not in known},
     )
 
@@ -545,6 +811,15 @@ def settings_to_dict(settings: AppSettings) -> dict[str, object]:
         "auto_submit_enabled": settings.auto_submit_enabled,
         "replace_selected_text_enabled": settings.replace_selected_text_enabled,
         "copy_generated_text_enabled": settings.copy_generated_text_enabled,
+        "application_return_policies": dict(
+            sorted(settings.application_return_policies.items())
+        ),
+        "application_profiles": {
+            application: _application_profile_to_dict(profile)
+            for application, profile in sorted(
+                settings.application_profiles.items()
+            )
+        },
         "temporary_chat_enabled": settings.temporary_chat_enabled,
         "primary_language": settings.primary_language,
         "guided_drafting_enabled": settings.guided_drafting_enabled,
@@ -552,6 +827,9 @@ def settings_to_dict(settings: AppSettings) -> dict[str, object]:
         "writing_block_enabled": settings.writing_block_enabled,
         "resulting_text_formatting": settings.resulting_text_formatting,
         "starter_action_version": settings.starter_action_version,
+        "starter_application_policy_version": (
+            settings.starter_application_policy_version
+        ),
     }
 
 

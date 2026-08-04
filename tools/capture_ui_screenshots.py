@@ -8,6 +8,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QImage, QPainter
+from PySide6.QtCore import QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -15,15 +16,21 @@ from promptmeld.actions import ActionRegistry
 from promptmeld.automation_progress import AutomationProgressWindow
 from promptmeld.config import ensure_user_configuration, load_actions, load_settings
 from promptmeld.icons import ActionIconProvider
+from promptmeld.models import ApplicationProfile
 from promptmeld.paths import AppPaths
-from promptmeld.settings_ui import ActionSettingsDialog
+from promptmeld.settings_ui import ActionSettingsDialog, ApplicationProfileDialog
 from promptmeld.ui import LauncherPopup
 from promptmeld.usage import UsageTracker
 
 
 def main() -> int:
     project_root = Path(__file__).resolve().parents[1]
-    docs = project_root / "docs"
+    docs = Path(
+        os.environ.get(
+            "PROMPTMELD_SCREENSHOT_DIR",
+            str(project_root / "docs"),
+        )
+    )
     docs.mkdir(exist_ok=True)
     app = QApplication.instance() or QApplication(sys.argv)
     windows_fonts = Path(
@@ -111,14 +118,37 @@ def main() -> int:
         app.processEvents()
         dialog.tabs.setCurrentIndex(1)
         app.processEvents()
-        dialog.grab().save(str(docs / "manage-actions.png"))
+        dialog.grab().save(str(docs / "manage-applications.png"))
+        profile_dialog = ApplicationProfileDialog(
+            "outlook.exe",
+            ApplicationProfile(
+                return_mode="copy",
+                recipient_audience="colleague_peer",
+                resulting_text_formatting="plain",
+                natural_voice="on",
+                project_name="Client correspondence",
+            ),
+            settings,
+            dialog,
+        )
+        def capture_profile_dialog() -> None:
+            profile_dialog.grab().save(
+                str(docs / "configure-application.png")
+            )
+            profile_dialog.reject()
+
+        QTimer.singleShot(100, capture_profile_dialog)
+        profile_dialog.exec()
         dialog.tabs.setCurrentIndex(2)
         app.processEvents()
-        dialog.grab().save(str(docs / "manage-hotkeys.png"))
+        dialog.grab().save(str(docs / "manage-actions.png"))
         dialog.tabs.setCurrentIndex(3)
         app.processEvents()
+        dialog.grab().save(str(docs / "manage-hotkeys.png"))
+        dialog.tabs.setCurrentIndex(4)
+        app.processEvents()
         dialog.grab().save(str(docs / "manage-defaults.png"))
-        dialog.tabs.setCurrentIndex(1)
+        dialog.tabs.setCurrentIndex(2)
         first_folder = dialog.action_list.topLevelItem(0)
         if first_folder is not None:
             dialog.action_list.setCurrentItem(first_folder)

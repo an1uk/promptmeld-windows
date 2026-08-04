@@ -107,7 +107,16 @@ transmission, storage, and use are controlled by the ChatGPT application, your
 OpenAI account settings, and OpenAI's policies. PromptMeld cannot control that
 handling.
 
-PromptMeld does not read, record, or export ChatGPT's response.
+When generated-result copying or replacement is enabled, PromptMeld reads the
+completed response through ChatGPT's local Copy control. The response is held
+briefly in memory and placed on the clipboard or pasted into the verified
+source selection. It is not written to PromptMeld's files or diagnostics.
+
+For replacement, the original selected text is preserved in memory so the
+tray can copy it for recovery and invoke the source application's native Undo
+command. Only the most recently preserved original is retained, and it is
+forgotten when PromptMeld exits. It is not included in logs, diagnostics,
+settings, usage records, or update requests.
 
 ## What PromptMeld stores
 

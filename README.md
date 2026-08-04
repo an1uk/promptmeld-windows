@@ -119,18 +119,32 @@ choose ChatGPT settings before sending it.
 
 The **Submission** section of Configuration can optionally copy generated text
 to the clipboard or replace the selected text in an editable field after
-ChatGPT responds. These features require automatic submission. Selections that
-do not come from an editable control continue to work normally; replacement is
-simply skipped for them.
+ChatGPT responds. The **Applications** tab can override this for Word, Outlook,
+browsers, text editors, messaging apps, or any named executable. Double-click
+an application to open its own configuration page. It can set a different
+audience, language, length, formatting, editing strength, factual protection,
+natural-voice and guided-drafting behaviour, writing-block preference,
+ChatGPT Project, submission mode, Temporary Chat mode, and result handling.
 
-Automatic replacement is destructive: the generated result may be unsuitable
-or a paste may fail, and the original text may be lost. This risk is especially
-important with Temporary Chat, where the original text is not retained in
-ChatGPT. Consider enabling Windows Clipboard History (`Win+V`) or using a
-clipboard manager such as [CopyQ](https://copyq.readthedocs.io/en/stable/) so
-the original selection may remain available for recovery. Clipboard history is
-not guaranteed recovery and may retain sensitive text, so configure it to suit
-your privacy needs.
+![Example Microsoft Outlook application configuration](docs/configure-application.png)
+
+New and previously empty configurations start with a conservative pattern:
+Word and Notepad replace verified selections; Outlook and browsers copy results
+for manual placement; Outlook and Notepad prefer plain text; and Teams and
+Slack start with short, plain-text wording for a colleague or peer. Every value
+can be changed or returned to the overall default.
+
+Before replacement, PromptMeld returns to the original window and verifies
+that the same source text is still selected. If focus, selection, editability,
+or paste access changed, the original is left alone and the generated result is
+copied instead. PromptMeld preserves the original in memory and provides
+**Undo last replacement** and **Copy preserved original** in the tray menu.
+The preserved text is never written to disk and is forgotten when PromptMeld
+closes or another original replaces it.
+
+The automation progress window can be cancelled with its button or Escape.
+It keeps actionable failures visible, and Configuration provides
+privacy-filtered diagnostics and direct access to the local log folder.
 
 Use **Intent or additional context** in the launcher to supply a desired
 outcome, constraint, or point that is not already present in the selected
@@ -204,7 +218,8 @@ Choose **Configuration…** from the notification-area menu to add,
 organise, edit, duplicate, disable, or delete actions. The same window controls
 folder icons, natural-voice wording, primary language, guided drafting, and
 automatic submission, along with output length, formatting, and writing-block
-preferences.
+preferences. Application-specific writing and delivery profiles, plus local
+diagnostics, have their own **Applications** tab.
 
 PromptMeld keeps its editable configuration under:
 

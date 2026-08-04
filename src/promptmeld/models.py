@@ -84,6 +84,7 @@ class CapturedSelection:
     source_hwnd: int
     source_title: str
     source_is_editable: bool = False
+    source_app: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,7 +101,27 @@ class SubmissionResult:
     generated_text_copied: bool = False
     selection_replaced: bool = False
     output_failed: bool = False
+    cancelled: bool = False
     message: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationProfile:
+    """Writing and delivery defaults for one source executable."""
+
+    return_mode: str = "default"
+    recipient_audience: str = "inherit"
+    primary_language: str = ""
+    resulting_text_length: str = "inherit"
+    resulting_text_formatting: str = "inherit"
+    editing_strength: str = "inherit"
+    preserve_facts: str = "inherit"
+    natural_voice: str = "inherit"
+    guided_drafting: str = "inherit"
+    writing_block: str = "inherit"
+    auto_submit: str = "inherit"
+    temporary_chat: str = "inherit"
+    project_name: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +143,10 @@ class AppSettings:
     auto_submit_enabled: bool = False
     replace_selected_text_enabled: bool = False
     copy_generated_text_enabled: bool = False
+    application_return_policies: dict[str, str] = field(default_factory=dict)
+    application_profiles: dict[str, ApplicationProfile] = field(
+        default_factory=dict
+    )
     temporary_chat_enabled: bool = False
     primary_language: str = "English (UK)"
     guided_drafting_enabled: bool = False
@@ -129,4 +154,5 @@ class AppSettings:
     writing_block_enabled: bool = False
     resulting_text_formatting: str = "default"
     starter_action_version: int = 2
+    starter_application_policy_version: int = 0
     extra: dict[str, object] = field(default_factory=dict)

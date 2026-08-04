@@ -66,8 +66,8 @@ The **Defaults & style** tab controls:
 - Copying generated text to the clipboard after ChatGPT responds. This also
   requires automatic submission.
 - Replacing selected text automatically when the source selection was detected
-  in an editable control. This also requires automatic submission; selections
-  from non-editable fields continue to use the normal PromptMeld workflow.
+  in an editable control. This also requires automatic submission. PromptMeld
+  verifies the preserved selection again immediately before pasting.
 - Temporary Chat, which opens a top-level chat instead of using the writing
   action's configured Project. ChatGPT may show a one-time explanation;
   PromptMeld waits while you read and respond to it and does not activate
@@ -91,15 +91,49 @@ remembered. Less frequently changed length, formatting, and writing-block
 settings are grouped under the launcher's **Output options** menu and are
 remembered in the same way.
 
-Automatic replacement is destructive and opt-in. The generated response may be
-wrong or unsuitable, and the existing selection may be lost if the result is
-incorrect or the paste fails. With Temporary Chat enabled, the original text
-is not retained in ChatGPT and may not be recoverable. Consider enabling
-Windows Clipboard History (`Win+V`) or using a clipboard manager such as
-[CopyQ](https://copyq.readthedocs.io/en/stable/) before using replacement.
-Clipboard history may preserve the original selection because PromptMeld
-captures it through the clipboard, but clipboard tools can retain sensitive
-text and are not guaranteed recovery.
+Automatic replacement is opt-in and the generated response may still be wrong
+or unsuitable. PromptMeld preserves the original in memory and exposes
+**Undo last replacement** and **Copy preserved original** in the tray. If the
+source selection changed or replacement cannot be verified, PromptMeld copies
+the generated result and leaves the original alone.
+
+## Application-specific defaults
+
+The **Applications** tab gives each source executable an optional profile.
+Double-click a row, or select it and choose **Configure selected**, to open its
+dedicated configuration page. Common Microsoft Office applications, browsers,
+Teams, Notepad and Visual Studio Code are available from the picker; another
+executable name can be typed directly.
+
+An application profile can override:
+
+- Recipient or audience, including workplace, customer, support, public and
+  general-reader choices.
+- Primary language, result length and plain or formatted output.
+- Editing strength and whether facts and specifics must be preserved.
+- Natural voice, guided drafting and copyable writing blocks.
+- The base ChatGPT Project name, automatic submission and Temporary Chat.
+- Whether the generated result replaces the verified source selection, is
+  copied to the clipboard, or remains in ChatGPT.
+
+Every option can inherit its overall **Defaults & style** or launcher value, so
+a profile only needs to describe what is genuinely different. A replacement
+profile still safely falls back to copying when the source does not expose an
+editable control.
+
+New configurations include conservative starter profiles. Microsoft Word and
+Notepad replace a verified editable selection. Outlook, New Outlook, Chrome,
+Edge, Firefox, Teams and Slack copy the generated result instead. Outlook and
+Notepad use plain text, while Teams and Slack demonstrate short, plain-text
+wording for a colleague or peer. These profiles remain fully editable or
+removable. Existing configurations receive the starter set only when their
+earlier application settings are still untouched; user changes and deletions
+are preserved.
+
+The same tab can copy privacy-filtered diagnostics or open the local log
+folder. Diagnostics contain versions, operational result flags and the source
+executable name and safe feature-state flags, but not selected text, prompts,
+responses, writing actions, free-text settings or window titles.
 
 The launcher's **Intent or additional context** field is deliberately temporary
 and is cleared whenever a new selection is captured. It adds the desired
@@ -206,6 +240,18 @@ Home-screen, submission, language, and style settings are stored in
   "auto_submit_enabled": false,
   "replace_selected_text_enabled": false,
   "copy_generated_text_enabled": false,
+  "application_profiles": {
+    "winword.exe": {
+      "return_mode": "replace"
+    },
+    "outlook.exe": {
+      "return_mode": "copy",
+      "recipient_audience": "customer_client",
+      "resulting_text_formatting": "plain",
+      "natural_voice": "on",
+      "project_name": "Client correspondence"
+    }
+  },
   "natural_voice_enabled": false,
   "natural_voice_instruction": "Preserve the writer's individual voice...",
   "primary_language": "English (UK)",
@@ -227,6 +273,11 @@ Existing customised configurations receive the correspondence actions through
 an additive one-time migration. PromptMeld first creates
 `actions.pre-correspondence-v2-backup.json`; existing actions and edits are
 preserved, and actions deleted after migration are not added again.
+
+Existing configurations with no application profiles receive the recommended
+starter profiles through a separate one-time migration. The exact earlier
+starter policy set is enriched with the new writing defaults; customised or
+deleted profiles are left unchanged and are not restored on the next launch.
 
 When upgrading from Writing Launcher, PromptMeld copies
 `%LOCALAPPDATA%\WritingLauncher` to `%LOCALAPPDATA%\PromptMeld` on first run.

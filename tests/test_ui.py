@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+from promptmeld import settings_ui as settings_ui_module
 from promptmeld.actions import ActionRegistry
 from promptmeld.app import PromptMeld, make_tray_icon
 from promptmeld.automation_progress import AutomationProgressWindow
@@ -7,13 +10,20 @@ from promptmeld.config import load_actions, load_settings
 from promptmeld.icons import ActionIconProvider
 from promptmeld.models import (
     AppSettings,
+    ApplicationProfile,
+    CapturedSelection,
     DEFAULT_NATURAL_VOICE_INSTRUCTION,
     SubmissionResult,
     WritingAction,
 )
 from promptmeld.paths import AppPaths
+from promptmeld.returning import (
+    ReturnDecision,
+    resolve_application_profile,
+)
 from promptmeld.settings_ui import (
     ActionSettingsDialog,
+    ApplicationProfileDialog,
     BranchArrowStyle,
     HotkeyCaptureEdit,
     NoWheelComboBox,
@@ -98,6 +108,20 @@ def test_automation_progress_identifies_temporary_chat(qtbot):
     window.begin("PromptMeld", temporary_chat=True)
 
     assert window.project.text() == "Temporary Chat (outside Projects)"
+
+
+def test_automation_progress_is_keyboard_accessible_and_cancellable(qtbot):
+    window = AutomationProgressWindow("light")
+    qtbot.addWidget(window)
+    cancelled = QSignalSpy(window.cancel_requested)
+
+    window.begin("PromptMeld")
+    qtbot.keyClick(window, Qt.Key.Key_Escape)
+
+    assert cancelled.count() == 1
+    assert window.title.text() == "Cancelling"
+    assert window.cancel_button.isEnabled() is False
+    assert window.accessibleName() == "PromptMeld automation progress"
 
 
 def test_promptmeld_tagline_is_shown_in_launcher_and_configuration(
@@ -199,11 +223,34 @@ def test_launcher_has_top_right_close_button(qtbot, tmp_path):
 
     assert popup.close_button.text() == "×"
     assert popup.close_button.accessibleName() == "Close launcher"
+    assert popup.close_button.focusPolicy() == Qt.FocusPolicy.StrongFocus
     assert popup.close_button.geometry().center().x() > popup.width() // 2
 
     qtbot.mouseClick(popup.close_button, Qt.MouseButton.LeftButton)
 
     assert popup.isVisible() is False
+
+
+def test_launcher_exposes_keyboard_search_and_accessible_action_list(
+    qtbot,
+    tmp_path,
+):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        )
+    )
+    qtbot.addWidget(popup)
+    popup.show()
+    popup.list.setFocus()
+    popup.search.setText("edit")
+
+    popup.focus_search_shortcut.activated.emit()
+
+    assert popup.search.selectedText() == "edit"
+    assert popup.search.accessibleName() == "Search writing actions"
+    assert popup.list.accessibleName() == "Writing actions"
 
 
 def test_popup_filters_actions(qtbot, tmp_path):
@@ -284,9 +331,79 @@ def test_popup_exposes_paste_result_back_for_editable_sources(
 
     popup.set_source_is_editable(False)
     assert popup.replace_selected_text.isEnabled() is False
+
+
+def test_launcher_shows_application_result_policy(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        ),
+        auto_submit_enabled=True,
+    )
+    qtbot.addWidget(popup)
+
+    popup.set_source_context(
+        "chrome.exe",
+        ReturnDecision(
+            copy_result=True,
+            requested_mode="copy",
+            application="chrome.exe",
+            overridden=True,
+        ),
+    )
+
+    assert "Copy the result for Google Chrome" in popup.source_context.text()
+    assert popup.replace_selected_text.isEnabled() is False
+    assert "application policy" in popup.replace_selected_text.text()
     popup.set_source_is_editable(True)
     popup.set_auto_submit_enabled(False)
     assert popup.replace_selected_text.isEnabled() is False
+
+
+def test_launcher_applies_application_guidance_defaults(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        ),
+    )
+    qtbot.addWidget(popup)
+    settings = AppSettings(
+        application_profiles={
+            "outlook.exe": ApplicationProfile(
+                recipient_audience="customer_client",
+                editing_strength="improve",
+                preserve_facts="off",
+                natural_voice="on",
+                auto_submit="on",
+                resulting_text_length="short",
+            )
+        }
+    )
+    selection = CapturedSelection(
+        "Text",
+        123,
+        "Message",
+        True,
+        "outlook.exe",
+    )
+    effective = resolve_application_profile(settings, selection)
+
+    popup.set_source_context(
+        "outlook.exe",
+        ReturnDecision(application="outlook.exe"),
+        effective,
+    )
+    popup.show_at_cursor()
+
+    assert popup.recipient_audience_value == "customer_client"
+    assert popup.editing_strength_value == "improve"
+    assert popup.preserve_facts_enabled is False
+    assert popup.natural_voice.isChecked() is True
+    assert popup.natural_voice.isEnabled() is False
+    assert popup.auto_submit.isChecked() is True
+    assert popup.output_button.isEnabled() is False
 
 
 def test_launcher_paste_result_back_toggle_is_saved(qtbot, tmp_path):
@@ -1046,7 +1163,13 @@ def test_general_preferences_are_separate_from_writing_defaults(
     assert [
         dialog.tabs.tabText(index)
         for index in range(dialog.tabs.count())
-    ] == ["General", "Writing actions", "Hotkeys", "Defaults & style"]
+    ] == [
+        "General",
+        "Applications",
+        "Writing actions",
+        "Hotkeys",
+        "Defaults & style",
+    ]
     general_page = dialog.tabs.widget(0)
     defaults_page = dialog.tabs.widget(3)
     for control in (
@@ -1566,7 +1689,13 @@ def test_hotkeys_tab_saves_a_recorded_launcher_shortcut(qtbot, tmp_path):
     )
     qtbot.addWidget(dialog)
     dialog.show()
-    dialog.tabs.setCurrentIndex(2)
+    dialog.tabs.setCurrentIndex(
+        next(
+            index
+            for index in range(dialog.tabs.count())
+            if dialog.tabs.tabText(index) == "Hotkeys"
+        )
+    )
 
     launcher = dialog.hotkey_editors["__popup__"]
     assert dialog.launcher_hotkey_editor is launcher
@@ -1615,3 +1744,140 @@ def test_action_settings_can_load_shipped_starter_set(
 
     assert len(dialog.actions) == 26
     assert dialog.actions[0].id == "edit-improve"
+
+
+def test_application_result_policy_is_accessible_and_saved(qtbot, tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    settings = AppSettings(auto_submit_enabled=True)
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        paths,
+        ActionIconProvider(tmp_path),
+        settings.popup_hotkey,
+        settings,
+    )
+    qtbot.addWidget(dialog)
+    chrome_index = dialog.application_picker.findData("chrome.exe")
+    dialog.application_picker.setCurrentIndex(chrome_index)
+
+    qtbot.mouseClick(
+        dialog.add_application_policy_button,
+        Qt.MouseButton.LeftButton,
+    )
+
+    assert dialog.application_policy_table.rowCount() == 1
+    assert dialog.application_policy_table.accessibleName() == (
+        "Application profiles"
+    )
+    profile = dialog._application_profiles()["chrome.exe"]
+    assert profile.return_mode == "copy"
+    dialog._application_profile_values["chrome.exe"] = replace(
+        profile,
+        return_mode="replace",
+        recipient_audience="public_online",
+    )
+    assert dialog._save() is True
+    saved = load_settings(paths.settings_file)
+    assert saved.application_return_policies == {
+        "chrome.exe": "replace"
+    }
+    assert saved.application_profiles[
+        "chrome.exe"
+    ].recipient_audience == "public_online"
+
+
+def test_application_profile_dialog_edits_useful_writing_defaults(
+    qtbot,
+):
+    editor = ApplicationProfileDialog(
+        "outlook.exe",
+        ApplicationProfile(return_mode="copy"),
+        AppSettings(primary_language="English (UK)"),
+    )
+    qtbot.addWidget(editor)
+    editor.audience.setCurrentIndex(
+        editor.audience.findData("customer_client")
+    )
+    editor.length.setCurrentIndex(editor.length.findData("short"))
+    editor.auto_submit.setCurrentIndex(editor.auto_submit.findData("on"))
+    editor.project_name.setText("Email writing")
+
+    profile = editor.profile()
+
+    assert profile.recipient_audience == "customer_client"
+    assert profile.resulting_text_length == "short"
+    assert profile.auto_submit == "on"
+    assert profile.project_name == "Email writing"
+
+
+def test_double_clicking_application_opens_its_profile_editor(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+        AppSettings(
+            application_profiles={
+                "outlook.exe": ApplicationProfile(return_mode="copy")
+            }
+        ),
+    )
+    qtbot.addWidget(dialog)
+
+    class FakeProfileDialog:
+        def __init__(self, application, profile, overall, parent):
+            assert application == "outlook.exe"
+            self._profile = replace(
+                profile,
+                recipient_audience="colleague_peer",
+            )
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def profile(self):
+            return self._profile
+
+    monkeypatch.setattr(
+        settings_ui_module,
+        "ApplicationProfileDialog",
+        FakeProfileDialog,
+    )
+
+    dialog.application_policy_table.cellDoubleClicked.emit(0, 0)
+
+    assert dialog._application_profiles()[
+        "outlook.exe"
+    ].recipient_audience == "colleague_peer"
+
+
+def test_configuration_exposes_privacy_filtered_diagnostics_actions(
+    qtbot,
+    tmp_path,
+):
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+    copy_requested = QSignalSpy(dialog.diagnostics_copy_requested)
+    open_requested = QSignalSpy(dialog.diagnostics_open_requested)
+
+    qtbot.mouseClick(
+        dialog.copy_diagnostics_button,
+        Qt.MouseButton.LeftButton,
+    )
+    qtbot.mouseClick(
+        dialog.open_log_folder_button,
+        Qt.MouseButton.LeftButton,
+    )
+
+    assert copy_requested.count() == 1
+    assert open_requested.count() == 1

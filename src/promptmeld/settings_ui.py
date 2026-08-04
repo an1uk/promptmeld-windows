@@ -59,13 +59,23 @@ from .branding import APP_NAME, REPOSITORY_URL, TAGLINE
 from .icons import ActionIconProvider
 from .models import (
     DEFAULT_NATURAL_VOICE_INSTRUCTION,
+    EDITING_STRENGTH_OPTIONS,
     PRIMARY_LANGUAGE_OPTIONS,
+    RECIPIENT_AUDIENCE_OPTIONS,
     RESULTING_TEXT_FORMATTING_OPTIONS,
     RESULTING_TEXT_LENGTH_OPTIONS,
     AppSettings,
+    ApplicationProfile,
     WritingAction,
 )
 from .paths import AppPaths
+from .returning import (
+    APPLICATION_RETURN_MODE_OPTIONS,
+    APPLICATION_TOGGLE_OPTIONS,
+    COMMON_APPLICATIONS,
+    application_display_name,
+    normalize_application_name,
+)
 from .theme import resolve_theme
 from .windows import HotkeyParseError, parse_hotkey
 
@@ -85,6 +95,196 @@ class NoWheelSpinBox(QSpinBox):
 
     def wheelEvent(self, event) -> None:
         event.ignore()
+
+
+class ApplicationProfileDialog(QDialog):
+    """Dedicated editor for one application's writing and delivery defaults."""
+
+    def __init__(
+        self,
+        application: str,
+        profile: ApplicationProfile,
+        overall: AppSettings,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.application = application
+        label = application_display_name(application)
+        self.setWindowTitle(f"Configure {label}")
+        self.setAccessibleName(f"Application configuration for {label}")
+        self.setModal(True)
+        self.resize(650, 690)
+        if parent is not None:
+            self.setStyleSheet(parent.styleSheet())
+
+        root = QVBoxLayout(self)
+        heading = QLabel(f"{label} ({application})")
+        heading.setObjectName("settingsTitle")
+        root.addWidget(heading)
+        explanation = QLabel(
+            "Choose only the defaults that should differ for this application. "
+            "Inherited options continue to follow Defaults & style. Launcher "
+            "guidance can still be changed for an individual request."
+        )
+        explanation.setObjectName("muted")
+        explanation.setWordWrap(True)
+        root.addWidget(explanation)
+
+        writing_group = QGroupBox("Writing defaults")
+        writing_form = QFormLayout(writing_group)
+        self.audience = self._combo(
+            (("inherit", "Use launcher default"), *RECIPIENT_AUDIENCE_OPTIONS),
+            profile.recipient_audience,
+            "Default recipient or audience",
+        )
+        self.primary_language = QLineEdit(profile.primary_language)
+        self.primary_language.setPlaceholderText(
+            f"Use overall default ({overall.primary_language})"
+        )
+        self.primary_language.setAccessibleName("Default language")
+        self.length = self._combo(
+            (("inherit", "Use overall default"), *RESULTING_TEXT_LENGTH_OPTIONS),
+            profile.resulting_text_length,
+            "Default resulting text length",
+        )
+        self.formatting = self._combo(
+            (
+                ("inherit", "Use overall default"),
+                *RESULTING_TEXT_FORMATTING_OPTIONS,
+            ),
+            profile.resulting_text_formatting,
+            "Default resulting text formatting",
+        )
+        self.editing_strength = self._combo(
+            (("inherit", "Use launcher default"), *EDITING_STRENGTH_OPTIONS),
+            profile.editing_strength,
+            "Default editing strength",
+        )
+        self.preserve_facts = self._combo(
+            APPLICATION_TOGGLE_OPTIONS,
+            profile.preserve_facts,
+            "Preserve facts and specifics",
+        )
+        self.natural_voice = self._combo(
+            APPLICATION_TOGGLE_OPTIONS,
+            profile.natural_voice,
+            "Preserve natural voice",
+        )
+        self.guided_drafting = self._combo(
+            APPLICATION_TOGGLE_OPTIONS,
+            profile.guided_drafting,
+            "Guided drafting questions",
+        )
+        self.writing_block = self._combo(
+            APPLICATION_TOGGLE_OPTIONS,
+            profile.writing_block,
+            "Copyable writing block",
+        )
+        self._add_row(writing_form, "Recipient or audience", self.audience)
+        self._add_row(writing_form, "Language", self.primary_language)
+        self._add_row(writing_form, "Result length", self.length)
+        self._add_row(writing_form, "Formatting", self.formatting)
+        self._add_row(writing_form, "Editing strength", self.editing_strength)
+        self._add_row(writing_form, "Preserve facts", self.preserve_facts)
+        self._add_row(writing_form, "Natural voice", self.natural_voice)
+        self._add_row(writing_form, "Guided questions", self.guided_drafting)
+        self._add_row(writing_form, "Writing block", self.writing_block)
+        root.addWidget(writing_group)
+
+        delivery_group = QGroupBox("ChatGPT and result handling")
+        delivery_form = QFormLayout(delivery_group)
+        self.project_name = QLineEdit(profile.project_name)
+        self.project_name.setPlaceholderText(
+            f"Use action project ({overall.project_name})"
+        )
+        self.project_name.setAccessibleName("ChatGPT project base name")
+        self.auto_submit = self._combo(
+            APPLICATION_TOGGLE_OPTIONS,
+            profile.auto_submit,
+            "Automatic submission",
+        )
+        self.temporary_chat = self._combo(
+            APPLICATION_TOGGLE_OPTIONS,
+            profile.temporary_chat,
+            "Temporary Chat",
+        )
+        self.return_mode = self._combo(
+            APPLICATION_RETURN_MODE_OPTIONS,
+            profile.return_mode,
+            "Generated result handling",
+        )
+        self._add_row(delivery_form, "Project base name", self.project_name)
+        self._add_row(delivery_form, "Submit automatically", self.auto_submit)
+        self._add_row(delivery_form, "Temporary Chat", self.temporary_chat)
+        self._add_row(delivery_form, "Generated result", self.return_mode)
+        root.addWidget(delivery_group)
+
+        note = QLabel(
+            "Replacing or copying a generated result requires automatic "
+            "submission. Unsafe replacement still falls back to copying."
+        )
+        note.setObjectName("muted")
+        note.setWordWrap(True)
+        root.addWidget(note)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    @staticmethod
+    def _combo(options, selected: str, accessible_name: str) -> NoWheelComboBox:
+        combo = NoWheelComboBox()
+        for value, label in options:
+            combo.addItem(label, value)
+        combo.setCurrentIndex(max(0, combo.findData(selected)))
+        combo.setAccessibleName(accessible_name)
+        return combo
+
+    @staticmethod
+    def _add_row(form: QFormLayout, text: str, field: QWidget) -> None:
+        label = QLabel(text)
+        label.setObjectName("formLabel")
+        label.setBuddy(field)
+        form.addRow(label, field)
+
+    def profile(self) -> ApplicationProfile:
+        return ApplicationProfile(
+            return_mode=str(self.return_mode.currentData() or "default"),
+            recipient_audience=str(
+                self.audience.currentData() or "inherit"
+            ),
+            primary_language=self.primary_language.text().strip(),
+            resulting_text_length=str(
+                self.length.currentData() or "inherit"
+            ),
+            resulting_text_formatting=str(
+                self.formatting.currentData() or "inherit"
+            ),
+            editing_strength=str(
+                self.editing_strength.currentData() or "inherit"
+            ),
+            preserve_facts=str(
+                self.preserve_facts.currentData() or "inherit"
+            ),
+            natural_voice=str(
+                self.natural_voice.currentData() or "inherit"
+            ),
+            guided_drafting=str(
+                self.guided_drafting.currentData() or "inherit"
+            ),
+            writing_block=str(
+                self.writing_block.currentData() or "inherit"
+            ),
+            auto_submit=str(self.auto_submit.currentData() or "inherit"),
+            temporary_chat=str(
+                self.temporary_chat.currentData() or "inherit"
+            ),
+            project_name=self.project_name.text().strip(),
+        )
 
 
 class BranchArrowStyle(QProxyStyle):
@@ -246,6 +446,8 @@ class ActionSettingsDialog(QDialog):
     update_check_requested = Signal()
     update_install_requested = Signal()
     update_release_requested = Signal()
+    diagnostics_copy_requested = Signal()
+    diagnostics_open_requested = Signal()
     ITEM_KIND_ROLE = Qt.ItemDataRole.UserRole + 1
 
     def __init__(
@@ -297,6 +499,7 @@ class ActionSettingsDialog(QDialog):
         root.addWidget(description)
 
         voice_settings = settings or AppSettings()
+        self.application_profile_overall_settings = voice_settings
         appearance_group = QGroupBox("Appearance")
         appearance_layout = QHBoxLayout(appearance_group)
         appearance_label = QLabel("Colour theme")
@@ -915,6 +1118,143 @@ class ActionSettingsDialog(QDialog):
         general_layout.addWidget(updates_group)
         general_layout.addWidget(about_group)
         general_layout.addStretch(1)
+
+        applications_page = QWidget()
+        applications_page.setObjectName("settingsPage")
+        applications_layout = QVBoxLayout(applications_page)
+        applications_layout.setContentsMargins(22, 18, 22, 18)
+        applications_layout.setSpacing(14)
+        applications_intro = QLabel(
+            "Give individual Windows applications writing and delivery "
+            "defaults that differ from Defaults & style. Starter profiles "
+            "demonstrate safer result handling and useful plain-text or "
+            "concise output for common editors, mail and messaging apps."
+        )
+        applications_intro.setObjectName("muted")
+        applications_intro.setWordWrap(True)
+        applications_layout.addWidget(applications_intro)
+
+        policies_group = QGroupBox("Application-specific defaults")
+        policies_layout = QVBoxLayout(policies_group)
+        policy_add_row = QHBoxLayout()
+        self.application_picker = NoWheelComboBox()
+        self.application_picker.setEditable(True)
+        self.application_picker.setInsertPolicy(
+            QComboBox.InsertPolicy.NoInsert
+        )
+        self.application_picker.lineEdit().setPlaceholderText(
+            "Choose an application or type its executable, for example slack.exe"
+        )
+        self.application_picker.setAccessibleName(
+            "Application executable for profile"
+        )
+        for label, executable in COMMON_APPLICATIONS:
+            self.application_picker.addItem(
+                f"{label} ({executable})",
+                executable,
+            )
+        self.add_application_policy_button = QPushButton("Add application")
+        self.add_application_policy_button.setAccessibleName(
+            "Add application result policy"
+        )
+        policy_add_row.addWidget(self.application_picker, 1)
+        policy_add_row.addWidget(self.add_application_policy_button)
+        policies_layout.addLayout(policy_add_row)
+
+        self.application_policy_table = QTableWidget()
+        self.application_policy_table.setColumnCount(2)
+        self.application_policy_table.setHorizontalHeaderLabels(
+            ("Application", "Configured defaults")
+        )
+        self.application_policy_table.setAccessibleName(
+            "Application profiles"
+        )
+        self.application_policy_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.application_policy_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.application_policy_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.application_policy_table.verticalHeader().hide()
+        policy_header = self.application_policy_table.horizontalHeader()
+        policy_header.setSectionResizeMode(
+            0,
+            QHeaderView.ResizeMode.ResizeToContents,
+        )
+        policy_header.setSectionResizeMode(
+            1,
+            QHeaderView.ResizeMode.Stretch,
+        )
+        self.application_policy_table.setMinimumHeight(250)
+        policies_layout.addWidget(self.application_policy_table, 1)
+        policy_footer = QHBoxLayout()
+        policy_note = QLabel(
+            "Double-click an application to configure its audience, language, "
+            "writing, ChatGPT and result-handling defaults."
+        )
+        policy_note.setObjectName("muted")
+        policy_note.setWordWrap(True)
+        self.remove_application_policy_button = QPushButton(
+            "Remove selected profile"
+        )
+        self.remove_application_policy_button.setAccessibleName(
+            "Remove selected application profile"
+        )
+        self.configure_application_policy_button = QPushButton(
+            "Configure selected"
+        )
+        self.configure_application_policy_button.setAccessibleName(
+            "Configure selected application"
+        )
+        policy_footer.addWidget(policy_note, 1)
+        policy_footer.addWidget(self.configure_application_policy_button)
+        policy_footer.addWidget(self.remove_application_policy_button)
+        policies_layout.addLayout(policy_footer)
+        applications_layout.addWidget(policies_group, 1)
+
+        diagnostics_group = QGroupBox("Diagnostics and recovery")
+        diagnostics_layout = QVBoxLayout(diagnostics_group)
+        diagnostics_note = QLabel(
+            "Copy privacy-filtered technical information for troubleshooting, "
+            "or open the local folder containing PromptMeld's rotating log. "
+            "Selected text, prompts and responses are excluded."
+        )
+        diagnostics_note.setObjectName("muted")
+        diagnostics_note.setWordWrap(True)
+        diagnostics_buttons = QHBoxLayout()
+        self.copy_diagnostics_button = QPushButton("Copy diagnostics")
+        self.open_log_folder_button = QPushButton("Open log folder")
+        self.copy_diagnostics_button.clicked.connect(
+            self.diagnostics_copy_requested.emit
+        )
+        self.open_log_folder_button.clicked.connect(
+            self.diagnostics_open_requested.emit
+        )
+        diagnostics_buttons.addWidget(self.copy_diagnostics_button)
+        diagnostics_buttons.addWidget(self.open_log_folder_button)
+        diagnostics_buttons.addStretch(1)
+        diagnostics_layout.addWidget(diagnostics_note)
+        diagnostics_layout.addLayout(diagnostics_buttons)
+        applications_layout.addWidget(diagnostics_group)
+
+        self._load_application_profiles(
+            voice_settings.application_profiles
+        )
+        self.add_application_policy_button.clicked.connect(
+            self._add_application_policy
+        )
+        self.remove_application_policy_button.clicked.connect(
+            self._remove_application_policy
+        )
+        self.configure_application_policy_button.clicked.connect(
+            self._edit_selected_application_profile
+        )
+        self.application_policy_table.cellDoubleClicked.connect(
+            lambda row, _column: self._edit_application_profile(row)
+        )
         defaults_page = QWidget()
         defaults_page.setObjectName("settingsPage")
         defaults_layout = QVBoxLayout(defaults_page)
@@ -926,6 +1266,7 @@ class ActionSettingsDialog(QDialog):
         defaults_layout.addWidget(guided_group)
         defaults_layout.addStretch(1)
         self.tabs.addTab(general_page, "General")
+        self.tabs.addTab(applications_page, "Applications")
         self.tabs.addTab(actions_page, "Writing actions")
         self.tabs.addTab(hotkeys_page, "Hotkeys")
         self.tabs.addTab(defaults_page, "Defaults & style")
@@ -1469,6 +1810,160 @@ class ActionSettingsDialog(QDialog):
             self.close_button.setText("Close")
             self.close_button.setToolTip("Close configuration.")
 
+    def _load_application_profiles(
+        self,
+        profiles: dict[str, ApplicationProfile],
+    ) -> None:
+        self._application_profile_values = dict(profiles)
+        self.application_policy_table.setRowCount(0)
+        for application, profile in sorted(profiles.items()):
+            self._append_application_profile(application, profile)
+
+    def _append_application_profile(
+        self,
+        application: str,
+        profile: ApplicationProfile,
+    ) -> None:
+        application = normalize_application_name(application)
+        if not application:
+            return
+        self._application_profile_values[application] = profile
+        row = self.application_policy_table.rowCount()
+        self.application_policy_table.insertRow(row)
+        label = application_display_name(application)
+        item = QTableWidgetItem(
+            f"{label} ({application})" if label != application else application
+        )
+        item.setData(Qt.ItemDataRole.UserRole, application)
+        self.application_policy_table.setItem(row, 0, item)
+        summary = QTableWidgetItem(self._application_profile_summary(profile))
+        summary.setData(Qt.ItemDataRole.UserRole, application)
+        self.application_policy_table.setItem(row, 1, summary)
+
+    @staticmethod
+    def _application_profile_summary(profile: ApplicationProfile) -> str:
+        result_labels = dict(APPLICATION_RETURN_MODE_OPTIONS)
+        parts = []
+        if profile.return_mode != "default":
+            parts.append(result_labels[profile.return_mode])
+        if profile.recipient_audience != "inherit":
+            audience_labels = dict(RECIPIENT_AUDIENCE_OPTIONS)
+            parts.append(
+                "Audience: "
+                + audience_labels.get(
+                    profile.recipient_audience,
+                    profile.recipient_audience,
+                )
+            )
+        additional = sum(
+            value not in {"", "default", "inherit"}
+            for value in (
+                profile.primary_language,
+                profile.resulting_text_length,
+                profile.resulting_text_formatting,
+                profile.editing_strength,
+                profile.preserve_facts,
+                profile.natural_voice,
+                profile.guided_drafting,
+                profile.writing_block,
+                profile.auto_submit,
+                profile.temporary_chat,
+                profile.project_name,
+            )
+        )
+        if additional:
+            parts.append(
+                f"{additional} additional default"
+                + ("s" if additional != 1 else "")
+            )
+        return " \u00b7 ".join(parts) if parts else "Uses overall defaults"
+
+    def _application_profiles(self) -> dict[str, ApplicationProfile]:
+        return dict(self._application_profile_values)
+
+    def _application_policies(self) -> dict[str, str]:
+        return {
+            application: profile.return_mode
+            for application, profile in self._application_profiles().items()
+            if profile.return_mode != "default"
+        }
+
+    def _add_application_policy(self) -> None:
+        selected_data = self.application_picker.currentData()
+        typed = self.application_picker.currentText().strip()
+        application = normalize_application_name(
+            str(selected_data) if selected_data else typed
+        )
+        if not re.fullmatch(r"[a-z0-9_.-]+\.exe", application):
+            QMessageBox.warning(
+                self,
+                "Application executable required",
+                "Choose a common application or enter an executable filename "
+                "such as slack.exe.",
+            )
+            return
+        for row in range(self.application_policy_table.rowCount()):
+            item = self.application_policy_table.item(row, 0)
+            if item is not None and item.data(
+                Qt.ItemDataRole.UserRole
+            ) == application:
+                self.application_policy_table.selectRow(row)
+                self._edit_application_profile(row)
+                return
+        self._append_application_profile(
+            application,
+            ApplicationProfile(return_mode="copy"),
+        )
+        self.application_policy_table.selectRow(
+            self.application_policy_table.rowCount() - 1
+        )
+        self._mark_unsaved()
+
+    def _edit_selected_application_profile(self) -> None:
+        self._edit_application_profile(
+            self.application_policy_table.currentRow()
+        )
+
+    def _edit_application_profile(self, row: int) -> None:
+        if row < 0:
+            return
+        item = self.application_policy_table.item(row, 0)
+        if item is None:
+            return
+        application = normalize_application_name(
+            str(item.data(Qt.ItemDataRole.UserRole) or "")
+        )
+        profile = self._application_profile_values.get(application)
+        if not application or profile is None:
+            return
+        dialog = ApplicationProfileDialog(
+            application,
+            profile,
+            self.application_profile_overall_settings,
+            self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        updated = dialog.profile()
+        self._application_profile_values[application] = updated
+        summary = self.application_policy_table.item(row, 1)
+        if summary is not None:
+            summary.setText(self._application_profile_summary(updated))
+        self._mark_unsaved()
+
+    def _remove_application_policy(self) -> None:
+        row = self.application_policy_table.currentRow()
+        if row < 0:
+            return
+        item = self.application_policy_table.item(row, 0)
+        if item is not None:
+            application = normalize_application_name(
+                str(item.data(Qt.ItemDataRole.UserRole) or "")
+            )
+            self._application_profile_values.pop(application, None)
+        self.application_policy_table.removeRow(row)
+        self._mark_unsaved()
+
     def _configuration_state(self) -> tuple:
         self._commit_current()
         return (
@@ -1478,6 +1973,7 @@ class ActionSettingsDialog(QDialog):
             str(self.theme.currentData() or "auto"),
             self.start_with_windows.isChecked(),
             self.check_for_updates.isChecked(),
+            tuple(sorted(self._application_profiles().items())),
             self.most_used_count.value(),
             self.primary_language.currentText().strip(),
             str(self.resulting_text_length.currentData() or "default"),
@@ -1655,6 +2151,10 @@ class ActionSettingsDialog(QDialog):
                     check_for_updates_enabled=(
                         self.check_for_updates.isChecked()
                     ),
+                    application_return_policies=(
+                        self._application_policies()
+                    ),
+                    application_profiles=self._application_profiles(),
                     home_most_used_count=self.most_used_count.value(),
                     folder_icons=folder_icons,
                     natural_voice_enabled=(
@@ -1693,6 +2193,7 @@ class ActionSettingsDialog(QDialog):
                     ),
                 )
                 save_settings(self.paths.settings_file, self.settings)
+                self.application_profile_overall_settings = self.settings
             save_actions(self.paths.actions_file, actions)
         except (ValueError, OSError) as exc:
             QMessageBox.warning(self, "Cannot save actions", str(exc))
@@ -2004,6 +2505,14 @@ class ActionSettingsDialog(QDialog):
                     gridline-color: #d8dee8;
                     border: 1px solid #cbd2dc;
                     border-radius: 8px;
+                }
+                QTableWidget::item {
+                    color: #202631;
+                    background: transparent;
+                }
+                QTableWidget::item:selected {
+                    color: #173a87;
+                    background: #dce7ff;
                 }
                 QTableWidget#hotkeyTable::item {
                     color: #000000;

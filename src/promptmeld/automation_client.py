@@ -18,6 +18,10 @@ LOGGER = logging.getLogger(__name__)
 HELPER_IDLE_SECONDS = 45.0
 
 
+class AutomationCancelled(RuntimeError):
+    pass
+
+
 def _helper_command() -> list[str]:
     return (
         [
@@ -73,6 +77,7 @@ class _AutomationHelperSession:
         payload: dict[str, object],
         timeout_seconds: float,
         progress_callback: Callable[[str, str], None] | None = None,
+        is_cancelled: Callable[[], bool] | None = None,
     ) -> dict[str, object]:
         if not self.alive or self.process.stdin is None:
             raise RuntimeError("Automation helper is not running.")
@@ -82,17 +87,17 @@ class _AutomationHelperSession:
         self.process.stdin.flush()
         deadline = time.monotonic() + timeout_seconds
         while True:
+            if is_cancelled is not None and is_cancelled():
+                raise AutomationCancelled("Automation cancelled by the user.")
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError(
                     "Automation helper did not respond before the timeout."
                 )
             try:
-                response = self.responses.get(timeout=remaining)
-            except queue.Empty as exc:
-                raise TimeoutError(
-                    "Automation helper did not respond before the timeout."
-                ) from exc
+                response = self.responses.get(timeout=min(0.1, remaining))
+            except queue.Empty:
+                continue
             if response is None:
                 raise RuntimeError("Automation helper stopped unexpectedly.")
             decoded = json.loads(response)
@@ -186,6 +191,7 @@ def _request_from_helper(
     payload: dict[str, object],
     timeout_seconds: float,
     progress_callback: Callable[[str, str], None] | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> dict[str, object]:
     global _helper_session
     with _helper_lock:
@@ -196,11 +202,19 @@ def _request_from_helper(
             LOGGER.info("Started warm ChatGPT automation helper")
         session = _helper_session
         try:
-            response = session.request(
-                payload,
-                timeout_seconds,
-                progress_callback,
-            )
+            if is_cancelled is None:
+                response = session.request(
+                    payload,
+                    timeout_seconds,
+                    progress_callback,
+                )
+            else:
+                response = session.request(
+                    payload,
+                    timeout_seconds,
+                    progress_callback,
+                    is_cancelled,
+                )
         except Exception:
             session.close()
             _helper_session = None
@@ -216,8 +230,23 @@ def submit_via_worker(
     *,
     source_hwnd: int | None = None,
     source_is_editable: bool = False,
+    source_text: str = "",
+    source_app: str = "",
+    replace_selected_text: bool | None = None,
+    copy_generated_text: bool | None = None,
     progress_callback: Callable[[str, str], None] | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> SubmissionResult:
+    effective_replace = (
+        settings.replace_selected_text_enabled
+        if replace_selected_text is None
+        else replace_selected_text
+    )
+    effective_copy = (
+        settings.copy_generated_text_enabled
+        if copy_generated_text is None
+        else copy_generated_text
+    )
     payload = {
         "prompt": prompt,
         "project_name": project_name,
@@ -228,17 +257,27 @@ def submit_via_worker(
         "temporary_chat": settings.temporary_chat_enabled,
         "source_hwnd": source_hwnd,
         "source_is_editable": source_is_editable,
-        "replace_selected_text": settings.replace_selected_text_enabled,
-        "copy_generated_text": settings.copy_generated_text_enabled,
+        "source_text": source_text,
+        "source_app": source_app,
+        "replace_selected_text": effective_replace,
+        "copy_generated_text": effective_copy,
     }
     try:
-        raw = _request_from_helper(
+        request_args = (
             payload,
             max(
                 75.0,
                 settings.automation_timeout_seconds + 12.0,
             ),
             progress_callback,
+        )
+        raw = (
+            _request_from_helper(*request_args)
+            if is_cancelled is None
+            else _request_from_helper(
+                *request_args,
+                is_cancelled=is_cancelled,
+            )
         )
         for timing in raw.get("_timings", []):
             if not isinstance(timing, dict):
@@ -257,7 +296,19 @@ def submit_via_worker(
             ),
             selection_replaced=bool(raw.get("selection_replaced", False)),
             output_failed=bool(raw.get("output_failed", False)),
+            cancelled=bool(raw.get("cancelled", False)),
             message=str(raw.get("message", "")),
+        )
+    except AutomationCancelled:
+        LOGGER.info("ChatGPT automation was cancelled")
+        return SubmissionResult(
+            submitted=False,
+            cancelled=True,
+            message=(
+                "Automation stopped. ChatGPT may continue if the prompt was "
+                "already submitted. Check the original application before "
+                "trying again."
+            ),
         )
     except Exception:
         LOGGER.exception("ChatGPT automation helper failed")

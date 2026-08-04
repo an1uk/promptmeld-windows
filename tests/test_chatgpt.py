@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+import win32gui
+
 from promptmeld.chatgpt import (
     ChatGPTAutomationError,
     ChatGPTDesktop,
@@ -170,6 +173,120 @@ def test_submit_copies_generated_response_to_clipboard():
     assert result.generated_text_copied is True
     assert clipboard["text"] == "Generated answer"
     assert "The generated text is on the clipboard." in result.message
+
+
+def test_failed_replacement_copies_verified_generated_text(monkeypatch):
+    events: list[str] = []
+    clipboard = {"text": "selected source"}
+    controls = [
+        FakeControl("Switch mode, current mode: ChatGPT", "Button", events),
+        FakeControl("New chat", "Button", events, class_name="sidebar-item"),
+        FakeControl(
+            "Chat",
+            "Button",
+            events,
+            class_name="text-token-text-primary",
+        ),
+        FakeControl("WritingLauncher", "Button", events),
+        FakeControl("Change project: WritingLauncher", "Button", events),
+        FakeComposer(events),
+    ]
+    adapter = ChatGPTDesktop(
+        desktop_factory=lambda **kwargs: FakeDesktop(
+            FakeWindow(controls, events)
+        ),
+        clipboard_reader=lambda: clipboard["text"],
+        clipboard_writer=lambda text: clipboard.update(text=text),
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_copy_latest_response",
+        lambda window, prompt: "Generated answer",
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_replace_source_selection",
+        lambda hwnd, original, generated, source_app: (_ for _ in ()).throw(
+            ChatGPTAutomationError("source rejected paste")
+        ),
+    )
+
+    result = adapter.submit(
+        "complete prompt",
+        "WritingLauncher",
+        source_hwnd=123,
+        source_is_editable=True,
+        replace_selected_text=True,
+    )
+
+    assert result.output_failed is True
+    assert result.generated_text_copied is True
+    assert result.selection_replaced is False
+    assert clipboard["text"] == "Generated answer"
+    assert "copied" in result.message
+
+
+def test_replacement_reverifies_original_selection_before_paste(monkeypatch):
+    clipboard = {"text": "Generated answer"}
+    events = []
+
+    def send_keys(keys, **kwargs):
+        events.append(keys)
+        if keys == "^c":
+            clipboard["text"] = "Original text"
+
+    adapter = ChatGPTDesktop(
+        clipboard_reader=lambda: clipboard["text"],
+        clipboard_writer=lambda text: clipboard.update(text=text),
+        send_keys=send_keys,
+    )
+    monkeypatch.setattr(win32gui, "IsWindow", lambda hwnd: True)
+    monkeypatch.setattr(win32gui, "IsIconic", lambda hwnd: False)
+    monkeypatch.setattr(win32gui, "BringWindowToTop", lambda hwnd: None)
+    monkeypatch.setattr(win32gui, "SetForegroundWindow", lambda hwnd: None)
+    monkeypatch.setattr(win32gui, "GetForegroundWindow", lambda: 123)
+
+    adapter._replace_source_selection(
+        123,
+        "Original text",
+        "Generated answer",
+        "winword.exe",
+    )
+
+    assert events == ["^c", "^v"]
+    assert clipboard["text"] == "Generated answer"
+
+
+def test_replacement_refuses_to_paste_if_selection_changed(monkeypatch):
+    clipboard = {"text": "Generated answer"}
+    events = []
+
+    def send_keys(keys, **kwargs):
+        events.append(keys)
+        if keys == "^c":
+            clipboard["text"] = "Different selected text"
+
+    adapter = ChatGPTDesktop(
+        clipboard_reader=lambda: clipboard["text"],
+        clipboard_writer=lambda text: clipboard.update(text=text),
+        send_keys=send_keys,
+    )
+    monkeypatch.setattr(win32gui, "IsWindow", lambda hwnd: True)
+    monkeypatch.setattr(win32gui, "IsIconic", lambda hwnd: False)
+    monkeypatch.setattr(win32gui, "BringWindowToTop", lambda hwnd: None)
+    monkeypatch.setattr(win32gui, "SetForegroundWindow", lambda hwnd: None)
+    monkeypatch.setattr(win32gui, "GetForegroundWindow", lambda: 123)
+
+    with pytest.raises(ChatGPTAutomationError, match="selection changed"):
+        adapter._replace_source_selection(
+            123,
+            "Original text",
+            "Generated answer",
+            "chrome.exe",
+        )
+
+    assert events == ["^c"]
 
 
 def test_prepare_only_inserts_prompt_without_pressing_enter():

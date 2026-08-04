@@ -57,7 +57,7 @@ if an unreviewed dependency or binary appears.
 The installer is written to:
 
 ```text
-dist\installer\PromptMeld-Setup-v0.1.1.exe
+dist\installer\PromptMeld-Setup-v<major>.<minor>.<patch>.exe
 ```
 
 Building the installer requires
@@ -67,18 +67,28 @@ release version source. It is written to the packaged `VERSION` file, used in
 the installer filename, and embedded in the Windows version resource with a
 fourth numeric component of zero.
 
+Every new distributable build must have a newer version than the preceding
+build. Update `project.version` in `pyproject.toml` before building: increment
+the patch number for fixes, the minor number for compatible features, or the
+major number for incompatible changes. The installer build refuses to
+overwrite an installer with the same version by default. Use
+`-AllowSameVersion` only when deliberately reproducing an unchanged release,
+never for a build containing new code or documentation.
+
 ## Release checklist
 
-1. Run the complete test suite.
-2. Run the dependency licence audit.
-3. Build the application and installer from a clean source checkout.
-4. Smoke-test installation, launch, selected-text capture, fallback, and
+1. Increase `project.version` in `pyproject.toml` and confirm it is newer than
+   the latest published or previously built version.
+2. Run the complete test suite.
+3. Run the dependency licence audit.
+4. Build the application and installer from a clean source checkout.
+5. Smoke-test installation, launch, selected-text capture, fallback, and
    uninstallation.
-5. If signing is available, sign the application executables, installer, and
+6. If signing is available, sign the application executables, installer, and
    uninstaller and verify their Authenticode signatures.
-6. Confirm the installer is named exactly
+7. Confirm the installer is named exactly
    `PromptMeld-Setup-v<major>.<minor>.<patch>.exe`.
-7. Create a matching `v<major>.<minor>.<patch>` tag and a non-draft,
+8. Create a matching `v<major>.<minor>.<patch>` tag and a non-draft,
    non-prerelease GitHub release, then attach that single installer.
-8. Confirm GitHub reports a SHA-256 digest for the uploaded asset and that the
+9. Confirm GitHub reports a SHA-256 digest for the uploaded asset and that the
    release is returned by the repository's latest stable release endpoint.

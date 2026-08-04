@@ -15,6 +15,11 @@ def test_selection_capture_retries_copy_when_first_attempt_is_missed(
     monkeypatch.setattr(windows.win32gui, "GetWindowText", lambda hwnd: "Editor")
     monkeypatch.setattr(windows.win32gui, "GetClassName", lambda hwnd: "Edit")
     capture = SelectionCapture(timeout_ms=200)
+    monkeypatch.setattr(
+        capture,
+        "_source_executable",
+        lambda hwnd: "winword.exe",
+    )
     monkeypatch.setattr(capture, "_empty_clipboard", lambda: None)
     monkeypatch.setattr(capture, "_send_copy", send_copy)
     monkeypatch.setattr(
@@ -29,3 +34,17 @@ def test_selection_capture_retries_copy_when_first_attempt_is_missed(
     assert selection.text == "Selected text"
     assert selection.source_hwnd == 123
     assert selection.source_is_editable is True
+    assert selection.source_app == "winword.exe"
+
+
+def test_word_editor_window_class_is_treated_as_editable():
+    assert SelectionCapture._looks_like_editable_class("_WwG") is True
+
+
+def test_generic_browser_document_class_is_not_assumed_editable():
+    assert (
+        SelectionCapture._looks_like_editable_class(
+            "Chrome_RenderWidgetHostHWND"
+        )
+        is False
+    )
