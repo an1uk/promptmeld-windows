@@ -107,6 +107,15 @@ Visual Studio Code are available from the picker; another executable name can
 be typed directly. A replacement policy safely falls back to copying when the
 source does not expose an editable control.
 
+New configurations include conservative starter policies. Microsoft Word and
+Notepad replace a verified editable selection; Outlook, New Outlook, Chrome,
+Edge, Firefox, Teams and Slack copy the generated result instead. These rows
+both demonstrate the feature and provide useful starting behaviour. They take
+effect only when automatic submission is enabled and remain fully editable or
+removable. Existing configurations with an empty policy list receive them once;
+existing custom policies are preserved, and policies removed afterwards are
+not restored automatically.
+
 The same tab can copy privacy-filtered diagnostics or open the local log
 folder. Diagnostics contain versions, operational result flags and the source
 executable name and safe feature-state flags, but not selected text, prompts,
@@ -242,6 +251,11 @@ Existing customised configurations receive the correspondence actions through
 an additive one-time migration. PromptMeld first creates
 `actions.pre-correspondence-v2-backup.json`; existing actions and edits are
 preserved, and actions deleted after migration are not added again.
+
+Existing configurations with no application policies receive the recommended
+application starter policies through a separate one-time migration. Any
+existing policies are left unchanged, and deleting all starter policies does
+not cause them to return on the next launch.
 
 When upgrading from Writing Launcher, PromptMeld copies
 `%LOCALAPPDATA%\WritingLauncher` to `%LOCALAPPDATA%\PromptMeld` on first run.

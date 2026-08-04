@@ -15,7 +15,17 @@
   "auto_submit_enabled": false,
   "replace_selected_text_enabled": false,
   "copy_generated_text_enabled": false,
-  "application_return_policies": {},
+  "application_return_policies": {
+    "chrome.exe": "copy",
+    "firefox.exe": "copy",
+    "ms-teams.exe": "copy",
+    "msedge.exe": "copy",
+    "notepad.exe": "replace",
+    "olk.exe": "copy",
+    "outlook.exe": "copy",
+    "slack.exe": "copy",
+    "winword.exe": "replace"
+  },
   "temporary_chat_enabled": false,
   "primary_language": "English (UK)",
   "guided_drafting_enabled": false,
@@ -23,6 +33,7 @@
   "writing_block_enabled": false,
   "resulting_text_formatting": "default",
   "starter_action_version": 2,
+  "starter_application_policy_version": 1,
   "folder_icons": {
     "Editing": "lucide:pencil",
     "Editing/Reviews": "lucide:heart",

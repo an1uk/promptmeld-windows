@@ -18,6 +18,7 @@ from .models import (
 )
 from .returning import (
     APPLICATION_RETURN_MODE_VALUES,
+    RECOMMENDED_APPLICATION_RETURN_POLICIES,
     normalize_application_name,
 )
 from .paths import AppPaths
@@ -67,6 +68,7 @@ DEFAULT_FOLDER_ICONS = {
 }
 
 CURRENT_STARTER_ACTION_VERSION = 2
+CURRENT_STARTER_APPLICATION_POLICY_VERSION = 1
 LEGACY_PROJECT_NAMES = {
     "Writing Launcher",
     "WritingAssistant",
@@ -114,6 +116,32 @@ def ensure_user_configuration(paths: AppPaths) -> None:
         force=settings_existed is False and actions_existed,
     )
     _migrate_launcher_defaults(paths)
+    _migrate_application_return_policies(paths)
+
+
+def _migrate_application_return_policies(paths: AppPaths) -> None:
+    """Install safe starter policies once without replacing user choices."""
+
+    settings = load_settings(paths.settings_file)
+    if (
+        settings.starter_application_policy_version
+        >= CURRENT_STARTER_APPLICATION_POLICY_VERSION
+    ):
+        return
+
+    policies = dict(settings.application_return_policies)
+    if not policies:
+        policies.update(RECOMMENDED_APPLICATION_RETURN_POLICIES)
+    save_settings(
+        paths.settings_file,
+        replace(
+            settings,
+            application_return_policies=policies,
+            starter_application_policy_version=(
+                CURRENT_STARTER_APPLICATION_POLICY_VERSION
+            ),
+        ),
+    )
 
 
 def _migrate_launcher_defaults(paths: AppPaths) -> None:
@@ -493,6 +521,18 @@ def load_settings(path: Path) -> AppSettings:
         raise ConfigurationError(
             "starter_action_version must be at least 1."
         )
+    try:
+        starter_application_policy_version = int(
+            raw.get("starter_application_policy_version", 0)
+        )
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(
+            "starter_application_policy_version must be a whole number."
+        ) from exc
+    if starter_application_policy_version < 0:
+        raise ConfigurationError(
+            "starter_application_policy_version cannot be negative."
+        )
 
     known = {
         "project_name",
@@ -520,6 +560,7 @@ def load_settings(path: Path) -> AppSettings:
         "writing_block_enabled",
         "resulting_text_formatting",
         "starter_action_version",
+        "starter_application_policy_version",
     }
     return AppSettings(
         project_name=project_name,
@@ -551,6 +592,9 @@ def load_settings(path: Path) -> AppSettings:
         writing_block_enabled=writing_block_enabled,
         resulting_text_formatting=resulting_text_formatting,
         starter_action_version=starter_action_version,
+        starter_application_policy_version=(
+            starter_application_policy_version
+        ),
         extra={key: value for key, value in raw.items() if key not in known},
     )
 
@@ -585,6 +629,9 @@ def settings_to_dict(settings: AppSettings) -> dict[str, object]:
         "writing_block_enabled": settings.writing_block_enabled,
         "resulting_text_formatting": settings.resulting_text_formatting,
         "starter_action_version": settings.starter_action_version,
+        "starter_application_policy_version": (
+            settings.starter_application_policy_version
+        ),
     }
 
 

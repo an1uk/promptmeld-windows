@@ -122,6 +122,9 @@ to the clipboard or replace the selected text in an editable field after
 ChatGPT responds. The **Applications** tab can override this for Word, Outlook,
 browsers, text editors, messaging apps, or any named executable. For example,
 Word can replace automatically while Chrome copies results only.
+New and previously empty configurations start with that conservative pattern:
+Word and Notepad replace verified selections, while Outlook, browsers, Teams
+and Slack copy results for manual placement.
 
 Before replacement, PromptMeld returns to the original window and verifies
 that the same source text is still selected. If focus, selection, editability,

@@ -932,7 +932,9 @@ class ActionSettingsDialog(QDialog):
         applications_intro = QLabel(
             "Choose what PromptMeld should do with generated text for each "
             "Windows application. A policy overrides the overall Defaults & "
-            "style settings only for that executable."
+            "style settings only for that executable. The recommended starter "
+            "policies replace text in Word and Notepad, while mail, browsers "
+            "and messaging apps use the safer copy-only mode."
         )
         applications_intro.setObjectName("muted")
         applications_intro.setWordWrap(True)
@@ -2214,6 +2216,14 @@ class ActionSettingsDialog(QDialog):
                     gridline-color: #d8dee8;
                     border: 1px solid #cbd2dc;
                     border-radius: 8px;
+                }
+                QTableWidget::item {
+                    color: #202631;
+                    background: transparent;
+                }
+                QTableWidget::item:selected {
+                    color: #173a87;
+                    background: #dce7ff;
                 }
                 QTableWidget#hotkeyTable::item {
                     color: #000000;

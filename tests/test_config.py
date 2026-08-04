@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from importlib.resources import files
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from promptmeld.config import (
     save_settings,
 )
 from promptmeld.paths import AppPaths
+from promptmeld.returning import RECOMMENDED_APPLICATION_RETURN_POLICIES
 
 
 def test_load_actions(tmp_path):
@@ -141,6 +143,7 @@ def test_load_settings_includes_home_and_folder_display_defaults(tmp_path):
     assert settings.replace_selected_text_enabled is False
     assert settings.copy_generated_text_enabled is False
     assert settings.application_return_policies == {}
+    assert settings.starter_application_policy_version == 0
     assert settings.temporary_chat_enabled is False
     assert "individual voice" in settings.natural_voice_instruction
     assert settings.primary_language == "English (UK)"
@@ -217,6 +220,78 @@ def test_invalid_application_return_policy_is_rejected(tmp_path):
 
     with pytest.raises(ConfigurationError, match="return policies"):
         load_settings(path)
+
+
+def test_new_configuration_contains_recommended_application_policies(
+    tmp_path,
+):
+    paths = AppPaths.discover(tmp_path)
+
+    ensure_user_configuration(paths)
+
+    settings = load_settings(paths.settings_file)
+    assert (
+        settings.application_return_policies
+        == RECOMMENDED_APPLICATION_RETURN_POLICIES
+    )
+    assert settings.starter_application_policy_version == 1
+
+
+def test_empty_application_policies_receive_recommendations_only_once(
+    tmp_path,
+):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    paths.settings_file.write_text(
+        json.dumps(
+            {
+                "application_return_policies": {},
+                "starter_action_version": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ensure_user_configuration(paths)
+
+    migrated = load_settings(paths.settings_file)
+    assert (
+        migrated.application_return_policies
+        == RECOMMENDED_APPLICATION_RETURN_POLICIES
+    )
+    assert migrated.starter_application_policy_version == 1
+
+    save_settings(
+        paths.settings_file,
+        replace(migrated, application_return_policies={}),
+    )
+    ensure_user_configuration(paths)
+
+    assert load_settings(paths.settings_file).application_return_policies == {}
+
+
+def test_existing_application_policies_are_preserved_during_migration(
+    tmp_path,
+):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    paths.settings_file.write_text(
+        json.dumps(
+            {
+                "application_return_policies": {"thunderbird.exe": "copy"},
+                "starter_action_version": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ensure_user_configuration(paths)
+
+    settings = load_settings(paths.settings_file)
+    assert settings.application_return_policies == {
+        "thunderbird.exe": "copy"
+    }
+    assert settings.starter_application_policy_version == 1
 
 
 def test_load_settings_rejects_invalid_temporary_chat_value(tmp_path):

@@ -29,6 +29,20 @@ COMMON_APPLICATIONS = (
     ("Discord", "discord.exe"),
     ("Mozilla Thunderbird", "thunderbird.exe"),
 )
+RECOMMENDED_APPLICATION_RETURN_POLICIES = {
+    # Native editors with dependable selection and paste behaviour.
+    "winword.exe": "replace",
+    "notepad.exe": "replace",
+    # Browsers, mail readers, and messaging apps can move focus or expose
+    # read-only content while ChatGPT is responding, so copying is safer.
+    "outlook.exe": "copy",
+    "olk.exe": "copy",
+    "chrome.exe": "copy",
+    "msedge.exe": "copy",
+    "firefox.exe": "copy",
+    "ms-teams.exe": "copy",
+    "slack.exe": "copy",
+}
 _APPLICATION_LABELS = {
     executable: label for label, executable in COMMON_APPLICATIONS
 }

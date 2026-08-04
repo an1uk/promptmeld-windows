@@ -132,4 +132,5 @@ class AppSettings:
     writing_block_enabled: bool = False
     resulting_text_formatting: str = "default"
     starter_action_version: int = 2
+    starter_application_policy_version: int = 0
     extra: dict[str, object] = field(default_factory=dict)
