@@ -7,34 +7,34 @@
 <p align="center"><em>Write well and prosper.</em></p>
 
 PromptMeld is a Windows writing assistant for ChatGPT. Select text in another
-application, press a shortcut, and choose how you want to transform or respond
-to it. PromptMeld prepares the request, opens an organised ChatGPT conversation,
-and can return the result to your original application.
+application, press a shortcut, and choose how you want to edit, transform, or
+respond to it. PromptMeld prepares the request, opens it in an organised ChatGPT
+conversation, and can return the generated result to the original application.
 
 > [!IMPORTANT]
-> PromptMeld is an early release and changes to the ChatGPT desktop app can
-> affect its automation. Please report problems through
+> PromptMeld is an early release. Changes to the ChatGPT desktop app may affect
+> its automation. Please report any problems through
 > [GitHub Issues](https://github.com/an1uk/promptmeld-windows/issues).
 
 ## What it does
 
-- Turns selected text into focused ChatGPT requests using 26 included writing
-  actions or your own instruction.
-- Handles editing, rewriting, replies, tone, correspondence, technical help,
-  and other everyday writing tasks.
-- Opens a fresh chat in the appropriate ChatGPT Project, or optionally uses
-  Temporary Chat.
-- Provides concise controls for audience, editing strength, factual
-  preservation, natural voice, language, length, formatting, and context.
-- Supports application profiles: Outlook can use different writing defaults
-  from Word, Teams, browsers, or any other Windows application.
-- Can leave the prompt for review, submit it automatically, copy the result, or
-  safely replace the original selection when possible.
-- Includes cancellation, verified replacement, clipboard fallback, Undo,
+* Turns selected text into focused ChatGPT requests using 26 included writing
+  actions or your own custom instruction.
+* Supports editing, rewriting, replies, tone changes, correspondence, technical
+  help, and other everyday writing tasks.
+* Opens a new chat in the appropriate ChatGPT Project or, optionally, uses
+  Temporary Chat to avoid filling your chat history with unrelated
+  conversations.
+* Provides straightforward controls for audience, editing strength, factual
+  preservation, natural voice, language, length, formatting, and additional
+  context.
+* Supports application profiles, allowing Outlook to use different writing
+  defaults from Word, Teams, browsers, or other Windows applications.
+* Can leave the prompt for review, submit it automatically, copy the result, or
+  safely replace the original selection where possible.
+* Includes cancellation, verified text replacement, clipboard fallback, Undo,
   local diagnostics, configurable shortcuts, and keyboard-accessible controls.
-- Runs locally without an OpenAI API key, telemetry, advertising, or a required
-  Logitech device. Compatible Logitech Options+ Actions Ring hardware remains
-  optional.
+* Runs locally without an OpenAI API key, telemetry, or advertising.
 
 ![PromptMeld launcher and ChatGPT automation progress](docs/promptmeld-overview.png)
 
@@ -42,7 +42,7 @@ and can return the result to your original application.
 
 PromptMeld requires Windows 10 or 11 and the current ChatGPT desktop app for
 Windows, signed in to your account. It does not currently automate ChatGPT in a
-web browser or the Classic desktop experience.
+web browser or through the classic desktop experience.
 
 1. Download the installer from the
    [latest GitHub release](https://github.com/an1uk/promptmeld-windows/releases/latest).
@@ -50,11 +50,11 @@ web browser or the Classic desktop experience.
 3. Open **PromptMeld** from the Start menu.
 
 No OpenAI API key or separate Python installation is required. PromptMeld can
-be used with a free ChatGPT account, although available models, Projects,
-reasoning controls, and writing blocks depend on the account and plan.
+be used with a free ChatGPT account, although the available models, Projects,
+reasoning controls, and writing blocks depend on your account and plan.
 
 The installer is not yet code-signed, so Microsoft Defender SmartScreen may
-describe it as an unrecognised app. Only install a copy downloaded from this
+describe it as an unrecognised app. Only install copies downloaded from this
 repository.
 
 ## Quick start
@@ -63,43 +63,51 @@ repository.
 2. Press `Ctrl+Alt+Space`.
 3. Choose a writing action.
 
-Prompts are left unsubmitted by default, allowing you to review them and choose
-ChatGPT settings first. Double-click the PromptMeld notification-area icon to
-open Configuration.
+Prompts are left unsubmitted by default, giving you an opportunity to review
+them and choose your ChatGPT settings before submission.
 
-See the [user guide](docs/USER_GUIDE.md) for application profiles, writing
-guidance, generated-result handling, shortcuts, updates, recovery, and the
-example Outlook configuration.
+Double-click the PromptMeld notification-area icon to open Configuration.
+
+See the [user guide](docs/USER_GUIDE.md) for information about application
+profiles, writing guidance, generated-result handling, shortcuts, updates,
+recovery, and the example Outlook configuration.
+
+> [!IMPORTANT]
+> PromptMeld cannot verify or guarantee the accuracy of content generated by
+> ChatGPT. Always review generated content carefully before using or sharing it.
 
 ## Configure
 
-Configuration manages writing actions, folders, icons, shortcuts, writing
-defaults, updates, and application-specific profiles. Editable files are kept
-under `%LOCALAPPDATA%\PromptMeld`.
+Configuration allows you to manage writing actions, folders, icons, shortcuts,
+writing defaults, updates, and application-specific profiles. Editable files
+are stored under `%LOCALAPPDATA%\PromptMeld`.
 
-See [Configuration and customisation](docs/CONFIGURATION.md) for the interface,
-JSON formats, local files, and migration behaviour.
+See [Configuration and customisation](docs/CONFIGURATION.md) for details of the
+interface, JSON formats, local files, and migration behaviour.
 
 ## Privacy
 
-PromptMeld processes selected text locally and does not write selected text,
-prompts, or ChatGPT responses to its settings, usage records, or logs. Text
-sent to ChatGPT is governed by your ChatGPT account settings and OpenAI's
-policies. Update checks contact GitHub only.
+PromptMeld processes selected text locally and does not save selected text,
+generated prompts, or ChatGPT responses in its settings, usage records, or
+logs.
 
-Read the [full privacy explanation](PRIVACY.md), including clipboard behaviour,
-locally stored data, network connections, and removal instructions.
+Text sent to ChatGPT is governed by your ChatGPT account settings and OpenAI's
+policies. PromptMeld makes no network connections other than update checks
+through GitHub.
+
+Read the [full privacy explanation](PRIVACY.md) for details about clipboard
+behaviour, locally stored data, network connections, and removal instructions.
 
 ## Documentation
 
-- [User guide](docs/USER_GUIDE.md)
-- [Configuration and customisation](docs/CONFIGURATION.md)
-- [ChatGPT automation and fallback behaviour](docs/AUTOMATION.md)
-- [Safety, compatibility, and limitations](docs/SAFETY_AND_LIMITATIONS.md)
-- [Optional Logitech Actions Ring setup](docs/LOGITECH_ACTIONS_RING.md)
-- [Development, testing, and building](docs/DEVELOPMENT.md)
-- [Research report: AI Writing — Promise, Resistance and Access](docs/AI_WRITING_PROMISE_RESISTANCE_AND_ACCESS.md)
-- [Third-party notices](THIRD_PARTY_NOTICES.md)
+* [User guide](docs/USER_GUIDE.md)
+* [Configuration and customisation](docs/CONFIGURATION.md)
+* [ChatGPT automation and fallback behaviour](docs/AUTOMATION.md)
+* [Safety, compatibility, and limitations](docs/SAFETY_AND_LIMITATIONS.md)
+* [Optional Logitech Actions Ring setup](docs/LOGITECH_ACTIONS_RING.md)
+* [Development, testing, and building](docs/DEVELOPMENT.md)
+* [Research report: AI Writing - Promise, Resistance and Access](docs/AI_WRITING_PROMISE_RESISTANCE_AND_ACCESS.md)
+* [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## Get involved
 
@@ -110,7 +118,9 @@ help test releases, improve the documentation, or submit a pull request.
 ## Licence
 
 PromptMeld's original source code is available under the
-[MIT Licence](LICENSE). The software is experimental and supplied without a
-warranty; read [Safety, compatibility, and limitations](docs/SAFETY_AND_LIMITATIONS.md)
-before relying on it. Bundled components retain their own licences; see
+[MIT Licence](LICENSE).
+
+The software is experimental and supplied without a warranty. Read
+[Safety, compatibility, and limitations](docs/SAFETY_AND_LIMITATIONS.md) before
+relying on it. Bundled components retain their own licences; see
 [Third-party notices](THIRD_PARTY_NOTICES.md).
