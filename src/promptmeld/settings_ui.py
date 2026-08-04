@@ -66,6 +66,12 @@ from .models import (
     WritingAction,
 )
 from .paths import AppPaths
+from .returning import (
+    APPLICATION_RETURN_MODE_OPTIONS,
+    COMMON_APPLICATIONS,
+    application_display_name,
+    normalize_application_name,
+)
 from .theme import resolve_theme
 from .windows import HotkeyParseError, parse_hotkey
 
@@ -246,6 +252,8 @@ class ActionSettingsDialog(QDialog):
     update_check_requested = Signal()
     update_install_requested = Signal()
     update_release_requested = Signal()
+    diagnostics_copy_requested = Signal()
+    diagnostics_open_requested = Signal()
     ITEM_KIND_ROLE = Qt.ItemDataRole.UserRole + 1
 
     def __init__(
@@ -915,6 +923,126 @@ class ActionSettingsDialog(QDialog):
         general_layout.addWidget(updates_group)
         general_layout.addWidget(about_group)
         general_layout.addStretch(1)
+
+        applications_page = QWidget()
+        applications_page.setObjectName("settingsPage")
+        applications_layout = QVBoxLayout(applications_page)
+        applications_layout.setContentsMargins(22, 18, 22, 18)
+        applications_layout.setSpacing(14)
+        applications_intro = QLabel(
+            "Choose what PromptMeld should do with generated text for each "
+            "Windows application. A policy overrides the overall Defaults & "
+            "style settings only for that executable."
+        )
+        applications_intro.setObjectName("muted")
+        applications_intro.setWordWrap(True)
+        applications_layout.addWidget(applications_intro)
+
+        policies_group = QGroupBox("Application-specific result handling")
+        policies_layout = QVBoxLayout(policies_group)
+        policy_add_row = QHBoxLayout()
+        self.application_picker = NoWheelComboBox()
+        self.application_picker.setEditable(True)
+        self.application_picker.setInsertPolicy(
+            QComboBox.InsertPolicy.NoInsert
+        )
+        self.application_picker.lineEdit().setPlaceholderText(
+            "Choose an application or type its executable, for example slack.exe"
+        )
+        self.application_picker.setAccessibleName(
+            "Application executable for result policy"
+        )
+        for label, executable in COMMON_APPLICATIONS:
+            self.application_picker.addItem(
+                f"{label} ({executable})",
+                executable,
+            )
+        self.add_application_policy_button = QPushButton("Add application")
+        self.add_application_policy_button.setAccessibleName(
+            "Add application result policy"
+        )
+        policy_add_row.addWidget(self.application_picker, 1)
+        policy_add_row.addWidget(self.add_application_policy_button)
+        policies_layout.addLayout(policy_add_row)
+
+        self.application_policy_table = QTableWidget()
+        self.application_policy_table.setColumnCount(2)
+        self.application_policy_table.setHorizontalHeaderLabels(
+            ("Application", "Generated result")
+        )
+        self.application_policy_table.setAccessibleName(
+            "Application result policies"
+        )
+        self.application_policy_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.application_policy_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.application_policy_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.application_policy_table.verticalHeader().hide()
+        policy_header = self.application_policy_table.horizontalHeader()
+        policy_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        policy_header.setSectionResizeMode(
+            1,
+            QHeaderView.ResizeMode.ResizeToContents,
+        )
+        self.application_policy_table.setMinimumHeight(250)
+        policies_layout.addWidget(self.application_policy_table, 1)
+        policy_footer = QHBoxLayout()
+        policy_note = QLabel(
+            "If replacement is requested but an editable control cannot be "
+            "verified, PromptMeld copies the result instead."
+        )
+        policy_note.setObjectName("muted")
+        policy_note.setWordWrap(True)
+        self.remove_application_policy_button = QPushButton(
+            "Remove selected policy"
+        )
+        self.remove_application_policy_button.setAccessibleName(
+            "Remove selected application result policy"
+        )
+        policy_footer.addWidget(policy_note, 1)
+        policy_footer.addWidget(self.remove_application_policy_button)
+        policies_layout.addLayout(policy_footer)
+        applications_layout.addWidget(policies_group, 1)
+
+        diagnostics_group = QGroupBox("Diagnostics and recovery")
+        diagnostics_layout = QVBoxLayout(diagnostics_group)
+        diagnostics_note = QLabel(
+            "Copy privacy-filtered technical information for troubleshooting, "
+            "or open the local folder containing PromptMeld's rotating log. "
+            "Selected text, prompts and responses are excluded."
+        )
+        diagnostics_note.setObjectName("muted")
+        diagnostics_note.setWordWrap(True)
+        diagnostics_buttons = QHBoxLayout()
+        self.copy_diagnostics_button = QPushButton("Copy diagnostics")
+        self.open_log_folder_button = QPushButton("Open log folder")
+        self.copy_diagnostics_button.clicked.connect(
+            self.diagnostics_copy_requested.emit
+        )
+        self.open_log_folder_button.clicked.connect(
+            self.diagnostics_open_requested.emit
+        )
+        diagnostics_buttons.addWidget(self.copy_diagnostics_button)
+        diagnostics_buttons.addWidget(self.open_log_folder_button)
+        diagnostics_buttons.addStretch(1)
+        diagnostics_layout.addWidget(diagnostics_note)
+        diagnostics_layout.addLayout(diagnostics_buttons)
+        applications_layout.addWidget(diagnostics_group)
+
+        self._load_application_policies(
+            voice_settings.application_return_policies
+        )
+        self.add_application_policy_button.clicked.connect(
+            self._add_application_policy
+        )
+        self.remove_application_policy_button.clicked.connect(
+            self._remove_application_policy
+        )
         defaults_page = QWidget()
         defaults_page.setObjectName("settingsPage")
         defaults_layout = QVBoxLayout(defaults_page)
@@ -926,6 +1054,7 @@ class ActionSettingsDialog(QDialog):
         defaults_layout.addWidget(guided_group)
         defaults_layout.addStretch(1)
         self.tabs.addTab(general_page, "General")
+        self.tabs.addTab(applications_page, "Applications")
         self.tabs.addTab(actions_page, "Writing actions")
         self.tabs.addTab(hotkeys_page, "Hotkeys")
         self.tabs.addTab(defaults_page, "Defaults & style")
@@ -1469,6 +1598,83 @@ class ActionSettingsDialog(QDialog):
             self.close_button.setText("Close")
             self.close_button.setToolTip("Close configuration.")
 
+    def _load_application_policies(self, policies: dict[str, str]) -> None:
+        self.application_policy_table.setRowCount(0)
+        for application, mode in sorted(policies.items()):
+            self._append_application_policy(application, mode)
+
+    def _append_application_policy(self, application: str, mode: str) -> None:
+        application = normalize_application_name(application)
+        if not application:
+            return
+        row = self.application_policy_table.rowCount()
+        self.application_policy_table.insertRow(row)
+        label = application_display_name(application)
+        item = QTableWidgetItem(
+            f"{label} ({application})" if label != application else application
+        )
+        item.setData(Qt.ItemDataRole.UserRole, application)
+        self.application_policy_table.setItem(row, 0, item)
+        selector = NoWheelComboBox()
+        selector.setAccessibleName(
+            f"Generated result handling for {label}"
+        )
+        for value, option_label in APPLICATION_RETURN_MODE_OPTIONS:
+            selector.addItem(option_label, value)
+        selected = selector.findData(mode)
+        selector.setCurrentIndex(max(0, selected))
+        selector.currentIndexChanged.connect(self._mark_unsaved)
+        self.application_policy_table.setCellWidget(row, 1, selector)
+
+    def _application_policies(self) -> dict[str, str]:
+        policies: dict[str, str] = {}
+        for row in range(self.application_policy_table.rowCount()):
+            item = self.application_policy_table.item(row, 0)
+            selector = self.application_policy_table.cellWidget(row, 1)
+            if item is None or not isinstance(selector, QComboBox):
+                continue
+            application = normalize_application_name(
+                str(item.data(Qt.ItemDataRole.UserRole) or "")
+            )
+            mode = str(selector.currentData() or "default")
+            if application and mode != "default":
+                policies[application] = mode
+        return policies
+
+    def _add_application_policy(self) -> None:
+        selected_data = self.application_picker.currentData()
+        typed = self.application_picker.currentText().strip()
+        application = normalize_application_name(
+            str(selected_data) if selected_data else typed
+        )
+        if not re.fullmatch(r"[a-z0-9_.-]+\.exe", application):
+            QMessageBox.warning(
+                self,
+                "Application executable required",
+                "Choose a common application or enter an executable filename "
+                "such as slack.exe.",
+            )
+            return
+        for row in range(self.application_policy_table.rowCount()):
+            item = self.application_policy_table.item(row, 0)
+            if item is not None and item.data(
+                Qt.ItemDataRole.UserRole
+            ) == application:
+                self.application_policy_table.selectRow(row)
+                return
+        self._append_application_policy(application, "copy")
+        self.application_policy_table.selectRow(
+            self.application_policy_table.rowCount() - 1
+        )
+        self._mark_unsaved()
+
+    def _remove_application_policy(self) -> None:
+        row = self.application_policy_table.currentRow()
+        if row < 0:
+            return
+        self.application_policy_table.removeRow(row)
+        self._mark_unsaved()
+
     def _configuration_state(self) -> tuple:
         self._commit_current()
         return (
@@ -1478,6 +1684,7 @@ class ActionSettingsDialog(QDialog):
             str(self.theme.currentData() or "auto"),
             self.start_with_windows.isChecked(),
             self.check_for_updates.isChecked(),
+            tuple(sorted(self._application_policies().items())),
             self.most_used_count.value(),
             self.primary_language.currentText().strip(),
             str(self.resulting_text_length.currentData() or "default"),
@@ -1654,6 +1861,9 @@ class ActionSettingsDialog(QDialog):
                     startup_enabled=self.start_with_windows.isChecked(),
                     check_for_updates_enabled=(
                         self.check_for_updates.isChecked()
+                    ),
+                    application_return_policies=(
+                        self._application_policies()
                     ),
                     home_most_used_count=self.most_used_count.value(),
                     folder_icons=folder_icons,

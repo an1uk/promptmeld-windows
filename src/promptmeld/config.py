@@ -16,6 +16,10 @@ from .models import (
     AppSettings,
     WritingAction,
 )
+from .returning import (
+    APPLICATION_RETURN_MODE_VALUES,
+    normalize_application_name,
+)
 from .paths import AppPaths
 
 DEFAULT_ACTION_ICONS = {
@@ -397,6 +401,30 @@ def load_settings(path: Path) -> AppSettings:
         raise ConfigurationError(
             "copy_generated_text_enabled must be true or false."
         )
+    raw_application_policies = raw.get("application_return_policies", {})
+    if not isinstance(raw_application_policies, dict):
+        raise ConfigurationError(
+            "application_return_policies must be an object."
+        )
+    application_return_policies: dict[str, str] = {}
+    for application, mode in raw_application_policies.items():
+        if not isinstance(application, str) or not isinstance(mode, str):
+            raise ConfigurationError(
+                "Application return policies must map executable names to text."
+            )
+        normalized_application = normalize_application_name(application)
+        normalized_mode = mode.strip().casefold()
+        if not normalized_application or normalized_mode not in (
+            APPLICATION_RETURN_MODE_VALUES
+        ):
+            raise ConfigurationError(
+                "Application return policies must use default, replace, copy, "
+                "or leave."
+            )
+        if normalized_mode != "default":
+            application_return_policies[normalized_application] = (
+                normalized_mode
+            )
     temporary_chat_enabled = raw.get("temporary_chat_enabled", False)
     if not isinstance(temporary_chat_enabled, bool):
         raise ConfigurationError(
@@ -484,6 +512,7 @@ def load_settings(path: Path) -> AppSettings:
         "auto_submit_enabled",
         "replace_selected_text_enabled",
         "copy_generated_text_enabled",
+        "application_return_policies",
         "temporary_chat_enabled",
         "primary_language",
         "guided_drafting_enabled",
@@ -514,6 +543,7 @@ def load_settings(path: Path) -> AppSettings:
         auto_submit_enabled=auto_submit_enabled,
         replace_selected_text_enabled=replace_selected_text_enabled,
         copy_generated_text_enabled=copy_generated_text_enabled,
+        application_return_policies=application_return_policies,
         temporary_chat_enabled=temporary_chat_enabled,
         primary_language=primary_language,
         guided_drafting_enabled=guided_drafting_enabled,
@@ -545,6 +575,9 @@ def settings_to_dict(settings: AppSettings) -> dict[str, object]:
         "auto_submit_enabled": settings.auto_submit_enabled,
         "replace_selected_text_enabled": settings.replace_selected_text_enabled,
         "copy_generated_text_enabled": settings.copy_generated_text_enabled,
+        "application_return_policies": dict(
+            sorted(settings.application_return_policies.items())
+        ),
         "temporary_chat_enabled": settings.temporary_chat_enabled,
         "primary_language": settings.primary_language,
         "guided_drafting_enabled": settings.guided_drafting_enabled,

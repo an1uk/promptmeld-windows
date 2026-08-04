@@ -15,6 +15,7 @@ from promptmeld.config import (
     load_default_actions,
     load_settings,
     save_actions,
+    save_settings,
 )
 from promptmeld.paths import AppPaths
 
@@ -139,6 +140,7 @@ def test_load_settings_includes_home_and_folder_display_defaults(tmp_path):
     assert settings.check_for_updates_enabled is True
     assert settings.replace_selected_text_enabled is False
     assert settings.copy_generated_text_enabled is False
+    assert settings.application_return_policies == {}
     assert settings.temporary_chat_enabled is False
     assert "individual voice" in settings.natural_voice_instruction
     assert settings.primary_language == "English (UK)"
@@ -180,6 +182,40 @@ def test_load_settings_rejects_invalid_generated_output_value(tmp_path, key):
     path.write_text(json.dumps({key: "sometimes"}), encoding="utf-8")
 
     with pytest.raises(ConfigurationError, match=key):
+        load_settings(path)
+
+
+def test_application_return_policies_are_normalized_and_saved(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "application_return_policies": {
+                    r"C:\Program Files\Word\WINWORD.EXE": "replace",
+                    "chrome.exe": "copy",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(path)
+    save_settings(path, settings)
+
+    assert load_settings(path).application_return_policies == {
+        "chrome.exe": "copy",
+        "winword.exe": "replace",
+    }
+
+
+def test_invalid_application_return_policy_is_rejected(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"application_return_policies": {"word.exe": "guess"}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="return policies"):
         load_settings(path)
 
 

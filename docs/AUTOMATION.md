@@ -26,9 +26,12 @@ For each writing action, PromptMeld:
 11. Presses Enter only when **Submit automatically** is enabled.
 12. When generated-text output is enabled and automatic submission is on,
     waits for a verified ChatGPT **Copy** control and retrieves the response.
-13. If replacement is enabled and the original selection came from an editable
-    control, returns focus to that source window and pastes the response over
-    the selected text. Otherwise the original selection is left untouched.
+13. Resolves the source executable's result policy: inherit defaults, replace,
+    copy only, or leave the result in ChatGPT.
+14. Before replacement, returns focus to the source, copies the current
+    selection again, and verifies it still matches the preserved original.
+15. Pastes only after that verification. If verification or paste access fails,
+    leaves the original untouched and copies the generated result instead.
 
 Root-level actions and custom instructions use the base Project name
 `PromptMeld`. Nested action folders produce names such as
@@ -45,7 +48,9 @@ While PromptMeld works, a small non-focus-stealing window shows each operation
 as a stacked history. New operations appear below completed ones, and the
 current operation is highlighted near the centre while the history scrolls
 up smoothly. A successful result is added as the final entry; a problem stays
-visible so it can be acted on.
+visible so it can be acted on. Choose **Cancel** or press Escape to stop the
+helper; ChatGPT may continue if the prompt was already submitted, so the final
+message tells you what to check before retrying.
 
 The window shows operational stage names only. It does not display the selected
 text or assembled prompt, and it does not take focus away from ChatGPT.
@@ -75,13 +80,16 @@ control is not exposed before the output timeout, PromptMeld reports that the
 response was submitted but does not replace the original selection. The
 selected text is never replaced based on an unverified clipboard value.
 
-Automatic replacement is deliberately opt-in and shows a confirmation warning
-when used. It is destructive: the generated text can be wrong and the original
-selection may not be recoverable. This is especially important in Temporary
-Chat, where the original text is not retained in ChatGPT. Windows Clipboard
-History or a clipboard manager such as CopyQ may preserve the original
-selection, but those tools can retain sensitive text and do not guarantee
-recovery.
+Automatic replacement is deliberately opt-in. PromptMeld keeps the original
+selection in memory, verifies that selection again immediately before pasting,
+and exposes native Undo plus a copy-original recovery action in the tray. It
+does not write preserved text to disk. If replacement cannot be verified, the
+generated result is copied instead. The result can still be wrong, so users
+remain responsible for reviewing it.
+
+Configuration's **Applications** tab can override the global output defaults
+for individual executables. A replacement policy automatically degrades to
+copy-only when the captured control is not editable.
 
 ## Automation companion
 

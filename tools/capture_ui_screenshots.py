@@ -23,7 +23,12 @@ from promptmeld.usage import UsageTracker
 
 def main() -> int:
     project_root = Path(__file__).resolve().parents[1]
-    docs = project_root / "docs"
+    docs = Path(
+        os.environ.get(
+            "PROMPTMELD_SCREENSHOT_DIR",
+            str(project_root / "docs"),
+        )
+    )
     docs.mkdir(exist_ok=True)
     app = QApplication.instance() or QApplication(sys.argv)
     windows_fonts = Path(
@@ -111,14 +116,17 @@ def main() -> int:
         app.processEvents()
         dialog.tabs.setCurrentIndex(1)
         app.processEvents()
-        dialog.grab().save(str(docs / "manage-actions.png"))
+        dialog.grab().save(str(docs / "manage-applications.png"))
         dialog.tabs.setCurrentIndex(2)
         app.processEvents()
-        dialog.grab().save(str(docs / "manage-hotkeys.png"))
+        dialog.grab().save(str(docs / "manage-actions.png"))
         dialog.tabs.setCurrentIndex(3)
         app.processEvents()
+        dialog.grab().save(str(docs / "manage-hotkeys.png"))
+        dialog.tabs.setCurrentIndex(4)
+        app.processEvents()
         dialog.grab().save(str(docs / "manage-defaults.png"))
-        dialog.tabs.setCurrentIndex(1)
+        dialog.tabs.setCurrentIndex(2)
         first_folder = dialog.action_list.topLevelItem(0)
         if first_folder is not None:
             dialog.action_list.setCurrentItem(first_folder)

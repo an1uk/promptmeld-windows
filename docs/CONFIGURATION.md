@@ -66,8 +66,8 @@ The **Defaults & style** tab controls:
 - Copying generated text to the clipboard after ChatGPT responds. This also
   requires automatic submission.
 - Replacing selected text automatically when the source selection was detected
-  in an editable control. This also requires automatic submission; selections
-  from non-editable fields continue to use the normal PromptMeld workflow.
+  in an editable control. This also requires automatic submission. PromptMeld
+  verifies the preserved selection again immediately before pasting.
 - Temporary Chat, which opens a top-level chat instead of using the writing
   action's configured Project. ChatGPT may show a one-time explanation;
   PromptMeld waits while you read and respond to it and does not activate
@@ -91,15 +91,26 @@ remembered. Less frequently changed length, formatting, and writing-block
 settings are grouped under the launcher's **Output options** menu and are
 remembered in the same way.
 
-Automatic replacement is destructive and opt-in. The generated response may be
-wrong or unsuitable, and the existing selection may be lost if the result is
-incorrect or the paste fails. With Temporary Chat enabled, the original text
-is not retained in ChatGPT and may not be recoverable. Consider enabling
-Windows Clipboard History (`Win+V`) or using a clipboard manager such as
-[CopyQ](https://copyq.readthedocs.io/en/stable/) before using replacement.
-Clipboard history may preserve the original selection because PromptMeld
-captures it through the clipboard, but clipboard tools can retain sensitive
-text and are not guaranteed recovery.
+Automatic replacement is opt-in and the generated response may still be wrong
+or unsuitable. PromptMeld preserves the original in memory and exposes
+**Undo last replacement** and **Copy preserved original** in the tray. If the
+source selection changed or replacement cannot be verified, PromptMeld copies
+the generated result and leaves the original alone.
+
+## Application-specific result handling
+
+The **Applications** tab overrides the overall generated-result defaults for
+individual executable names. Each application can inherit the defaults,
+replace its original selection, copy the result only, or leave the result in
+ChatGPT. Common Microsoft Office applications, browsers, Teams, Notepad and
+Visual Studio Code are available from the picker; another executable name can
+be typed directly. A replacement policy safely falls back to copying when the
+source does not expose an editable control.
+
+The same tab can copy privacy-filtered diagnostics or open the local log
+folder. Diagnostics contain versions, operational result flags and the source
+executable name and safe feature-state flags, but not selected text, prompts,
+responses, writing actions, free-text settings or window titles.
 
 The launcher's **Intent or additional context** field is deliberately temporary
 and is cleared whenever a new selection is captured. It adds the desired
@@ -206,6 +217,10 @@ Home-screen, submission, language, and style settings are stored in
   "auto_submit_enabled": false,
   "replace_selected_text_enabled": false,
   "copy_generated_text_enabled": false,
+  "application_return_policies": {
+    "winword.exe": "replace",
+    "chrome.exe": "copy"
+  },
   "natural_voice_enabled": false,
   "natural_voice_instruction": "Preserve the writer's individual voice...",
   "primary_language": "English (UK)",

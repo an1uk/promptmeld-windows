@@ -144,6 +144,8 @@ class ChatGPTDesktop:
         temporary_chat: bool = False,
         source_hwnd: int | None = None,
         source_is_editable: bool = False,
+        source_text: str = "",
+        source_app: str = "",
         replace_selected_text: bool = False,
         copy_generated_text: bool = False,
     ) -> SubmissionResult:
@@ -296,36 +298,53 @@ class ChatGPTDesktop:
                         window,
                         prompt,
                     )
-                    if replace_selected_text and source_is_editable:
-                        self._report_progress(
-                            "replacing-selection",
-                            "Replacing the selected text in its original application",
-                        )
-                        self._replace_source_selection(
-                            source_hwnd,
-                            generated_text,
-                        )
-                        selection_replaced = True
-                    if copy_generated_text:
-                        self.clipboard_writer(generated_text)
-                        generated_text_copied = True
                 except Exception as exc:
-                    LOGGER.exception(
-                        "ChatGPT response could not be returned to the source"
-                    )
+                    LOGGER.exception("ChatGPT response could not be retrieved")
                     if previous_clipboard is not None:
                         self.clipboard_writer(previous_clipboard)
                     return SubmissionResult(
                         submitted=True,
-                        generated_text_copied=False,
-                        selection_replaced=False,
                         output_failed=True,
                         message=(
-                            "The prompt was submitted to ChatGPT, but PromptMeld "
-                            "could not safely retrieve the generated text. "
-                            f"The original text was not replaced. Details: {exc}"
+                            "The prompt was submitted, but ChatGPT did not expose "
+                            "a complete generated response that PromptMeld could "
+                            "verify. The original text was not replaced. "
+                            f"Details: {exc}"
                         ),
                     )
+
+                if replace_selected_text and source_is_editable:
+                    self._report_progress(
+                        "replacing-selection",
+                        "Replacing the selected text in its original application",
+                    )
+                    try:
+                        self._replace_source_selection(
+                            source_hwnd,
+                            source_text,
+                            generated_text,
+                            source_app,
+                        )
+                        selection_replaced = True
+                    except Exception as exc:
+                        LOGGER.exception(
+                            "Generated text could not be pasted into the source"
+                        )
+                        self.clipboard_writer(generated_text)
+                        return SubmissionResult(
+                            submitted=True,
+                            generated_text_copied=True,
+                            output_failed=True,
+                            message=(
+                                "PromptMeld could not safely replace the original "
+                                "selection. The generated result has been copied "
+                                "to the clipboard instead. The preserved original "
+                                f"is available from the tray menu. Details: {exc}"
+                            ),
+                        )
+                if copy_generated_text:
+                    self.clipboard_writer(generated_text)
+                    generated_text_copied = True
 
             if (
                 previous_clipboard is not None
@@ -1816,7 +1835,13 @@ class ChatGPTDesktop:
             "the output timeout."
         )
 
-    def _replace_source_selection(self, source_hwnd: int | None, text: str) -> None:
+    def _replace_source_selection(
+        self,
+        source_hwnd: int | None,
+        original_text: str,
+        generated_text: str,
+        source_app: str = "",
+    ) -> None:
         if not source_hwnd:
             raise ChatGPTAutomationError(
                 "The original editable window could not be identified."
@@ -1828,9 +1853,29 @@ class ChatGPTDesktop:
                 raise ChatGPTAutomationError(
                     "The original editable window is no longer available."
                 )
-            self.clipboard_writer(text)
+            if win32gui.IsIconic(source_hwnd):
+                win32gui.ShowWindow(source_hwnd, 9)  # SW_RESTORE
+            try:
+                win32gui.BringWindowToTop(source_hwnd)
+            except Exception:
+                LOGGER.debug("Could not bring source window to top", exc_info=True)
             win32gui.SetForegroundWindow(source_hwnd)
-            deadline = time.monotonic() + 1.5
+            focus_timeout = (
+                2.5
+                if source_app.casefold()
+                in {
+                    "winword.exe",
+                    "outlook.exe",
+                    "olk.exe",
+                    "ms-teams.exe",
+                    "teams.exe",
+                    "chrome.exe",
+                    "msedge.exe",
+                    "firefox.exe",
+                }
+                else 1.5
+            )
+            deadline = time.monotonic() + focus_timeout
             while time.monotonic() < deadline:
                 if win32gui.GetForegroundWindow() == source_hwnd:
                     break
@@ -1839,7 +1884,30 @@ class ChatGPTDesktop:
                 raise ChatGPTAutomationError(
                     "Windows did not return focus to the original application."
                 )
-            self.send_keys("^v", pause=0.02)
+
+            # A response can take long enough for the user to move the caret or
+            # change the selection. Re-copy and compare before any destructive
+            # paste so the result never lands in an unverified location.
+            marker = f"PromptMeld source verification {time.monotonic_ns()}"
+            self.clipboard_writer(marker)
+            self.send_keys("^c", pause=0.03)
+            verification_deadline = time.monotonic() + 0.55
+            selected_text = self.clipboard_reader()
+            while (
+                selected_text == marker
+                and time.monotonic() < verification_deadline
+            ):
+                time.sleep(0.03)
+                selected_text = self.clipboard_reader()
+            if self._normalise_composer_text(
+                str(selected_text or "")
+            ) != self._normalise_composer_text(original_text):
+                raise ChatGPTAutomationError(
+                    "The original selection changed while ChatGPT was responding."
+                )
+
+            self.clipboard_writer(generated_text)
+            self.send_keys("^v", pause=0.04)
         except ChatGPTAutomationError:
             raise
         except Exception as exc:

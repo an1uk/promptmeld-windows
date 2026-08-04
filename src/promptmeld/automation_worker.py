@@ -74,6 +74,8 @@ def _process_payload(
         for key in (
             "source_hwnd",
             "source_is_editable",
+            "source_text",
+            "source_app",
             "replace_selected_text",
             "copy_generated_text",
         )
@@ -85,6 +87,8 @@ def _process_payload(
                 else None
             ),
             source_is_editable=bool(payload.get("source_is_editable", False)),
+            source_text=str(payload.get("source_text", "")),
+            source_app=str(payload.get("source_app", "")),
             replace_selected_text=bool(
                 payload.get("replace_selected_text", False)
             ),

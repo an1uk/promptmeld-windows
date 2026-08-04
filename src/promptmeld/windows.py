@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import win32api
 import win32con
 import win32gui
+import win32process
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QWidget
 
@@ -38,9 +39,11 @@ class SelectionCapture:
         source_hwnd = win32gui.GetForegroundWindow()
         source_title = win32gui.GetWindowText(source_hwnd)
         source_class = win32gui.GetClassName(source_hwnd)
+        source_app = self._source_executable(source_hwnd)
         source_is_editable = self._source_is_editable(source_hwnd, source_class)
         LOGGER.info(
-            "Capturing selection from window class=%r hwnd=%s",
+            "Capturing selection from application=%r class=%r hwnd=%s",
+            source_app,
             source_class,
             source_hwnd,
         )
@@ -87,7 +90,38 @@ class SelectionCapture:
             source_hwnd=source_hwnd,
             source_title=source_title,
             source_is_editable=source_is_editable,
+            source_app=source_app,
         )
+
+    @staticmethod
+    def _source_executable(source_hwnd: int) -> str:
+        """Identify the source executable without retaining its full path."""
+
+        handle = None
+        try:
+            _thread_id, process_id = win32process.GetWindowThreadProcessId(
+                source_hwnd
+            )
+            handle = win32api.OpenProcess(
+                win32con.PROCESS_QUERY_INFORMATION
+                | win32con.PROCESS_VM_READ,
+                False,
+                process_id,
+            )
+            path = win32process.GetModuleFileNameEx(handle, 0)
+            return str(path).replace("\\", "/").rsplit("/", 1)[-1].casefold()
+        except Exception:
+            LOGGER.debug(
+                "Could not identify the selected text's source executable",
+                exc_info=True,
+            )
+            return ""
+        finally:
+            if handle is not None:
+                try:
+                    handle.Close()
+                except Exception:
+                    pass
 
     @classmethod
     def _source_is_editable(cls, source_hwnd: int, source_class: str) -> bool:
@@ -108,15 +142,24 @@ class SelectionCapture:
 
             pythoncom.CoInitialize()
             try:
-                element = IUIA().get_focused_element()
-                control_type = str(getattr(element, "control_type", ""))
-                if control_type in {"Edit", "Document"}:
-                    return True
-                current = getattr(element, "current", None)
-                if current is not None and str(
-                    getattr(current, "ControlType", "")
-                ) in {"Edit", "Document"}:
-                    return True
+                iuia = IUIA()
+                element = iuia.get_focused_element()
+                control_type = iuia.known_control_type_ids.get(
+                    int(element.CurrentControlType),
+                    "",
+                )
+                if control_type == "Edit":
+                    try:
+                        from pywinauto.uia_defines import get_elem_interface
+
+                        value_pattern = get_elem_interface(element, "Value")
+                        return not bool(value_pattern.CurrentIsReadOnly)
+                    except Exception:
+                        # Some editable web and custom controls expose the Edit
+                        # control type without a Value pattern. Treating only
+                        # Edit as writable is still safer than accepting a
+                        # generic Document, which can be an ordinary web page.
+                        return True
             finally:
                 pythoncom.CoUninitialize()
         except Exception:
@@ -157,6 +200,7 @@ class SelectionCapture:
             "scintilla",
             "tedit",
             "wxwindowclassnr",
+            "_wwg",
         } or folded.startswith("richedit")
 
     @staticmethod
@@ -189,6 +233,61 @@ class SelectionCapture:
     @staticmethod
     def _read_text() -> str | None:
         return read_clipboard_text()
+
+
+class SourceRecoveryError(RuntimeError):
+    pass
+
+
+def undo_source_replacement(source_hwnd: int | None) -> None:
+    """Focus a preserved source window and invoke its native Undo command."""
+
+    if not source_hwnd or not win32gui.IsWindow(source_hwnd):
+        raise SourceRecoveryError(
+            "The original application window is no longer available."
+        )
+    try:
+        if win32gui.IsIconic(source_hwnd):
+            win32gui.ShowWindow(source_hwnd, 9)  # SW_RESTORE
+        try:
+            win32gui.BringWindowToTop(source_hwnd)
+        except Exception:
+            LOGGER.debug(
+                "Could not bring source window to top for Undo",
+                exc_info=True,
+            )
+        win32gui.SetForegroundWindow(source_hwnd)
+        deadline = time.monotonic() + 1.5
+        while time.monotonic() < deadline:
+            if win32gui.GetForegroundWindow() == source_hwnd:
+                break
+            time.sleep(0.03)
+        if win32gui.GetForegroundWindow() != source_hwnd:
+            raise SourceRecoveryError(
+                "Windows did not return focus to the original application."
+            )
+        win32api.keybd_event(win32con.VK_CONTROL, 0, 0, 0)
+        try:
+            win32api.keybd_event(ord("Z"), 0, 0, 0)
+            win32api.keybd_event(
+                ord("Z"),
+                0,
+                win32con.KEYEVENTF_KEYUP,
+                0,
+            )
+        finally:
+            win32api.keybd_event(
+                win32con.VK_CONTROL,
+                0,
+                win32con.KEYEVENTF_KEYUP,
+                0,
+            )
+    except SourceRecoveryError:
+        raise
+    except Exception as exc:
+        raise SourceRecoveryError(
+            "The original application did not accept the Undo command."
+        ) from exc
 
 
 @dataclass(frozen=True, slots=True)

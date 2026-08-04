@@ -84,6 +84,7 @@ class CapturedSelection:
     source_hwnd: int
     source_title: str
     source_is_editable: bool = False
+    source_app: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +101,7 @@ class SubmissionResult:
     generated_text_copied: bool = False
     selection_replaced: bool = False
     output_failed: bool = False
+    cancelled: bool = False
     message: str = ""
 
 
@@ -122,6 +124,7 @@ class AppSettings:
     auto_submit_enabled: bool = False
     replace_selected_text_enabled: bool = False
     copy_generated_text_enabled: bool = False
+    application_return_policies: dict[str, str] = field(default_factory=dict)
     temporary_chat_enabled: bool = False
     primary_language: str = "English (UK)"
     guided_drafting_enabled: bool = False

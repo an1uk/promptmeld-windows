@@ -15,6 +15,7 @@
   "auto_submit_enabled": false,
   "replace_selected_text_enabled": false,
   "copy_generated_text_enabled": false,
+  "application_return_policies": {},
   "temporary_chat_enabled": false,
   "primary_language": "English (UK)",
   "guided_drafting_enabled": false,

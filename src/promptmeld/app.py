@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import platform
 import subprocess
 import sys
 import threading
@@ -27,6 +28,7 @@ from .automation_client import (
     submit_via_worker,
 )
 from .branding import APP_ID, APP_NAME
+from .clipboard import write_clipboard_text
 from .config import (
     ConfigurationError,
     ensure_user_configuration,
@@ -37,6 +39,11 @@ from .config import (
 from .models import CapturedSelection, SubmissionResult, WritingAction
 from .paths import AppPaths
 from .prompting import PromptBuilder
+from .returning import (
+    ReturnDecision,
+    application_display_name,
+    resolve_return_decision,
+)
 from .single_instance import SingleInstance
 from .startup import StartupManager
 from .usage import UsageTracker
@@ -59,7 +66,9 @@ from .windows import (
     GlobalHotkeyManager,
     SelectionCapture,
     SelectionCaptureError,
+    SourceRecoveryError,
     is_hotkey_released,
+    undo_source_replacement,
 )
 from .worker import FunctionWorker
 
@@ -168,6 +177,11 @@ class PromptMeld:
         self.update_current_confirmed = False
         self.update_cancel_event: threading.Event | None = None
         self.update_progress_dialog: QProgressDialog | None = None
+        self.automation_worker: FunctionWorker | None = None
+        self.automation_cancel_event: threading.Event | None = None
+        self.preserved_original: CapturedSelection | None = None
+        self.last_replacement: CapturedSelection | None = None
+        self.last_automation_result: SubmissionResult | None = None
         cleanup_update_downloads(self.update_downloads_dir)
         cached_release = self.update_state.cached_release
         if cached_release is not None:
@@ -195,6 +209,35 @@ class PromptMeld:
         self.update_action.triggered.connect(
             lambda: self.check_for_updates(manual=True)
         )
+        self.menu.addSeparator()
+        self.cancel_automation_action = self.menu.addAction(
+            "Cancel current automation"
+        )
+        self.cancel_automation_action.setEnabled(False)
+        self.cancel_automation_action.triggered.connect(
+            self.cancel_automation
+        )
+        self.undo_replacement_action = self.menu.addAction(
+            "Undo last replacement"
+        )
+        self.undo_replacement_action.setEnabled(False)
+        self.undo_replacement_action.triggered.connect(
+            self.undo_last_replacement
+        )
+        self.copy_original_action = self.menu.addAction(
+            "Copy preserved original"
+        )
+        self.copy_original_action.setEnabled(False)
+        self.copy_original_action.triggered.connect(
+            self.copy_preserved_original
+        )
+        diagnostics_menu = self.menu.addMenu("Diagnostics")
+        self.copy_diagnostics_action = diagnostics_menu.addAction(
+            "Copy diagnostic information"
+        )
+        self.copy_diagnostics_action.triggered.connect(self.copy_diagnostics)
+        self.open_log_action = diagnostics_menu.addAction("Open log folder")
+        self.open_log_action.triggered.connect(self.open_log_folder)
         self.menu.addSeparator()
         self.startup_action = self.menu.addAction("Start with Windows")
         self.startup_action.setCheckable(True)
@@ -386,6 +429,13 @@ class PromptMeld:
             return
         popup = self._ensure_popup()
         popup.set_source_is_editable(self.current_selection.source_is_editable)
+        popup.set_source_context(
+            self.current_selection.source_app,
+            resolve_return_decision(
+                self.settings,
+                self.current_selection,
+            ),
+        )
         popup.show_at_cursor()
 
     def capture_and_submit(self, action: WritingAction) -> None:
@@ -508,33 +558,10 @@ class PromptMeld:
         self,
         selection: CapturedSelection,
     ) -> bool:
-        if not (
-            self.settings.replace_selected_text_enabled
-            and self.settings.auto_submit_enabled
-            and selection.source_is_editable
-        ):
-            return True
-        chat_mode = (
-            "Temporary Chat is enabled, so the original text will not be saved "
-            "in ChatGPT."
-            if self.settings.temporary_chat_enabled
-            else "The original may not be recoverable if the replacement goes wrong."
-        )
-        response = QMessageBox.warning(
-            self.popup,
-            "Confirm automatic text replacement",
-            "PromptMeld will automatically replace the selected text after "
-            "ChatGPT generates a response. The generated text may be wrong, "
-            "and the existing text may be lost. "
-            f"{chat_mode}\n\n"
-            "Before using this, consider enabling Windows Clipboard History "
-            "(Win+V) or a clipboard manager such as CopyQ. This may preserve "
-            "the original selection for recovery, but clipboard history can "
-            "retain sensitive text.\n\nDo you want to continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return response == QMessageBox.StandardButton.Yes
+        # Replacement is explicitly enabled in the launcher, defaults, or an
+        # application policy. Preserve the source in memory instead of adding
+        # a modal confirmation to every otherwise frictionless transformation.
+        return True
 
     def set_natural_voice_enabled(self, enabled: bool) -> None:
         if enabled == self.settings.natural_voice_enabled:
@@ -710,9 +737,32 @@ class PromptMeld:
         project_name: str | None = None,
         selection: CapturedSelection | None = None,
     ) -> None:
+        if self.automation_worker is not None:
+            self.notify(
+                "PromptMeld is already working",
+                "Cancel the current automation or wait for it to finish.",
+                QSystemTrayIcon.MessageIcon.Information,
+            )
+            return
         project_name = project_name or self.settings.project_name
         settings = self.settings
         selection = selection or self.current_selection
+        return_decision = resolve_return_decision(settings, selection)
+        if return_decision.fallback_reason:
+            self.notify(
+                "Result handling adjusted",
+                return_decision.fallback_reason,
+                QSystemTrayIcon.MessageIcon.Information,
+                6500,
+            )
+        if return_decision.replace_selection and selection is not None:
+            self.preserved_original = selection
+            self.last_replacement = None
+            self.copy_original_action.setEnabled(True)
+            self._refresh_recovery_actions()
+        self.automation_cancel_event = threading.Event()
+        self.cancel_automation_action.setText("Cancel current automation")
+        self.cancel_automation_action.setEnabled(True)
         progress_window = self._show_automation_progress(
             project_name,
             temporary_chat=settings.temporary_chat_enabled,
@@ -726,17 +776,27 @@ class PromptMeld:
                 source_is_editable=(
                     selection.source_is_editable if selection else False
                 ),
+                source_text=(selection.text if selection else ""),
+                source_app=(selection.source_app if selection else ""),
+                replace_selected_text=return_decision.replace_selection,
+                copy_generated_text=return_decision.copy_result,
                 progress_callback=report_progress,
+                is_cancelled=self.automation_cancel_event.is_set,
             ),
             with_progress=True,
         )
         worker.signals.progress.connect(progress_window.update_stage)
         worker.signals.finished.connect(
-            lambda result, window=progress_window: self._submission_finished(
+            lambda result, window=progress_window, captured=selection, decision=(
+                return_decision
+            ): self._submission_finished(
                 result,
                 window,
+                captured,
+                decision,
             )
         )
+        self.automation_worker = worker
         self.thread_pool.start(worker)
 
     def _show_automation_progress(
@@ -756,6 +816,9 @@ class PromptMeld:
             self.automation_progress = AutomationProgressWindow(
                 self.settings.theme
             )
+            self.automation_progress.cancel_requested.connect(
+                self.cancel_automation
+            )
         self.automation_progress.begin(
             project_name,
             temporary_chat=temporary_chat,
@@ -766,9 +829,30 @@ class PromptMeld:
         self,
         result: SubmissionResult,
         progress_window: AutomationProgressWindow | None = None,
+        selection: CapturedSelection | None = None,
+        return_decision: ReturnDecision | None = None,
     ) -> None:
+        self.automation_worker = None
+        self.automation_cancel_event = None
+        cancel_action = getattr(self, "cancel_automation_action", None)
+        if cancel_action is not None:
+            cancel_action.setText("Cancel current automation")
+            cancel_action.setEnabled(False)
+        self.last_automation_result = result
         if progress_window is not None:
             progress_window.finish(result)
+        if result.selection_replaced and selection is not None:
+            self.preserved_original = selection
+            self.last_replacement = selection
+            self._refresh_recovery_actions()
+        if result.cancelled:
+            self.notify(
+                "Automation cancelled",
+                result.message,
+                QSystemTrayIcon.MessageIcon.Information,
+                7000,
+            )
+            return
         if result.prepared:
             self.notify(
                 "Prompt ready in ChatGPT",
@@ -777,10 +861,19 @@ class PromptMeld:
                 6500,
             )
             return
+        if result.output_failed:
+            self.notify(
+                "Generated text needs attention",
+                result.message,
+                QSystemTrayIcon.MessageIcon.Warning,
+                9000,
+            )
+            return
         if result.selection_replaced:
             self.notify(
                 "Text replaced",
-                result.message,
+                result.message
+                + " The original is preserved in PromptMeld's tray menu.",
                 QSystemTrayIcon.MessageIcon.Information,
                 6500,
             )
@@ -793,20 +886,147 @@ class PromptMeld:
                 6500,
             )
             return
-        if result.output_failed:
-            self.notify(
-                "Generated text could not be returned",
-                result.message,
-                QSystemTrayIcon.MessageIcon.Warning,
-                8000,
-            )
-            return
         if not result.submitted:
             self.notify(
                 "ChatGPT needs attention",
                 result.message,
                 QSystemTrayIcon.MessageIcon.Warning,
                 8000,
+            )
+
+    def cancel_automation(self) -> None:
+        if self.automation_cancel_event is None:
+            return
+        self.automation_cancel_event.set()
+        self.cancel_automation_action.setText("Cancelling automation...")
+        self.cancel_automation_action.setEnabled(False)
+        LOGGER.info("Automation cancellation requested")
+
+    def _refresh_recovery_actions(self) -> None:
+        preserved = self.preserved_original
+        self.copy_original_action.setEnabled(preserved is not None)
+        self.undo_replacement_action.setEnabled(
+            self.last_replacement is not None
+        )
+        if self.last_replacement is not None:
+            application = application_display_name(
+                self.last_replacement.source_app
+            )
+            self.undo_replacement_action.setText(
+                f"Undo last replacement in {application}"
+            )
+        else:
+            self.undo_replacement_action.setText("Undo last replacement")
+
+    def copy_preserved_original(self) -> None:
+        if self.preserved_original is None:
+            return
+        try:
+            write_clipboard_text(self.preserved_original.text)
+        except Exception as exc:
+            self.notify(
+                "Original text could not be copied",
+                str(exc),
+                QSystemTrayIcon.MessageIcon.Warning,
+            )
+            return
+        self.notify(
+            "Original text copied",
+            "The preserved original is on the clipboard.",
+            QSystemTrayIcon.MessageIcon.Information,
+        )
+
+    def undo_last_replacement(self) -> None:
+        replacement = self.last_replacement
+        if replacement is None:
+            return
+        try:
+            undo_source_replacement(replacement.source_hwnd)
+        except SourceRecoveryError as exc:
+            try:
+                write_clipboard_text(replacement.text)
+            except Exception as clipboard_exc:
+                self.notify(
+                    "Undo and clipboard recovery were unavailable",
+                    f"{exc} Clipboard details: {clipboard_exc}",
+                    QSystemTrayIcon.MessageIcon.Warning,
+                    9000,
+                )
+                return
+            self.notify(
+                "Undo was unavailable",
+                f"{exc} The preserved original was copied instead.",
+                QSystemTrayIcon.MessageIcon.Warning,
+                8000,
+            )
+            return
+        self.last_replacement = None
+        self._refresh_recovery_actions()
+        self.notify(
+            "Replacement undone",
+            "The original application's Undo command was used.",
+            QSystemTrayIcon.MessageIcon.Information,
+        )
+
+    def _diagnostics_text(self) -> str:
+        result = self.last_automation_result
+        source_app = (
+            self.current_selection.source_app
+            if self.current_selection is not None
+            else ""
+        )
+        return "\n".join(
+            (
+                f"{APP_NAME} diagnostics",
+                f"Version: {display_version()}",
+                f"Packaged build: {bool(getattr(sys, 'frozen', False))}",
+                f"Windows: {platform.platform()}",
+                f"Source application: {source_app or 'not captured'}",
+                f"Automatic submission: {self.settings.auto_submit_enabled}",
+                "Last automation: "
+                + (
+                    "none"
+                    if result is None
+                    else (
+                        f"submitted={result.submitted}, "
+                        f"prepared={result.prepared}, "
+                        f"replaced={result.selection_replaced}, "
+                        f"copied={result.generated_text_copied}, "
+                        f"failed={result.output_failed}, "
+                        f"cancelled={result.cancelled}"
+                    )
+                ),
+                f"Log folder: {self.paths.data_dir}",
+                "Selected text, prompts, responses, writing actions, free-text "
+                "settings and window titles are intentionally excluded.",
+            )
+        )
+
+    def copy_diagnostics(self) -> None:
+        try:
+            write_clipboard_text(self._diagnostics_text())
+        except Exception as exc:
+            self.notify(
+                "Diagnostics could not be copied",
+                str(exc),
+                QSystemTrayIcon.MessageIcon.Warning,
+            )
+            return
+        self.notify(
+            "Diagnostics copied",
+            "Privacy-filtered diagnostic information is on the clipboard.",
+            QSystemTrayIcon.MessageIcon.Information,
+        )
+
+    def open_log_folder(self) -> None:
+        self.paths.ensure()
+        if not QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(self.paths.data_dir))
+        ):
+            self.notify(
+                "Log folder could not be opened",
+                str(self.paths.data_dir),
+                QSystemTrayIcon.MessageIcon.Warning,
             )
 
     def reload_configuration_after_save(self) -> None:
@@ -1324,6 +1544,8 @@ class PromptMeld:
                 ),
                 ("update_release_requested", self.open_update_release),
                 ("update_install_requested", self.download_update),
+                ("diagnostics_copy_requested", self.copy_diagnostics),
+                ("diagnostics_open_requested", self.open_log_folder),
             )
             for signal_name, callback in update_signals:
                 signal = getattr(dialog, signal_name, None)
@@ -1549,6 +1771,8 @@ class PromptMeld:
             QTimer.singleShot(0, self.open_action_settings)
 
     def quit(self) -> None:
+        if self.automation_cancel_event is not None:
+            self.automation_cancel_event.set()
         if self.update_cancel_event is not None:
             self.update_cancel_event.set()
         if self.update_progress_dialog is not None:
