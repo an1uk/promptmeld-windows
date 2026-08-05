@@ -13,7 +13,11 @@ the release notes and verified installer actions.
 
 The action manager lets you:
 
-- Add, duplicate, delete, enable, and reorder actions.
+- Add or duplicate actions through a short guided wizard, then delete, enable,
+  and reorder them in the full editor.
+- Import and export portable, readable JSON action packs.
+- Add optional starter packs for editing, email, complaints, reports, and
+  social posts without replacing the current library.
 - Organise actions in folders and nested folders.
 - Edit action names, search keywords, and ChatGPT instructions.
 - Pin actions to the launcher home screen.
@@ -26,6 +30,47 @@ The action manager lets you:
 
 Changes take effect immediately after **Save**. Required fields and action IDs
 are validated before saving.
+
+The creation and duplication wizard covers the visible name and instruction
+first, followed by folder, search keywords, icon, behaviour, and an optional
+shortcut. The shortcut can be tested against existing PromptMeld shortcuts and
+Windows before the action is created. The full editor remains available for
+later adjustments. A final test page combines the draft action with editable
+sample text and previews the complete request locally; it does not contact
+ChatGPT.
+
+Action-pack imports preserve action order, folders, icons, behaviour, and
+non-conflicting shortcuts. PromptMeld adapts duplicate internal IDs and clears
+shortcuts that would clash with an enabled action already in the library.
+Exports can contain one selected action or the complete library. The JSON is
+UTF-8 text intended to be readable and version-controllable. It references but
+does not embed custom image files.
+
+An exported pack has this top-level structure:
+
+```json
+{
+  "format": "promptmeld-action-pack",
+  "format_version": 1,
+  "name": "My editing tools",
+  "description": "Actions shared by the writing team.",
+  "actions": [
+    {
+      "id": "make-clear",
+      "name": "Make clear",
+      "keywords": ["clarity", "edit"],
+      "instruction": "Improve clarity without changing the meaning.",
+      "hotkey": null,
+      "enabled": true,
+      "icon": "lucide:sparkles",
+      "folder": "Editing",
+      "show_on_home": false,
+      "natural_voice": "inherit",
+      "guided_drafting": false
+    }
+  ]
+}
+```
 
 Use `/` in a folder name to create nesting, for example
 `Replies & arguments/Analysis`. Search covers every folder, while frequently
@@ -41,6 +86,20 @@ The **General** tab controls:
   custom language.
 - The number of most-used actions shown on the launcher home screen.
 - Whether PromptMeld starts automatically when you sign in to Windows.
+- A reusable first-use setup guide with launcher-shortcut testing.
+- The ChatGPT Project base name and naming strategy:
+  - **Writing action or folder** keeps the current organisation, for example
+    `PromptMeld - Editing`.
+  - **One project for everything** uses the base name alone, normally
+    `PromptMeld`.
+  - **Application the text came from** appends a friendly source-application
+    name, for example `PromptMeld - Microsoft Outlook`.
+
+Application profiles can override the project base name for one executable.
+The selected overall naming strategy is then applied to that base. The
+one-project strategy deliberately ignores application-specific base overrides,
+ensuring every normal request uses the same project. Temporary Chat always
+bypasses Projects.
 
 ## Hotkeys
 
@@ -58,9 +117,9 @@ This is a useful clash check, but some applications handle keys without
 registering a Windows global hotkey and therefore cannot be detected in
 advance.
 
-## Defaults and writing style
+## Overall defaults
 
-The **Defaults & style** tab controls:
+The **Overall defaults** tab controls choices remembered across launches:
 
 - Automatic submission, which is off by default.
 - Copying generated text to the clipboard after ChatGPT responds. This also
@@ -88,7 +147,7 @@ launcher checkboxes. Changing **Preserve my natural voice**, **Guided
 questions** and **Submit automatically** in the launcher updates that remembered
 setting for the next use. The launcher's **Temporary Chat** checkbox is also
 remembered. Less frequently changed length, formatting, and writing-block
-settings are grouped under the launcher's **Output options** menu and are
+settings are grouped under the launcher's **Remembered output** menu and are
 remembered in the same way.
 
 Automatic replacement is opt-in and the generated response may still be wrong
@@ -116,7 +175,7 @@ An application profile can override:
 - Whether the generated result replaces the verified source selection, is
   copied to the clipboard, or remains in ChatGPT.
 
-Every option can inherit its overall **Defaults & style** or launcher value, so
+Every option can inherit its **Overall defaults** or launcher value, so
 a profile only needs to describe what is genuinely different. A replacement
 profile still safely falls back to copying when the source does not expose an
 editable control.
@@ -135,8 +194,11 @@ are preserved.
 The **Backup & recovery** tab creates one portable ZIP file containing saved
 writing actions, settings, application profiles, hotkeys, and installed custom
 icons. Usage history, logs, update state, selected text, prompts, and responses
-are not included. If Configuration has unsaved changes, PromptMeld offers to
-save and include them or back up the last saved configuration.
+are not included. Suggested filenames contain the PromptMeld version and a
+timestamp. The internal manifest separately records the application version,
+creation time, and versioned backup format. If Configuration has unsaved
+changes, PromptMeld offers to save and include them or back up the last saved
+configuration.
 
 Restore validates the archive format, file paths, size, settings, and actions
 before changing anything. PromptMeld automatically creates a single-file
@@ -149,13 +211,13 @@ folder. Diagnostics contain versions, operational result flags, the source
 executable name and safe feature-state flags, but not selected text, prompts,
 responses, writing actions, free-text settings or window titles.
 
-The launcher's **Intent or additional context** field is deliberately temporary
-and is cleared whenever a new selection is captured. It adds the desired
-outcome, supplementary context, constraints, or points to include to either a
-configured action or a one-off instruction. PromptMeld separates these notes
-from the selected source text in the generated prompt.
+The launcher's **This request: intent or additional context** field is
+deliberately temporary and is cleared whenever a new selection is captured. It
+adds the desired outcome, supplementary context, constraints, or points to
+include to either a configured action or a one-off instruction. PromptMeld
+separates these notes from the selected source text in the generated prompt.
 
-The **Writing guidance** menu also applies only to the current request:
+The **Change this request** menu also applies only to the current request:
 
 - **Editing strength** adds no extra instruction at Default. Proofread limits
   changes to corrections, Improve permits useful rephrasing, and Rewrite
@@ -250,6 +312,7 @@ Home-screen, submission, language, and style settings are stored in
 ```json
 {
   "project_name": "PromptMeld",
+  "project_naming_mode": "action",
   "popup_hotkey": "Ctrl+Alt+Space",
   "home_most_used_count": 3,
   "auto_submit_enabled": false,

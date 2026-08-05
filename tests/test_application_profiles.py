@@ -83,3 +83,64 @@ def test_action_submission_uses_source_application_profile_defaults():
         "Client correspondence - Correspondence - Email"
     )
     assert options["selection"] == selection
+
+
+def test_action_submission_can_name_project_for_source_application():
+    app = object.__new__(PromptMeld)
+    app.settings = AppSettings(
+        project_naming_mode="application",
+        application_profiles={
+            "outlook.exe": ApplicationProfile(
+                project_name="Client correspondence"
+            )
+        },
+    )
+    app.prompt_builder = RecordingPromptBuilder()
+    app.usage = RecordingUsage()
+    app._confirm_automatic_replacement = lambda selection: True
+    submissions = []
+    app._submit_prompt = lambda prompt, **options: submissions.append(options)
+    selection = CapturedSelection(
+        "Original message",
+        42,
+        "Reply",
+        source_app="outlook.exe",
+    )
+    action = WritingAction(
+        "reply-email",
+        "Reply to email",
+        (),
+        "Draft a reply.",
+        folder="Correspondence/Email",
+    )
+
+    app._submit_action(action, selection)
+
+    assert submissions[0]["project_name"] == (
+        "Client correspondence - Microsoft Outlook"
+    )
+
+
+def test_single_project_mode_ignores_application_project_base_override():
+    app = object.__new__(PromptMeld)
+    app.settings = AppSettings(
+        project_name="PromptMeld",
+        project_naming_mode="single",
+        application_profiles={
+            "outlook.exe": ApplicationProfile(
+                project_name="Client correspondence"
+            )
+        },
+    )
+    app.prompt_builder = RecordingPromptBuilder()
+    app.usage = RecordingUsage()
+    app._confirm_automatic_replacement = lambda selection: True
+    submissions = []
+    app._submit_prompt = lambda prompt, **options: submissions.append(options)
+
+    app._submit_action(
+        WritingAction("reply", "Reply", (), "Draft a reply."),
+        CapturedSelection("Message", 42, "Mail", source_app="outlook.exe"),
+    )
+
+    assert submissions[0]["project_name"] == "PromptMeld"

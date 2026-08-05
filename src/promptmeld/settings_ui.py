@@ -33,9 +33,11 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QMenu,
     QPlainTextEdit,
     QProxyStyle,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QStyle,
     QTableWidget,
@@ -45,10 +47,20 @@ from PySide6.QtWidgets import (
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
+    QWizard,
+    QWizardPage,
     QWidget,
 )
 
 from . import display_version
+from .action_packs import (
+    ActionPack,
+    ActionPackError,
+    load_action_pack,
+    load_builtin_action_packs,
+    merge_action_pack,
+    save_action_pack,
+)
 from .config import (
     DEFAULT_FOLDER_ICONS,
     load_default_actions,
@@ -68,14 +80,17 @@ from .models import (
     DEFAULT_NATURAL_VOICE_INSTRUCTION,
     EDITING_STRENGTH_OPTIONS,
     PRIMARY_LANGUAGE_OPTIONS,
+    PROJECT_NAMING_OPTIONS,
     RECIPIENT_AUDIENCE_OPTIONS,
     RESULTING_TEXT_FORMATTING_OPTIONS,
     RESULTING_TEXT_LENGTH_OPTIONS,
     AppSettings,
     ApplicationProfile,
+    CapturedSelection,
     WritingAction,
 )
 from .paths import AppPaths
+from .prompting import PromptBuilder
 from .returning import (
     APPLICATION_RETURN_MODE_OPTIONS,
     APPLICATION_TOGGLE_OPTIONS,
@@ -140,8 +155,8 @@ class ApplicationProfileDialog(QDialog):
         root.addWidget(heading)
         explanation = QLabel(
             "Choose only the defaults that should differ for this application. "
-            "Inherited options continue to follow Defaults & style. Launcher "
-            "guidance can still be changed for an individual request."
+            "Inherited options continue to follow Overall defaults. Request "
+            "guidance can still be changed in the launcher for one selection."
         )
         explanation.setObjectName("muted")
         explanation.setWordWrap(True)
@@ -212,9 +227,16 @@ class ApplicationProfileDialog(QDialog):
         delivery_form = QFormLayout(delivery_group)
         self.project_name = QLineEdit(profile.project_name)
         self.project_name.setPlaceholderText(
-            f"Use action project ({overall.project_name})"
+            f"Use overall project base ({overall.project_name})"
         )
-        self.project_name.setAccessibleName("ChatGPT project base name")
+        self.project_name.setAccessibleName(
+            "Application-specific ChatGPT project base name"
+        )
+        if overall.project_naming_mode == "single":
+            self.project_name.setEnabled(False)
+            self.project_name.setToolTip(
+                "One-project mode always uses the overall project base name."
+            )
         self.auto_submit = self._combo(
             APPLICATION_TOGGLE_OPTIONS,
             profile.auto_submit,
@@ -230,7 +252,11 @@ class ApplicationProfileDialog(QDialog):
             profile.return_mode,
             "Generated result handling",
         )
-        self._add_row(delivery_form, "Project base name", self.project_name)
+        self._add_row(
+            delivery_form,
+            "Project base override",
+            self.project_name,
+        )
         self._add_row(delivery_form, "Submit automatically", self.auto_submit)
         self._add_row(delivery_form, "Temporary Chat", self.temporary_chat)
         self._add_row(delivery_form, "Generated result", self.return_mode)
@@ -238,7 +264,9 @@ class ApplicationProfileDialog(QDialog):
 
         note = QLabel(
             "Replacing or copying a generated result requires automatic "
-            "submission. Unsafe replacement still falls back to copying."
+            "submission. Unsafe replacement still falls back to copying. "
+            "The overall project-naming strategy still applies to any project "
+            "base override above; one-project mode ignores this override."
         )
         note.setObjectName("muted")
         note.setWordWrap(True)
@@ -458,6 +486,554 @@ class HotkeyCaptureEdit(QLineEdit):
         return cls._NAMED_KEYS.get(key)
 
 
+class FirstRunSetupWizard(QWizard):
+    """Short first-run guide with a Windows hotkey availability check."""
+
+    def __init__(
+        self,
+        popup_hotkey: str,
+        hotkey_availability: Callable[[str], bool],
+        action_hotkeys: dict[str, str] | None = None,
+        startup_enabled: bool = False,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.hotkey_availability = hotkey_availability
+        self.action_hotkeys: dict[tuple[int, int], str] = {}
+        for hotkey, name in (action_hotkeys or {}).items():
+            try:
+                parsed = parse_hotkey(hotkey)
+            except HotkeyParseError:
+                continue
+            self.action_hotkeys[
+                (parsed.modifiers, parsed.virtual_key)
+            ] = name
+        self.setWindowTitle(f"Welcome to {APP_NAME}")
+        self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
+        self.setOption(QWizard.WizardOption.NoBackButtonOnStartPage)
+        self.resize(680, 470)
+
+        welcome = QWizardPage()
+        welcome.setTitle("Write from anywhere in Windows")
+        welcome_layout = QVBoxLayout(welcome)
+        welcome_text = QLabel(
+            "Select text in Word, Outlook, a browser, or another application, "
+            "then open PromptMeld with one keyboard shortcut. Choose a writing "
+            "action and review the prepared request in ChatGPT."
+        )
+        welcome_text.setWordWrap(True)
+        welcome_layout.addWidget(welcome_text)
+        steps = QLabel(
+            "1. Select text\n"
+            "2. Press the launcher shortcut\n"
+            "3. Choose an action"
+        )
+        steps.setObjectName("formLabel")
+        welcome_layout.addWidget(steps)
+        welcome_layout.addStretch(1)
+        self.addPage(welcome)
+
+        hotkey_page = QWizardPage()
+        hotkey_page.setTitle("Choose and test the launcher shortcut")
+        hotkey_layout = QVBoxLayout(hotkey_page)
+        hotkey_text = QLabel(
+            "PromptMeld uses this global shortcut to capture the current "
+            "selection. Test it now to make sure Windows and other applications "
+            "have not reserved it."
+        )
+        hotkey_text.setWordWrap(True)
+        hotkey_layout.addWidget(hotkey_text)
+        hotkey_row = QHBoxLayout()
+        self.hotkey_editor = HotkeyCaptureEdit(popup_hotkey)
+        self.hotkey_editor.setAccessibleName("Launcher shortcut")
+        change_button = QPushButton("Change")
+        change_button.clicked.connect(self.hotkey_editor.begin_capture)
+        self.test_hotkey_button = QPushButton("Test availability")
+        self.test_hotkey_button.clicked.connect(self._test_hotkey)
+        hotkey_row.addWidget(self.hotkey_editor, 1)
+        hotkey_row.addWidget(change_button)
+        hotkey_row.addWidget(self.test_hotkey_button)
+        hotkey_layout.addLayout(hotkey_row)
+        self.hotkey_status = QLabel()
+        self.hotkey_status.setObjectName("hotkeyStatus")
+        self.hotkey_status.setWordWrap(True)
+        hotkey_layout.addWidget(self.hotkey_status)
+        hotkey_layout.addStretch(1)
+        self.hotkey_editor.hotkey_changed.connect(self._test_hotkey)
+        self.hotkey_editor.capture_rejected.connect(
+            lambda message: self._set_hotkey_result(False, message)
+        )
+        self.addPage(hotkey_page)
+
+        finish = QWizardPage()
+        finish.setTitle("Understand which choices are remembered")
+        finish_layout = QVBoxLayout(finish)
+        explanation = QLabel(
+            "Overall defaults in Configuration are remembered for future "
+            "requests. Application profiles can override them for a particular "
+            "source application. Audience, editing strength, factual protection, "
+            "intent, and other request guidance in the launcher apply only to "
+            "the current selection unless an application profile supplies them."
+        )
+        explanation.setWordWrap(True)
+        finish_layout.addWidget(explanation)
+        self.start_with_windows = QCheckBox(
+            "Start PromptMeld when I sign in to Windows"
+        )
+        self.start_with_windows.setChecked(startup_enabled)
+        finish_layout.addWidget(self.start_with_windows)
+        self.summary_label = QLabel()
+        self.summary_label.setObjectName("formLabel")
+        self.summary_label.setWordWrap(True)
+        finish_layout.addWidget(self.summary_label)
+        finish_layout.addStretch(1)
+        self.addPage(finish)
+
+        self.currentIdChanged.connect(self._update_summary)
+        self._test_hotkey()
+        self._update_summary()
+
+    def selected_hotkey(self) -> str:
+        return self.hotkey_editor.text().strip()
+
+    def _set_hotkey_result(self, available: bool, message: str) -> None:
+        self.hotkey_is_available = available
+        self.hotkey_status.setProperty(
+            "state",
+            "available" if available else "error",
+        )
+        self.hotkey_status.setText(message)
+        self.hotkey_status.style().unpolish(self.hotkey_status)
+        self.hotkey_status.style().polish(self.hotkey_status)
+        self._update_summary()
+
+    def _test_hotkey(self, *args) -> None:
+        hotkey = self.selected_hotkey()
+        try:
+            parsed = parse_hotkey(hotkey)
+        except HotkeyParseError as exc:
+            self._set_hotkey_result(False, str(exc))
+            return
+        conflict = self.action_hotkeys.get(
+            (parsed.modifiers, parsed.virtual_key)
+        )
+        if conflict:
+            self._set_hotkey_result(
+                False,
+                f"Already assigned to the writing action: {conflict}",
+            )
+            return
+        try:
+            available = self.hotkey_availability(hotkey)
+        except Exception:
+            available = False
+        self._set_hotkey_result(
+            available,
+            (
+                "Available - Windows accepted this shortcut."
+                if available
+                else "Unavailable - Windows or another application is using it."
+            ),
+        )
+
+    def _update_summary(self, *args) -> None:
+        if not hasattr(self, "summary_label"):
+            return
+        status = "tested and available" if self.hotkey_is_available else "not ready"
+        self.summary_label.setText(
+            f"Launcher shortcut: {self.selected_hotkey() or 'Not set'} "
+            f"({status})"
+        )
+
+    def accept(self) -> None:
+        self._test_hotkey()
+        if not self.hotkey_is_available:
+            QMessageBox.warning(
+                self,
+                "Choose an available shortcut",
+                "Test and choose an available launcher shortcut before "
+                "finishing setup.",
+            )
+            return
+        super().accept()
+
+
+class ActionCreationWizard(QWizard):
+    """Guide creation or duplication of a writing action."""
+
+    def __init__(
+        self,
+        source: WritingAction,
+        icon_provider: ActionIconProvider,
+        folders: tuple[str, ...] = (),
+        used_hotkeys: dict[str, str] | None = None,
+        hotkey_availability: Callable[[str], bool] | None = None,
+        mode: str = "create",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.icon_provider = icon_provider
+        self.used_hotkeys: dict[tuple[int, int], str] = {}
+        for hotkey, name in (used_hotkeys or {}).items():
+            try:
+                parsed = parse_hotkey(hotkey)
+            except HotkeyParseError:
+                continue
+            self.used_hotkeys[
+                (parsed.modifiers, parsed.virtual_key)
+            ] = name
+        self.hotkey_availability = hotkey_availability
+        self.hotkey_is_available = not bool(source.hotkey)
+        duplicate = mode == "duplicate"
+        self.setWindowTitle(
+            "Duplicate writing action" if duplicate else "Create writing action"
+        )
+        self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
+        self.setOption(QWizard.WizardOption.NoBackButtonOnStartPage)
+        self.resize(720, 560)
+
+        essentials = QWizardPage()
+        essentials.setTitle(
+            "Name the copy" if duplicate else "Describe the writing action"
+        )
+        essentials.setSubTitle(
+            "These are the details people see and the instruction sent with "
+            "the selected text."
+        )
+        essentials_form = QFormLayout(essentials)
+        self.name = QLineEdit(source.name)
+        self.name.setPlaceholderText("e.g. Make more diplomatic")
+        self.name.setAccessibleName("Writing action name")
+        self.folder = NoWheelComboBox()
+        self.folder.setEditable(True)
+        self.folder.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.folder.addItem("Top level", "")
+        for folder in folders:
+            self.folder.addItem(folder, folder)
+        self.folder.setCurrentText(source.folder)
+        self.folder.lineEdit().setPlaceholderText(
+            "Top level, or e.g. Replies / Customer service"
+        )
+        self.instruction = QPlainTextEdit(source.instruction)
+        self.instruction.setPlaceholderText(
+            "Describe how ChatGPT should transform the selected text."
+        )
+        self.instruction.setMinimumHeight(180)
+        essentials_form.addRow("Name", self.name)
+        essentials_form.addRow("Folder", self.folder)
+        essentials_form.addRow("Instruction", self.instruction)
+        self.addPage(essentials)
+
+        discovery = QWizardPage()
+        discovery.setTitle("Make the action easy to find")
+        discovery.setSubTitle(
+            "Keywords improve launcher search. Choose a familiar icon, or use "
+            "an image of your own."
+        )
+        discovery_form = QFormLayout(discovery)
+        self.keywords = QLineEdit(", ".join(source.keywords))
+        self.keywords.setPlaceholderText("e.g. polite, tone, tactful")
+        icon_row = QHBoxLayout()
+        self.icon_preview = QLabel()
+        self.icon_preview.setFixedSize(44, 44)
+        self.icon_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.icon = NoWheelComboBox()
+        self.icon.setEditable(True)
+        self.icon.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.icon.lineEdit().setPlaceholderText(
+            "Choose an icon or type an emoji"
+        )
+        for label, spec in icon_provider.CATALOG:
+            self.icon.addItem(
+                icon_provider.icon_for_spec(spec, spec, 30),
+                label,
+                spec,
+            )
+        selected_icon = self.icon.findData(source.icon)
+        if selected_icon >= 0:
+            self.icon.setCurrentIndex(selected_icon)
+        else:
+            self.icon.setCurrentText(source.icon)
+        self.choose_icon_button = QPushButton("Choose file…")
+        self.choose_icon_button.clicked.connect(self._choose_icon_file)
+        icon_row.addWidget(self.icon_preview)
+        icon_row.addWidget(self.icon, 1)
+        icon_row.addWidget(self.choose_icon_button)
+        discovery_form.addRow("Search keywords", self.keywords)
+        discovery_form.addRow("Icon", icon_row)
+        self.addPage(discovery)
+
+        behaviour = QWizardPage()
+        behaviour.setTitle("Choose behaviour and an optional shortcut")
+        behaviour.setSubTitle(
+            "These choices can be changed later under Writing actions."
+        )
+        behaviour_layout = QVBoxLayout(behaviour)
+        behaviour_form = QFormLayout()
+        self.enabled = QCheckBox("Show this action in the launcher")
+        self.enabled.setChecked(source.enabled)
+        self.show_on_home = QCheckBox(
+            "Show as a fixed direct action on launcher home"
+        )
+        self.show_on_home.setChecked(source.show_on_home)
+        self.natural_voice = NoWheelComboBox()
+        self.natural_voice.addItem("Follow the launcher choice", "inherit")
+        self.natural_voice.addItem("Always apply", "always")
+        self.natural_voice.addItem("Never apply", "never")
+        self.natural_voice.setCurrentIndex(
+            max(0, self.natural_voice.findData(source.natural_voice))
+        )
+        self.guided_drafting = QCheckBox(
+            "Allow guided questions when enabled overall"
+        )
+        self.guided_drafting.setChecked(source.guided_drafting)
+        behaviour_form.addRow("Availability", self.enabled)
+        behaviour_form.addRow("Launcher home", self.show_on_home)
+        behaviour_form.addRow("Natural voice", self.natural_voice)
+        behaviour_form.addRow("Guided drafting", self.guided_drafting)
+        behaviour_layout.addLayout(behaviour_form)
+        shortcut_label = QLabel("Optional global shortcut")
+        shortcut_label.setObjectName("formLabel")
+        behaviour_layout.addWidget(shortcut_label)
+        shortcut_row = QHBoxLayout()
+        self.hotkey = HotkeyCaptureEdit(source.hotkey or "")
+        self.hotkey.setAccessibleName("Writing action shortcut")
+        change_button = QPushButton("Change")
+        change_button.clicked.connect(self.hotkey.begin_capture)
+        clear_button = QPushButton("Clear")
+        clear_button.clicked.connect(self.hotkey.clear_hotkey)
+        self.test_hotkey_button = QPushButton("Test availability")
+        self.test_hotkey_button.clicked.connect(self._test_hotkey)
+        shortcut_row.addWidget(self.hotkey, 1)
+        shortcut_row.addWidget(change_button)
+        shortcut_row.addWidget(clear_button)
+        shortcut_row.addWidget(self.test_hotkey_button)
+        behaviour_layout.addLayout(shortcut_row)
+        self.hotkey_status = QLabel()
+        self.hotkey_status.setObjectName("hotkeyStatus")
+        self.hotkey_status.setWordWrap(True)
+        behaviour_layout.addWidget(self.hotkey_status)
+        behaviour_layout.addStretch(1)
+        self.hotkey.hotkey_changed.connect(self._test_hotkey)
+        self.hotkey.capture_rejected.connect(
+            lambda message: self._set_hotkey_result(False, message)
+        )
+        self.addPage(behaviour)
+
+        preview = QWizardPage()
+        preview.setTitle("Test the action with sample text")
+        preview.setSubTitle(
+            "Preview the complete request that PromptMeld would prepare. "
+            "Nothing is sent to ChatGPT from this page."
+        )
+        preview_layout = QVBoxLayout(preview)
+        sample_label = QLabel("Sample selected text")
+        sample_label.setObjectName("formLabel")
+        preview_layout.addWidget(sample_label)
+        self.sample_text = QPlainTextEdit()
+        self.sample_text.setPlaceholderText(
+            "Paste or type a short example that this action should handle."
+        )
+        self.sample_text.setPlainText(
+            "I wanted to check whether you can send the revised document by Friday."
+        )
+        self.sample_text.setMaximumHeight(95)
+        preview_layout.addWidget(self.sample_text)
+        preview_button_row = QHBoxLayout()
+        preview_note = QLabel(
+            "The preview includes PromptMeld's safety and output requirements."
+        )
+        preview_note.setObjectName("muted")
+        self.preview_action_button = QPushButton("Refresh test preview")
+        self.preview_action_button.clicked.connect(self._preview_action)
+        preview_button_row.addWidget(preview_note, 1)
+        preview_button_row.addWidget(self.preview_action_button)
+        preview_layout.addLayout(preview_button_row)
+        prompt_label = QLabel("Prepared ChatGPT request")
+        prompt_label.setObjectName("formLabel")
+        preview_layout.addWidget(prompt_label)
+        self.prompt_preview = QPlainTextEdit()
+        self.prompt_preview.setReadOnly(True)
+        self.prompt_preview.setAccessibleName(
+            "Prepared ChatGPT request preview"
+        )
+        preview_layout.addWidget(self.prompt_preview, 1)
+        self.addPage(preview)
+
+        self.icon.currentIndexChanged.connect(self._update_icon_preview)
+        self.icon.lineEdit().textChanged.connect(self._update_icon_preview)
+        self.currentIdChanged.connect(self._wizard_page_changed)
+        self._update_icon_preview()
+        self._test_hotkey()
+
+    def _selected_icon_spec(self) -> str:
+        index = self.icon.currentIndex()
+        if index >= 0 and self.icon.currentText() == self.icon.itemText(index):
+            return str(self.icon.itemData(index) or "")
+        return self.icon.currentText().strip()
+
+    def _update_icon_preview(self, *args) -> None:
+        icon = self.icon_provider.icon_for_spec(
+            self._selected_icon_spec(),
+            "action-wizard-preview",
+            38,
+        )
+        self.icon_preview.setPixmap(icon.pixmap(38, 38))
+
+    def _choose_icon_file(self) -> None:
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose action icon",
+            str(Path.home()),
+            "Images (*.png *.svg *.ico *.jpg *.jpeg *.bmp *.webp)",
+        )
+        if filename:
+            self.icon.setCurrentText(filename)
+
+    def _set_hotkey_result(self, available: bool, message: str) -> None:
+        self.hotkey_is_available = available
+        self.hotkey_status.setProperty(
+            "state",
+            "available" if available else "error",
+        )
+        self.hotkey_status.setText(message)
+        self.hotkey_status.style().unpolish(self.hotkey_status)
+        self.hotkey_status.style().polish(self.hotkey_status)
+
+    def _test_hotkey(self, *args) -> None:
+        hotkey = self.hotkey.text().strip()
+        if not hotkey:
+            self._set_hotkey_result(
+                True,
+                "No shortcut assigned. The action remains available in the launcher.",
+            )
+            return
+        try:
+            parsed = parse_hotkey(hotkey)
+        except HotkeyParseError as exc:
+            self._set_hotkey_result(False, str(exc))
+            return
+        conflict = self.used_hotkeys.get(
+            (parsed.modifiers, parsed.virtual_key)
+        )
+        if conflict:
+            self._set_hotkey_result(
+                False,
+                f"Already assigned to: {conflict}",
+            )
+            return
+        if self.hotkey_availability is None:
+            self._set_hotkey_result(
+                True,
+                "Shortcut format is valid. Save to register it with Windows.",
+            )
+            return
+        try:
+            available = self.hotkey_availability(hotkey)
+        except Exception:
+            available = False
+        self._set_hotkey_result(
+            available,
+            (
+                "Available - Windows accepted this shortcut."
+                if available
+                else "Unavailable - Windows or another application is using it."
+            ),
+        )
+
+    def _wizard_page_changed(self, page_id: int) -> None:
+        if page_id == 3:
+            self._preview_action()
+
+    def _preview_action(self) -> None:
+        sample = self.sample_text.toPlainText().strip()
+        if not self.instruction.toPlainText().strip():
+            self.prompt_preview.setPlainText(
+                "Add the writing instruction on the first page to preview it."
+            )
+            return
+        if not sample:
+            self.prompt_preview.setPlainText(
+                "Add sample selected text to preview this action."
+            )
+            return
+        try:
+            prompt = PromptBuilder().build(
+                self.action("action-preview"),
+                CapturedSelection(sample, 0, "Action test"),
+                natural_voice_enabled=True,
+                natural_voice_instruction=(
+                    DEFAULT_NATURAL_VOICE_INSTRUCTION
+                ),
+                guided_drafting_enabled=True,
+            )
+        except ValueError as exc:
+            self.prompt_preview.setPlainText(str(exc))
+            return
+        self.prompt_preview.setPlainText(prompt)
+
+    def action(self, action_id: str) -> WritingAction:
+        return WritingAction(
+            id=action_id,
+            name=self.name.text().strip(),
+            keywords=tuple(
+                keyword.strip()
+                for keyword in self.keywords.text().split(",")
+                if keyword.strip()
+            ),
+            instruction=self.instruction.toPlainText().strip(),
+            hotkey=self.hotkey.text().strip() or None,
+            enabled=self.enabled.isChecked(),
+            icon=self._selected_icon_spec(),
+            folder=normalize_folder(self.folder.currentText()),
+            show_on_home=self.show_on_home.isChecked(),
+            natural_voice=str(self.natural_voice.currentData() or "inherit"),
+            guided_drafting=self.guided_drafting.isChecked(),
+        )
+
+    def _go_back_to(self, page_id: int) -> None:
+        while self.currentId() > page_id:
+            self.back()
+
+    def accept(self) -> None:
+        if not self.name.text().strip():
+            QMessageBox.warning(
+                self,
+                "Action name required",
+                "Enter a short name for this writing action.",
+            )
+            self._go_back_to(0)
+            self.name.setFocus()
+            return
+        if not self.instruction.toPlainText().strip():
+            QMessageBox.warning(
+                self,
+                "Instruction required",
+                "Describe how ChatGPT should transform the selected text.",
+            )
+            self._go_back_to(0)
+            self.instruction.setFocus()
+            return
+        try:
+            normalize_folder(self.folder.currentText())
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid folder", str(exc))
+            self._go_back_to(0)
+            self.folder.setFocus()
+            return
+        self._test_hotkey()
+        if not self.hotkey_is_available:
+            QMessageBox.warning(
+                self,
+                "Choose an available shortcut",
+                "Clear the shortcut or choose one that is available before "
+                "finishing.",
+            )
+            self._go_back_to(2)
+            return
+        super().accept()
+
+
 class ActionSettingsDialog(QDialog):
     actions_saved = Signal()
     update_check_requested = Signal()
@@ -488,6 +1064,7 @@ class ActionSettingsDialog(QDialog):
         self.settings = settings
         self.folder_icons = dict(settings.folder_icons if settings else {})
         self.actions = list(actions)
+        self.builtin_action_packs = load_builtin_action_packs()
         self.current_row = -1
         self.selected_folder = ""
         self._loading = False
@@ -508,8 +1085,8 @@ class ActionSettingsDialog(QDialog):
         heading_row.addStretch(1)
         heading_row.addWidget(self.tagline)
         description = QLabel(
-            "Configure writing actions, hotkeys, launcher preferences, and "
-            "writing defaults."
+            "Set remembered overall defaults, application-specific overrides, "
+            "writing actions, and shortcuts."
         )
         description.setObjectName("muted")
         description.setWordWrap(True)
@@ -814,7 +1391,35 @@ class ActionSettingsDialog(QDialog):
         order_buttons.addWidget(self.down_button)
         left.addLayout(order_buttons)
 
-        self.starter_button = QPushButton("Load starter action set…")
+        pack_buttons = QHBoxLayout()
+        self.import_pack_button = QPushButton("Import pack…")
+        self.export_pack_button = QPushButton("Export pack")
+        self.export_pack_menu = QMenu(self.export_pack_button)
+        self.export_selected_pack_action = self.export_pack_menu.addAction(
+            "Export selected action…"
+        )
+        self.export_all_pack_action = self.export_pack_menu.addAction(
+            "Export all actions…"
+        )
+        self.export_pack_button.setMenu(self.export_pack_menu)
+        pack_buttons.addWidget(self.import_pack_button)
+        pack_buttons.addWidget(self.export_pack_button)
+        left.addLayout(pack_buttons)
+
+        self.starter_pack_button = QPushButton("Add starter pack")
+        self.starter_pack_menu = QMenu(self.starter_pack_button)
+        for pack in self.builtin_action_packs:
+            pack_action = self.starter_pack_menu.addAction(pack.name)
+            pack_action.setToolTip(pack.description)
+            pack_action.triggered.connect(
+                lambda _checked=False, selected=pack: (
+                    self._add_builtin_action_pack(selected)
+                )
+            )
+        self.starter_pack_button.setMenu(self.starter_pack_menu)
+        left.addWidget(self.starter_pack_button)
+
+        self.starter_button = QPushButton("Replace with default library…")
         left.addWidget(self.starter_button)
 
         left_widget = QWidget()
@@ -1056,14 +1661,76 @@ class ActionSettingsDialog(QDialog):
         hotkey_footer.addWidget(hotkey_note, 1)
         hotkey_footer.addWidget(self.check_hotkeys_button)
         hotkeys_layout.addLayout(hotkey_footer)
-        general_page = QWidget()
+        general_page = QScrollArea()
         general_page.setObjectName("settingsPage")
-        general_layout = QVBoxLayout(general_page)
+        general_page.setWidgetResizable(True)
+        general_page.setFrameShape(QFrame.Shape.NoFrame)
+        general_page.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        general_content = QWidget()
+        general_layout = QVBoxLayout(general_content)
         general_layout.setContentsMargins(22, 18, 22, 18)
         general_layout.setSpacing(16)
+        general_page.setWidget(general_content)
         launcher_group = QGroupBox("Launcher")
         launcher_layout = QVBoxLayout(launcher_group)
         launcher_layout.addLayout(home_row)
+        setup_guide_row = QHBoxLayout()
+        setup_guide_note = QLabel(
+            "Review the basic workflow and test the global launcher shortcut."
+        )
+        setup_guide_note.setObjectName("muted")
+        setup_guide_note.setWordWrap(True)
+        self.setup_guide_button = QPushButton("Run first-use setup guide…")
+        self.setup_guide_button.clicked.connect(self._open_setup_guide)
+        setup_guide_row.addWidget(setup_guide_note, 1)
+        setup_guide_row.addWidget(self.setup_guide_button)
+        launcher_layout.addLayout(setup_guide_row)
+
+        projects_group = QGroupBox("ChatGPT Projects")
+        projects_layout = QVBoxLayout(projects_group)
+        project_base_row = QHBoxLayout()
+        project_base_label = QLabel("Project base name")
+        project_base_label.setObjectName("formLabel")
+        self.project_name = QLineEdit(voice_settings.project_name)
+        self.project_name.setAccessibleName("ChatGPT project base name")
+        self.project_name.setPlaceholderText("PromptMeld")
+        project_base_row.addWidget(project_base_label)
+        project_base_row.addWidget(self.project_name, 1)
+        projects_layout.addLayout(project_base_row)
+        project_mode_row = QHBoxLayout()
+        project_mode_label = QLabel("Decide the project name by")
+        project_mode_label.setObjectName("formLabel")
+        self.project_naming_mode = NoWheelComboBox()
+        for value, label in PROJECT_NAMING_OPTIONS:
+            self.project_naming_mode.addItem(label, value)
+        self.project_naming_mode.setCurrentIndex(
+            max(
+                0,
+                self.project_naming_mode.findData(
+                    voice_settings.project_naming_mode
+                ),
+            )
+        )
+        self.project_naming_mode.setAccessibleName(
+            "ChatGPT project naming strategy"
+        )
+        project_mode_row.addWidget(project_mode_label)
+        project_mode_row.addWidget(self.project_naming_mode, 1)
+        projects_layout.addLayout(project_mode_row)
+        self.project_naming_example = QLabel()
+        self.project_naming_example.setObjectName("muted")
+        self.project_naming_example.setWordWrap(True)
+        projects_layout.addWidget(self.project_naming_example)
+        self.project_name.textChanged.connect(
+            self._update_project_naming_example
+        )
+        self.project_naming_mode.currentIndexChanged.connect(
+            self._update_project_naming_example
+        )
+        self._update_project_naming_example()
+
         startup_group = QGroupBox("Windows")
         startup_layout = QVBoxLayout(startup_group)
         self.start_with_windows = QCheckBox(
@@ -1132,6 +1799,7 @@ class ActionSettingsDialog(QDialog):
         about_layout.addWidget(self.github_link)
         general_layout.addWidget(appearance_group)
         general_layout.addWidget(launcher_group)
+        general_layout.addWidget(projects_group)
         general_layout.addWidget(startup_group)
         general_layout.addWidget(updates_group)
         general_layout.addWidget(about_group)
@@ -1144,7 +1812,7 @@ class ActionSettingsDialog(QDialog):
         applications_layout.setSpacing(14)
         applications_intro = QLabel(
             "Give individual Windows applications writing and delivery "
-            "defaults that differ from Defaults & style. Starter profiles "
+            "defaults that override Overall defaults. Starter profiles "
             "demonstrate safer result handling and useful plain-text or "
             "concise output for common editors, mail and messaging apps."
         )
@@ -1245,7 +1913,8 @@ class ActionSettingsDialog(QDialog):
             "Create one portable ZIP file containing writing actions, settings, "
             "application profiles, hotkeys, and installed custom icons. Usage "
             "history, logs, update state, selected text, prompts and responses "
-            "are not included."
+            "are not included. Each file records its creation time, PromptMeld "
+            "version and backup-format version."
         )
         backup_note.setObjectName("muted")
         backup_note.setWordWrap(True)
@@ -1333,6 +2002,14 @@ class ActionSettingsDialog(QDialog):
         defaults_layout = QVBoxLayout(defaults_page)
         defaults_layout.setContentsMargins(22, 18, 22, 18)
         defaults_layout.setSpacing(12)
+        defaults_intro = QLabel(
+            "These choices are remembered across launches. An application "
+            "profile can override them for one program; choices labelled "
+            "This request in the launcher apply only to the current selection."
+        )
+        defaults_intro.setObjectName("muted")
+        defaults_intro.setWordWrap(True)
+        defaults_layout.addWidget(defaults_intro)
         defaults_layout.addWidget(output_group)
         defaults_layout.addWidget(submission_group)
         defaults_layout.addWidget(voice_group)
@@ -1342,7 +2019,7 @@ class ActionSettingsDialog(QDialog):
         self.tabs.addTab(applications_page, "Applications")
         self.tabs.addTab(actions_page, "Writing actions")
         self.tabs.addTab(hotkeys_page, "Hotkeys")
-        self.tabs.addTab(defaults_page, "Defaults & style")
+        self.tabs.addTab(defaults_page, "Overall defaults")
         self.tabs.addTab(recovery_page, "Backup && recovery")
         self.tabs.currentChanged.connect(self._tab_changed)
         self.check_for_updates.stateChanged.connect(self._mark_unsaved)
@@ -1372,6 +2049,13 @@ class ActionSettingsDialog(QDialog):
         self.up_button.clicked.connect(lambda: self._move_action(-1))
         self.down_button.clicked.connect(lambda: self._move_action(1))
         self.starter_button.clicked.connect(self._load_starter_set)
+        self.import_pack_button.clicked.connect(self._import_action_pack)
+        self.export_selected_pack_action.triggered.connect(
+            lambda: self._export_action_pack(selected_only=True)
+        )
+        self.export_all_pack_action.triggered.connect(
+            lambda: self._export_action_pack(selected_only=False)
+        )
         self.reset_voice_button.clicked.connect(
             self._restore_natural_voice_wording
         )
@@ -1391,6 +2075,8 @@ class ActionSettingsDialog(QDialog):
             self.instruction.textChanged,
             self.most_used_count.valueChanged,
             self.primary_language.currentTextChanged,
+            self.project_name.textChanged,
+            self.project_naming_mode.currentIndexChanged,
             self.resulting_text_length.currentIndexChanged,
             self.resulting_text_formatting.currentIndexChanged,
             self.writing_block_default.toggled,
@@ -1605,6 +2291,30 @@ class ActionSettingsDialog(QDialog):
             ]
         self._mark_unsaved()
         self._update_hotkey_statuses(check_windows=True)
+
+    def _open_setup_guide(self) -> None:
+        self._commit_current()
+        action_hotkeys = {
+            action.hotkey: action.name
+            for action in self.actions
+            if action.hotkey and action.enabled
+        }
+        wizard = FirstRunSetupWizard(
+            self.popup_hotkey,
+            self.hotkey_availability or (lambda _hotkey: True),
+            action_hotkeys,
+            self.start_with_windows.isChecked(),
+            self,
+        )
+        if wizard.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.popup_hotkey = wizard.selected_hotkey()
+        self.launcher_hotkey_editor.set_hotkey(self.popup_hotkey)
+        self.start_with_windows.setChecked(
+            wizard.start_with_windows.isChecked()
+        )
+        self._update_hotkey_statuses(check_windows=True)
+        self._mark_unsaved()
 
     def _update_hotkey_statuses(self, check_windows: bool = False) -> None:
         for command_id, (state, message) in self._hotkey_assessments(
@@ -2031,7 +2741,16 @@ class ActionSettingsDialog(QDialog):
         dialog = ApplicationProfileDialog(
             application,
             profile,
-            self.application_profile_overall_settings,
+            replace(
+                self.application_profile_overall_settings,
+                project_name=(
+                    self.project_name.text().strip()
+                    or self.application_profile_overall_settings.project_name
+                ),
+                project_naming_mode=str(
+                    self.project_naming_mode.currentData() or "action"
+                ),
+            ),
             self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -2067,6 +2786,8 @@ class ActionSettingsDialog(QDialog):
             self.check_for_updates.isChecked(),
             tuple(sorted(self._application_profiles().items())),
             self.most_used_count.value(),
+            self.project_name.text().strip(),
+            str(self.project_naming_mode.currentData() or "action"),
             self.primary_language.currentText().strip(),
             str(self.resulting_text_length.currentData() or "default"),
             str(self.resulting_text_formatting.currentData() or "default"),
@@ -2133,36 +2854,69 @@ class ActionSettingsDialog(QDialog):
         self._commit_current()
         folder = self.selected_folder
         action_id = self._unique_id("new-action")
-        self.actions.append(
-            WritingAction(
-                id=action_id,
-                name="New action",
-                keywords=(),
-                instruction="Rewrite the text as requested.",
-                icon="lucide:wand-sparkles",
-                folder=folder,
-            )
+        source = WritingAction(
+            id=action_id,
+            name="",
+            keywords=(),
+            instruction="",
+            icon="lucide:wand-sparkles",
+            folder=folder,
         )
+        wizard = self._action_wizard(source, "create")
+        if wizard.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.actions.append(wizard.action(action_id))
         self._refresh_list(len(self.actions) - 1)
         self._mark_unsaved()
-        self.name.selectAll()
-        self.name.setFocus()
 
     def _duplicate_action(self) -> None:
         self._commit_current()
         if not 0 <= self.current_row < len(self.actions):
             return
         source = self.actions[self.current_row]
-        duplicate = replace(
+        action_id = self._unique_id(f"{source.id}-copy")
+        source_copy = replace(
             source,
-            id=self._unique_id(f"{source.id}-copy"),
+            id=action_id,
             name=f"{source.name} copy",
             hotkey=None,
         )
+        wizard = self._action_wizard(source_copy, "duplicate")
+        if wizard.exec() != QDialog.DialogCode.Accepted:
+            return
+        duplicate = wizard.action(action_id)
         insert_at = self.current_row + 1
         self.actions.insert(insert_at, duplicate)
         self._refresh_list(insert_at)
         self._mark_unsaved()
+
+    def _action_wizard(
+        self,
+        source: WritingAction,
+        mode: str,
+    ) -> ActionCreationWizard:
+        folders = tuple(
+            dict.fromkeys(
+                action.folder for action in self.actions if action.folder
+            )
+        )
+        used_hotkeys = {self.popup_hotkey: "Open launcher"}
+        used_hotkeys.update(
+            {
+                action.hotkey: action.name
+                for action in self.actions
+                if action.hotkey and action.enabled
+            }
+        )
+        return ActionCreationWizard(
+            source,
+            self.icon_provider,
+            folders=folders,
+            used_hotkeys=used_hotkeys,
+            hotkey_availability=self.hotkey_availability,
+            mode=mode,
+            parent=self,
+        )
 
     def _delete_action(self) -> None:
         if not 0 <= self.current_row < len(self.actions):
@@ -2225,8 +2979,9 @@ class ActionSettingsDialog(QDialog):
             if response == QMessageBox.StandardButton.Yes and not self._save():
                 return
 
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
         default_name = (
-            f"PromptMeld-backup-{datetime.now().strftime('%Y-%m-%d')}.zip"
+            f"PromptMeld-backup-v{display_version()}-{timestamp}.zip"
         )
         filename, _ = QFileDialog.getSaveFileName(
             self,
@@ -2297,6 +3052,7 @@ class ActionSettingsDialog(QDialog):
             "Restore configuration backup?",
             f"Backup created: {summary.created_at}\n"
             f"PromptMeld version: {summary.app_version or 'Unknown'}\n"
+            f"Backup format: version {summary.format_version}\n"
             f"Writing actions: {summary.action_count}\n"
             f"Custom icons: {summary.icon_count}\n\n"
             "This will replace the saved actions and settings. PromptMeld "
@@ -2345,6 +3101,152 @@ class ActionSettingsDialog(QDialog):
         self._refresh_list(0 if self.actions else -1)
         self._mark_unsaved()
 
+    def _apply_action_pack(self, pack: ActionPack) -> None:
+        self._commit_current()
+        result = merge_action_pack(self.actions, pack)
+        self.actions = result.actions
+        self._populate_folder_choices()
+        self._refresh_list(result.first_added_index)
+        self._mark_unsaved()
+        adjustments: list[str] = []
+        if result.renamed_count:
+            adjustments.append(
+                f"adapted {result.renamed_count} duplicate internal ID(s)"
+            )
+        if result.cleared_hotkey_count:
+            adjustments.append(
+                f"cleared {result.cleared_hotkey_count} clashing shortcut(s)"
+            )
+        adjustment_note = (
+            "\n\nPromptMeld " + " and ".join(adjustments) + "."
+            if adjustments
+            else ""
+        )
+        QMessageBox.information(
+            self,
+            "Action pack added",
+            f"Added {result.added_count} action(s) from {pack.name}."
+            f"{adjustment_note}\n\nChoose Save to keep these changes.",
+        )
+
+    def _add_builtin_action_pack(self, pack: ActionPack) -> None:
+        response = QMessageBox.question(
+            self,
+            f"Add {pack.name}?",
+            f"{pack.description}\n\n"
+            f"Add these {len(pack.actions)} actions to the current library? "
+            "Existing actions will remain. Nothing is written until you "
+            "choose Save.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if response == QMessageBox.StandardButton.Yes:
+            self._apply_action_pack(pack)
+
+    def _import_action_pack(self) -> None:
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import PromptMeld action pack",
+            str(Path.home()),
+            "PromptMeld action pack (*.json);;JSON files (*.json)",
+        )
+        if not filename:
+            return
+        try:
+            pack = load_action_pack(Path(filename))
+        except (ActionPackError, OSError) as exc:
+            QMessageBox.warning(
+                self,
+                "Action pack could not be imported",
+                str(exc),
+            )
+            return
+        response = QMessageBox.question(
+            self,
+            f"Import {pack.name}?",
+            f"{pack.description or 'No description supplied.'}\n\n"
+            f"Add {len(pack.actions)} action(s) to the current library? "
+            "Existing actions will remain. JSON packs do not embed custom "
+            "image files.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if response == QMessageBox.StandardButton.Yes:
+            self._apply_action_pack(pack)
+
+    def _export_action_pack(self, selected_only: bool) -> None:
+        self._commit_current()
+        if selected_only:
+            if not 0 <= self.current_row < len(self.actions):
+                QMessageBox.warning(
+                    self,
+                    "Choose an action",
+                    "Select a writing action to export.",
+                )
+                return
+            selected = self.actions[self.current_row]
+            pack = ActionPack(
+                name=selected.name,
+                description=(
+                    f"A PromptMeld action pack containing {selected.name}."
+                ),
+                actions=(selected,),
+            )
+            default_name = f"PromptMeld-action-{selected.id}.json"
+        else:
+            if not self.actions:
+                QMessageBox.warning(
+                    self,
+                    "No actions to export",
+                    "The action library is empty.",
+                )
+                return
+            pack = ActionPack(
+                name="My PromptMeld actions",
+                description=(
+                    "A readable export of my PromptMeld writing-action library."
+                ),
+                actions=tuple(self.actions),
+            )
+            default_name = "PromptMeld-action-library.json"
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export PromptMeld action pack",
+            str(Path.home() / default_name),
+            "PromptMeld action pack (*.json)",
+        )
+        if not filename:
+            return
+        destination = Path(filename)
+        if destination.suffix.casefold() != ".json":
+            destination = destination.with_name(destination.name + ".json")
+        if destination.exists():
+            overwrite = QMessageBox.question(
+                self,
+                "Replace existing action pack?",
+                f"A file already exists at:\n\n{destination}\n\nReplace it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if overwrite != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            save_action_pack(destination, pack)
+        except (ActionPackError, OSError) as exc:
+            QMessageBox.warning(
+                self,
+                "Action pack could not be exported",
+                str(exc),
+            )
+            return
+        QMessageBox.information(
+            self,
+            "Action pack exported",
+            f"Saved {len(pack.actions)} action(s) as readable JSON:\n\n"
+            f"{destination}\n\nCustom image files are referenced but are not "
+            "embedded in an action pack.",
+        )
+
     def _restore_natural_voice_wording(self) -> None:
         self.natural_voice_instruction.setPlainText(
             DEFAULT_NATURAL_VOICE_INSTRUCTION
@@ -2358,6 +3260,10 @@ class ActionSettingsDialog(QDialog):
             if self.settings is not None:
                 self.settings = replace(
                     self.settings,
+                    project_name=self.project_name.text().strip(),
+                    project_naming_mode=str(
+                        self.project_naming_mode.currentData() or "action"
+                    ),
                     popup_hotkey=self.popup_hotkey,
                     theme=str(self.theme.currentData() or "auto"),
                     startup_enabled=self.start_with_windows.isChecked(),
@@ -2583,6 +3489,27 @@ class ActionSettingsDialog(QDialog):
     def _system_colour_scheme_changed(self, colour_scheme) -> None:
         if str(self.theme.currentData() or "auto") == "auto":
             self._apply_style()
+
+    def _update_project_naming_example(self, *args) -> None:
+        base = self.project_name.text().strip() or "PromptMeld"
+        mode = str(self.project_naming_mode.currentData() or "action")
+        if mode == "single":
+            example = base
+            explanation = "Every request uses this one project."
+        elif mode == "application":
+            example = f"{base} - Microsoft Outlook"
+            explanation = (
+                "The source application's friendly name is appended."
+            )
+        else:
+            example = f"{base} - Editing"
+            explanation = (
+                "The writing action's configured folder is appended."
+            )
+        self.project_naming_example.setText(
+            f"Example: {example}. {explanation} Temporary Chat still skips "
+            "Projects."
+        )
 
     def _update_about_link(self, light: bool) -> None:
         colour = "#244fae" if light else "#b8c8ff"

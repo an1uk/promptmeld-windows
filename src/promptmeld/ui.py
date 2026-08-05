@@ -193,6 +193,13 @@ class LauncherPopup(QWidget):
         )
         layout.addWidget(self.list, 1)
 
+        self.remembered_options_label = QLabel(
+            "Remembered choices (unless an application profile overrides them)"
+        )
+        self.remembered_options_label.setObjectName("hint")
+        self.remembered_options_label.setWordWrap(True)
+        layout.addWidget(self.remembered_options_label)
+
         self.natural_voice = QCheckBox("Preserve my natural voice")
         self.natural_voice.setChecked(self.natural_voice_enabled)
         self.natural_voice.setToolTip(
@@ -310,7 +317,7 @@ class LauncherPopup(QWidget):
             self.writing_block_actions[enabled] = action
         self.output_summary = QLabel()
         self.output_summary.setObjectName("hint")
-        self.output_button = QPushButton("Output options")
+        self.output_button = QPushButton("Remembered output")
         self.output_button.setMenu(self.output_menu)
         self.output_button.setToolTip(
             "Configure resulting text length, formatting, and writing blocks."
@@ -376,7 +383,7 @@ class LauncherPopup(QWidget):
 
         self.guidance_summary = QLabel()
         self.guidance_summary.setObjectName("hint")
-        self.guidance_button = QPushButton("Writing guidance")
+        self.guidance_button = QPushButton("Change this request")
         self.guidance_button.setMenu(self.guidance_menu)
         self.guidance_button.setToolTip(
             "Choose editing strength, factual protection, and the intended "
@@ -392,7 +399,7 @@ class LauncherPopup(QWidget):
         layout.addLayout(guidance_row)
 
         additional_label = QLabel(
-            "Intent or additional context (optional)"
+            "This request: intent or additional context (optional)"
         )
         additional_label.setObjectName("hint")
         layout.addWidget(additional_label)
@@ -785,7 +792,7 @@ class LauncherPopup(QWidget):
         if self.writing_block_enabled:
             parts.append("Writing block")
         summary = " · ".join(parts) if parts else "ChatGPT defaults"
-        self.output_summary.setText(f"Output: {summary}")
+        self.output_summary.setText(f"Remembered output: {summary}")
 
     def _update_guidance_summary(self) -> None:
         parts = [
@@ -803,7 +810,9 @@ class LauncherPopup(QWidget):
                 self.recipient_audience_value
             ]
         )
-        self.guidance_summary.setText("Guidance: " + " · ".join(parts))
+        self.guidance_summary.setText(
+            "This request: " + " · ".join(parts)
+        )
 
     def show_at_cursor(self) -> None:
         self.current_folder = ""

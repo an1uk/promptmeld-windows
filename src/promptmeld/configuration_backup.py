@@ -25,6 +25,7 @@ class ConfigurationBackupError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class ConfigurationBackupSummary:
+    format_version: int
     created_at: str
     app_version: str
     action_count: int
@@ -82,6 +83,7 @@ def create_configuration_backup(
     destination.parent.mkdir(parents=True, exist_ok=True)
     created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     summary = ConfigurationBackupSummary(
+        format_version=BACKUP_FORMAT_VERSION,
         created_at=created_at,
         app_version=display_version(),
         action_count=len(actions),
@@ -233,6 +235,7 @@ def _load_backup(archive_path: Path) -> _BackupContents:
         raise ConfigurationBackupError("The backup manifest metadata is invalid.")
     return _BackupContents(
         ConfigurationBackupSummary(
+            format_version=BACKUP_FORMAT_VERSION,
             created_at=created_at,
             app_version=app_version,
             action_count=len(actions),

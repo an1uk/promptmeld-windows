@@ -18,6 +18,11 @@ your account and plan.
 
 ## Basic workflow
 
+The first launch opens a short setup guide. It explains the three-step workflow,
+lets you record and test the global launcher shortcut against Windows and the
+included action shortcuts, and optionally enables startup with Windows. The
+guide can be opened again from **Configuration > General > Launcher**.
+
 1. Select text in another application.
 2. Press `Ctrl+Alt+Space`.
 3. Search for or choose a writing action.
@@ -39,15 +44,29 @@ commands when relevant, updates, and application exit.
 ## Writing actions and guidance
 
 PromptMeld includes 26 actions for editing, replies and arguments, tone and
-polish, technical help, and correspondence. You can add, organise, duplicate,
-disable, or remove actions in Configuration, and can enter a one-off custom
-instruction from the launcher.
+polish, technical help, and correspondence. **Add** and **Duplicate** open a
+short wizard for the action's instruction, location, search terms, icon,
+behaviour, and optional tested shortcut. Its final page combines sample text
+with the action and shows the complete request PromptMeld would send, without
+contacting ChatGPT. Actions can then be reorganised, disabled, or removed in
+Configuration. A one-off custom instruction remains available in the launcher.
 
-Use **Intent or additional context** to add a desired outcome, constraint, or
-point that is not already present in the source. PromptMeld keeps this guidance
-separate from the selected text.
+The Writing actions tab can import and export human-readable JSON action packs.
+Export either the selected action or the complete library. Imported actions are
+added without replacing the current library; duplicate internal IDs are
+adapted and shortcut clashes are cleared. Custom image files are referenced by
+the JSON but are not embedded, so use built-in icons or emoji for a pack that
+will move between computers.
 
-The **Writing guidance** menu provides per-request controls for:
+Five optional starter packs add focused sets for editing, email, complaints,
+reports, and social posts. They can be combined, edited, exported, or removed
+like any other actions.
+
+Use **This request: intent or additional context** to add a desired outcome,
+constraint, or point that is not already present in the source. PromptMeld
+keeps this guidance separate from the selected text.
+
+The **Change this request** menu provides per-request controls for:
 
 - **Editing strength:** Default, Proofread, Improve, or Rewrite.
 - **Preserve facts and specifics:** protects names, dates, amounts, quotations,
@@ -72,6 +91,25 @@ delivery defaults. Double-click an application row to configure:
 
 Every setting can inherit the overall default, so a profile only needs to
 specify what is different for that application.
+
+Under **Configuration > General > ChatGPT Projects**, choose how normal chats
+are organised:
+
+- **Writing action or folder** retains the current behaviour, producing names
+  such as `PromptMeld - Editing`.
+- **One project for everything** always uses `PromptMeld`.
+- **Application the text came from** produces names such as
+  `PromptMeld - Microsoft Outlook` or `PromptMeld - Google Chrome`.
+
+The project base name can be changed from `PromptMeld`. An application profile
+can supply a different base for that application, after which the same naming
+strategy is applied. **One project for everything** deliberately ignores those
+application overrides so every normal request uses the same project. Temporary
+Chat continues to bypass Projects entirely.
+
+The hierarchy is deliberate: **Overall defaults** are remembered, an
+application profile overrides them for one executable, and controls labelled
+**This request** reset when a new selection is captured.
 
 ![Example Microsoft Outlook application configuration](configure-application.png)
 
@@ -108,7 +146,9 @@ automation sequence, see [ChatGPT automation and fallback behaviour](AUTOMATION.
 Use **Configuration > Backup & recovery** to save actions, settings,
 application profiles, hotkeys, and installed custom icons in one portable ZIP
 file. The backup excludes usage history, logs, update state, selected text,
-prompts, and responses.
+prompts, and responses. Its suggested filename includes the PromptMeld version
+and creation time, while the internal manifest records the app version, backup
+format version, and timestamp for validated future restoration.
 
 Before restoring a validated backup, PromptMeld automatically saves the current
 configuration as a separate safety backup. The restored configuration is then

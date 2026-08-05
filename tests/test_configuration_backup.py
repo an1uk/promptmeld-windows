@@ -65,6 +65,7 @@ def test_backup_is_one_file_with_configuration_and_icons(tmp_path):
     assert backup.is_file()
     assert summary.action_count == 1
     assert summary.icon_count == 1
+    assert summary.format_version == 1
     with zipfile.ZipFile(backup) as archive:
         assert set(archive.namelist()) == {
             "promptmeld-backup.json",
@@ -102,6 +103,7 @@ def test_restore_replaces_configuration_and_creates_safety_backup(tmp_path):
     assert result.safety_backup.is_file()
     safety = inspect_configuration_backup(result.safety_backup)
     assert safety.action_count == 1
+    assert safety.format_version == 1
 
 
 def test_unsafe_archive_path_is_rejected(tmp_path):

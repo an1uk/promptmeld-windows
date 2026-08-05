@@ -1,0 +1,311 @@
+{
+  "format": "promptmeld-built-in-action-packs",
+  "format_version": 1,
+  "packs": [
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "editing",
+      "name": "Editing essentials",
+      "description": "Everyday proofreading, clarity, shortening and restructuring tools.",
+      "actions": [
+        {
+          "id": "editing-proofread",
+          "name": "Proofread with minimal changes",
+          "keywords": ["proofread", "grammar", "spelling", "minimal"],
+          "instruction": "Correct spelling, grammar, punctuation, and clear usage errors in the selected text. Preserve the wording, structure, tone, and meaning wherever a change is not necessary.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:spell-check-2",
+          "folder": "Editing",
+          "show_on_home": false,
+          "natural_voice": "inherit",
+          "guided_drafting": false
+        },
+        {
+          "id": "editing-clarity",
+          "name": "Improve clarity and flow",
+          "keywords": ["clarity", "flow", "readability", "improve"],
+          "instruction": "Improve the clarity, flow, and readability of the selected text while preserving its intended meaning and concrete details. Keep the result natural and avoid unnecessary rewriting.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:sparkles",
+          "folder": "Editing",
+          "show_on_home": false,
+          "natural_voice": "inherit",
+          "guided_drafting": false
+        },
+        {
+          "id": "editing-shorten",
+          "name": "Shorten without losing substance",
+          "keywords": ["shorten", "concise", "trim", "substance"],
+          "instruction": "Shorten the selected text by removing repetition and unnecessary wording. Preserve its important reasoning, facts, qualifications, and requested actions.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:scissors",
+          "folder": "Editing",
+          "show_on_home": false,
+          "natural_voice": "inherit",
+          "guided_drafting": false
+        },
+        {
+          "id": "editing-structure",
+          "name": "Restructure a difficult draft",
+          "keywords": ["restructure", "organise", "draft", "logical"],
+          "instruction": "Restructure the selected draft into a clear, logical order. Preserve all relevant content, improve transitions, and use headings or lists only where they genuinely help the reader.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:file-pen-line",
+          "folder": "Editing",
+          "show_on_home": false,
+          "natural_voice": "inherit",
+          "guided_drafting": false
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "email",
+      "name": "Email essentials",
+      "description": "Draft, reply, follow up and turn notes into natural emails.",
+      "actions": [
+        {
+          "id": "email-draft",
+          "name": "Draft an email from notes",
+          "keywords": ["email", "draft", "notes", "message"],
+          "instruction": "Turn the selected notes into a complete email. Make the purpose and any requested next step clear, use a natural professional tone, and do not invent names, dates, promises, or attachments.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:send",
+          "folder": "Correspondence/Email",
+          "show_on_home": false,
+          "natural_voice": "inherit",
+          "guided_drafting": true
+        },
+        {
+          "id": "email-reply",
+          "name": "Reply to an email",
+          "keywords": ["email", "reply", "respond", "inbox"],
+          "instruction": "Treat the selected text as an email I received and draft my reply. Address the important points, keep it appropriately concise and natural, and do not invent facts, commitments, dates, or attachments.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:message-square-text",
+          "folder": "Correspondence/Email",
+          "show_on_home": false,
+          "natural_voice": "inherit",
+          "guided_drafting": true
+        },
+        {
+          "id": "email-follow-up",
+          "name": "Send a polite follow-up",
+          "keywords": ["email", "follow up", "reminder", "chase"],
+          "instruction": "Draft a polite follow-up email based on the selected text. Briefly establish the context, make the requested next step clear, and avoid sounding impatient or passive-aggressive.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:rotate-ccw",
+          "folder": "Correspondence/Email",
+          "show_on_home": false,
+          "natural_voice": "inherit",
+          "guided_drafting": true
+        },
+        {
+          "id": "email-soften",
+          "name": "Make an email more diplomatic",
+          "keywords": ["email", "diplomatic", "soften", "tone"],
+          "instruction": "Rewrite the selected email to be tactful and constructive while keeping the issue, boundaries, and requested action clear. Do not make it vague, overly apologetic, or insincere.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:heart",
+          "folder": "Correspondence/Email",
+          "show_on_home": false,
+          "natural_voice": "inherit",
+          "guided_drafting": false
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "complaints",
+      "name": "Complaints and resolution",
+      "description": "Raise, answer, summarise and escalate complaints constructively.",
+      "actions": [
+        {
+          "id": "complaint-write",
+          "name": "Write a clear complaint",
+          "keywords": ["complaint", "problem", "company", "resolution"],
+          "instruction": "Turn the selected facts and notes into a firm, constructive complaint. Explain what happened, the practical impact, and the desired resolution clearly. Do not invent evidence, dates, policies, or legal claims.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:landmark",
+          "folder": "Complaints",
+          "show_on_home": false,
+          "natural_voice": "inherit",
+          "guided_drafting": true
+        },
+        {
+          "id": "complaint-respond",
+          "name": "Respond to a complaint",
+          "keywords": ["complaint", "respond", "customer", "service"],
+          "instruction": "Treat the selected text as a complaint I received and draft a calm professional response. Acknowledge the concern without automatically admitting fault, address the key issue, and propose a reasonable next step without inventing policy, compensation, or commitments.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:heart",
+          "folder": "Complaints",
+          "show_on_home": false,
+          "natural_voice": "inherit",
+          "guided_drafting": true
+        },
+        {
+          "id": "complaint-summary",
+          "name": "Summarise a complaint case",
+          "keywords": ["complaint", "case", "summary", "timeline"],
+          "instruction": "Summarise the selected complaint correspondence into a neutral case note. Separate the issue, relevant timeline, evidence or claims, actions already taken, unresolved points, and requested outcome. Clearly distinguish facts from allegations or uncertainty.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:list-checks",
+          "folder": "Complaints",
+          "show_on_home": false,
+          "natural_voice": "never",
+          "guided_drafting": false
+        },
+        {
+          "id": "complaint-escalate",
+          "name": "Escalate an unresolved complaint",
+          "keywords": ["complaint", "escalate", "unresolved", "follow up"],
+          "instruction": "Draft a concise escalation based on the selected complaint history. State what remains unresolved, refer accurately to prior contact, explain the desired remedy or next step, and remain firm and professional without making unsupported threats.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:expand",
+          "folder": "Complaints",
+          "show_on_home": false,
+          "natural_voice": "inherit",
+          "guided_drafting": true
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "reports",
+      "name": "Reports and updates",
+      "description": "Convert notes and evidence into structured reports, summaries and updates.",
+      "actions": [
+        {
+          "id": "report-from-notes",
+          "name": "Turn notes into a report",
+          "keywords": ["report", "notes", "structure", "findings"],
+          "instruction": "Turn the selected notes into a clear structured report. Organise the material into purpose, relevant context, findings, and next steps or recommendations where supported. Preserve uncertainties and do not invent evidence.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:file-pen-line",
+          "folder": "Reports",
+          "show_on_home": false,
+          "natural_voice": "never",
+          "guided_drafting": true
+        },
+        {
+          "id": "report-executive-summary",
+          "name": "Create an executive summary",
+          "keywords": ["report", "executive", "summary", "decision"],
+          "instruction": "Create a concise executive summary of the selected report. Prioritise the purpose, most important findings, material risks or limitations, decisions required, and recommended next steps. Do not add claims that are not supported by the source.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:briefcase-business",
+          "folder": "Reports",
+          "show_on_home": false,
+          "natural_voice": "never",
+          "guided_drafting": false
+        },
+        {
+          "id": "report-status-update",
+          "name": "Create a project status update",
+          "keywords": ["report", "status", "project", "progress"],
+          "instruction": "Turn the selected project notes into a concise status update. Separate completed work, current work, blockers or risks, decisions needed, and next steps. Preserve owners and dates exactly when provided and do not invent progress.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:list-checks",
+          "folder": "Reports",
+          "show_on_home": false,
+          "natural_voice": "never",
+          "guided_drafting": false
+        },
+        {
+          "id": "report-findings-actions",
+          "name": "Extract findings and actions",
+          "keywords": ["report", "findings", "actions", "recommendations"],
+          "instruction": "Extract the key findings, supporting evidence, risks or limitations, and concrete actions from the selected text. Keep each action tied to the finding that justifies it and retain named owners or deadlines only when supplied.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:search-check",
+          "folder": "Reports",
+          "show_on_home": false,
+          "natural_voice": "never",
+          "guided_drafting": false
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "social-posts",
+      "name": "Social posts",
+      "description": "Create concise posts, threads, captions and constructive replies.",
+      "actions": [
+        {
+          "id": "social-post-from-notes",
+          "name": "Turn notes into a social post",
+          "keywords": ["social", "post", "notes", "linkedin", "facebook"],
+          "instruction": "Turn the selected notes into a concise social post for a general online audience. Lead with the main point, keep the voice natural, and avoid manufactured enthusiasm, engagement bait, excessive hashtags, or invented personal details.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:send",
+          "folder": "Social posts",
+          "show_on_home": false,
+          "natural_voice": "always",
+          "guided_drafting": true
+        },
+        {
+          "id": "social-shorten",
+          "name": "Shorten a social post",
+          "keywords": ["social", "shorten", "concise", "post"],
+          "instruction": "Shorten the selected social post while preserving its main point, useful context, and individual voice. Remove repetition, filler, unnecessary scene-setting, and generic calls for engagement.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:shrink",
+          "folder": "Social posts",
+          "show_on_home": false,
+          "natural_voice": "always",
+          "guided_drafting": false
+        },
+        {
+          "id": "social-thread",
+          "name": "Turn an argument into a short thread",
+          "keywords": ["social", "thread", "argument", "sequence"],
+          "instruction": "Turn the selected argument into a short, coherent social-media thread. Give each post one clear purpose, preserve the reasoning and important qualifications, and avoid clickbait, fake quotations, or unsupported certainty.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:message-square-text",
+          "folder": "Social posts",
+          "show_on_home": false,
+          "natural_voice": "always",
+          "guided_drafting": false
+        },
+        {
+          "id": "social-constructive-reply",
+          "name": "Write a constructive public reply",
+          "keywords": ["social", "reply", "public", "constructive"],
+          "instruction": "Treat the selected text as a public post or comment and draft a concise constructive reply. Address the substance directly, make disagreement clear where needed, and avoid insults, pile-on language, or claims not supported by the source.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:message-square-text",
+          "folder": "Social posts",
+          "show_on_home": false,
+          "natural_voice": "inherit",
+          "guided_drafting": false
+        }
+      ]
+    }
+  ]
+}
