@@ -18,6 +18,7 @@ from promptmeld.config import (
     save_actions,
     save_settings,
 )
+from promptmeld.models import AppSettings
 from promptmeld.paths import AppPaths
 from promptmeld.returning import (
     RECOMMENDED_APPLICATION_PROFILES,
@@ -137,10 +138,13 @@ def test_load_settings_includes_home_and_folder_display_defaults(tmp_path):
     settings = load_settings(path)
 
     assert settings.project_name == "PromptMeld"
+    assert settings.project_naming_mode == "action"
     assert settings.theme == "auto"
     assert settings.home_most_used_count == 3
     assert settings.folder_icons["Editing"] == "lucide:pencil"
     assert settings.natural_voice_enabled is False
+    # Existing configurations predate onboarding and must not be interrupted.
+    assert settings.first_run_setup_completed is True
     assert settings.auto_submit_enabled is False
     assert settings.check_for_updates_enabled is True
     assert settings.replace_selected_text_enabled is False
@@ -166,6 +170,26 @@ def test_load_settings_rejects_invalid_auto_submit_value(tmp_path):
 
     with pytest.raises(ConfigurationError, match="auto_submit_enabled"):
         load_settings(path)
+
+
+def test_load_settings_rejects_invalid_project_naming_mode(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"project_naming_mode": "random"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="project_naming_mode"):
+        load_settings(path)
+
+
+@pytest.mark.parametrize("mode", ["action", "single", "application"])
+def test_project_naming_mode_round_trips(tmp_path, mode):
+    path = tmp_path / "settings.json"
+
+    save_settings(path, AppSettings(project_naming_mode=mode))
+
+    assert load_settings(path).project_naming_mode == mode
 
 
 def test_load_settings_rejects_invalid_update_check_value(tmp_path):
@@ -298,6 +322,27 @@ def test_new_configuration_contains_recommended_application_policies(
     )
     assert settings.application_profiles == RECOMMENDED_APPLICATION_PROFILES
     assert settings.starter_application_policy_version == 2
+    assert settings.first_run_setup_completed is False
+
+
+def test_first_run_setup_state_round_trips(tmp_path):
+    path = tmp_path / "settings.json"
+    settings = AppSettings(first_run_setup_completed=False)
+
+    save_settings(path, settings)
+
+    assert load_settings(path).first_run_setup_completed is False
+
+
+def test_load_settings_rejects_invalid_first_run_setup_state(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"first_run_setup_completed": "yes"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="first_run_setup_completed"):
+        load_settings(path)
 
 
 def test_empty_application_policies_receive_recommendations_only_once(

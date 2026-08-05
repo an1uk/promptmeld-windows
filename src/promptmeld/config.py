@@ -12,6 +12,7 @@ from .models import (
     DEFAULT_NATURAL_VOICE_INSTRUCTION,
     EDITING_STRENGTH_VALUES,
     NATURAL_VOICE_MODES,
+    PROJECT_NAMING_VALUES,
     RECIPIENT_AUDIENCE_VALUES,
     RESULTING_TEXT_FORMATTING_VALUES,
     RESULTING_TEXT_LENGTH_VALUES,
@@ -413,10 +414,14 @@ def _read_json(path: Path) -> Any:
         ) from exc
 
 
-def load_actions(path: Path) -> list[WritingAction]:
-    data = _read_json(path)
+def actions_from_data(
+    data: object,
+    source_name: str = "actions.json",
+) -> list[WritingAction]:
+    """Validate and convert a decoded action list."""
+
     if not isinstance(data, list):
-        raise ConfigurationError("actions.json must contain a JSON list.")
+        raise ConfigurationError(f"{source_name} must contain a JSON list.")
 
     actions: list[WritingAction] = []
     seen: set[str] = set()
@@ -481,6 +486,10 @@ def load_actions(path: Path) -> list[WritingAction]:
     return actions
 
 
+def load_actions(path: Path) -> list[WritingAction]:
+    return actions_from_data(_read_json(path), path.name)
+
+
 def action_to_dict(action: WritingAction) -> dict[str, object]:
     return {
         "id": action.id,
@@ -520,9 +529,16 @@ def load_settings(path: Path) -> AppSettings:
         raise ConfigurationError("settings.json must contain a JSON object.")
 
     project_name = str(raw.get("project_name", DEFAULT_PROJECT_NAME)).strip()
+    project_naming_mode = str(
+        raw.get("project_naming_mode", "action")
+    ).strip().casefold()
     popup_hotkey = str(raw.get("popup_hotkey", "Ctrl+Alt+Space")).strip()
     if not project_name:
         raise ConfigurationError("project_name cannot be empty.")
+    if project_naming_mode not in PROJECT_NAMING_VALUES:
+        raise ConfigurationError(
+            "project_naming_mode must be action, single, or application."
+        )
     if not popup_hotkey:
         raise ConfigurationError("popup_hotkey cannot be empty.")
     theme = str(raw.get("theme", "auto")).strip().casefold()
@@ -565,6 +581,13 @@ def load_settings(path: Path) -> AppSettings:
     natural_voice_enabled = raw.get("natural_voice_enabled", False)
     if not isinstance(natural_voice_enabled, bool):
         raise ConfigurationError("natural_voice_enabled must be true or false.")
+    # A missing key identifies an existing pre-onboarding configuration. Only
+    # the bundled defaults explicitly opt a new installation into the wizard.
+    first_run_setup_completed = raw.get("first_run_setup_completed", True)
+    if not isinstance(first_run_setup_completed, bool):
+        raise ConfigurationError(
+            "first_run_setup_completed must be true or false."
+        )
     check_for_updates_enabled = raw.get("check_for_updates_enabled", True)
     if not isinstance(check_for_updates_enabled, bool):
         raise ConfigurationError(
@@ -726,10 +749,12 @@ def load_settings(path: Path) -> AppSettings:
 
     known = {
         "project_name",
+        "project_naming_mode",
         "theme",
         "popup_hotkey",
         "capture_timeout_ms",
         "automation_timeout_seconds",
+        "first_run_setup_completed",
         "startup_enabled",
         "check_for_updates_enabled",
         "chatgpt_uri",
@@ -755,10 +780,12 @@ def load_settings(path: Path) -> AppSettings:
     }
     return AppSettings(
         project_name=project_name,
+        project_naming_mode=project_naming_mode,
         theme=theme,
         popup_hotkey=popup_hotkey,
         capture_timeout_ms=capture_timeout_ms,
         automation_timeout_seconds=automation_timeout_seconds,
+        first_run_setup_completed=first_run_setup_completed,
         startup_enabled=bool(raw.get("startup_enabled", False)),
         check_for_updates_enabled=check_for_updates_enabled,
         chatgpt_uri=str(raw.get("chatgpt_uri", "chatgpt:")).strip() or "chatgpt:",
@@ -795,10 +822,12 @@ def settings_to_dict(settings: AppSettings) -> dict[str, object]:
     return {
         **settings.extra,
         "project_name": settings.project_name,
+        "project_naming_mode": settings.project_naming_mode,
         "theme": settings.theme,
         "popup_hotkey": settings.popup_hotkey,
         "capture_timeout_ms": settings.capture_timeout_ms,
         "automation_timeout_seconds": settings.automation_timeout_seconds,
+        "first_run_setup_completed": settings.first_run_setup_completed,
         "startup_enabled": settings.startup_enabled,
         "check_for_updates_enabled": settings.check_for_updates_enabled,
         "chatgpt_uri": settings.chatgpt_uri,

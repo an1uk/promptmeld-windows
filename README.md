@@ -20,14 +20,21 @@ conversation, and can return the generated result to the original application.
 
 * Turns selected text into focused ChatGPT requests using 26 included writing
   actions or your own custom instruction.
+* Guides first-time setup, including a live Windows check of the launcher
+  shortcut, and provides step-by-step creation and duplication of actions.
+* Imports and exports readable JSON action packs, with built-in packs for
+  editing, email, complaints, reports, and social posts.
 * Supports editing, rewriting, replies, tone changes, correspondence, technical
   help, and other everyday writing tasks.
 * Opens a new chat in the appropriate ChatGPT Project or, optionally, uses
   Temporary Chat to avoid filling your chat history with unrelated
-  conversations.
+  conversations. Projects can be organised by writing action, source
+  application, or one shared PromptMeld project.
 * Provides straightforward controls for audience, editing strength, factual
   preservation, natural voice, language, length, formatting, and additional
   context.
+* Clearly separates remembered overall defaults, application-specific
+  overrides, and guidance that applies only to the current request.
 * Supports application profiles, allowing Outlook to use different writing
   defaults from Word, Teams, browsers, or other Windows applications.
 * Can leave the prompt for review, submit it automatically, copy the result, or
@@ -48,6 +55,9 @@ web browser or through the classic desktop experience.
    [latest GitHub release](https://github.com/an1uk/promptmeld-windows/releases/latest).
 2. Run `PromptMeld-Setup-v<version>.exe`.
 3. Open **PromptMeld** from the Start menu.
+
+On first use, a short setup guide explains the workflow and tests whether the
+chosen launcher shortcut is available before saving it.
 
 No OpenAI API key or separate Python installation is required. PromptMeld can
 be used with a free ChatGPT account, although the available models, Projects,
@@ -78,9 +88,10 @@ recovery, and the example Outlook configuration.
 
 ## Configure
 
-Configuration allows you to manage writing actions, folders, icons, shortcuts,
-writing defaults, updates, and application-specific profiles. Editable files
-are stored under `%LOCALAPPDATA%\PromptMeld`.
+Configuration allows you to manage guided writing-action creation and testing,
+portable action packs, folders, icons, shortcuts, overall defaults, updates,
+application-specific profiles, versioned single-file backups, restoration, and
+diagnostics. Editable files are stored under `%LOCALAPPDATA%\PromptMeld`.
 
 See [Configuration and customisation](docs/CONFIGURATION.md) for details of the
 interface, JSON formats, local files, and migration behaviour.

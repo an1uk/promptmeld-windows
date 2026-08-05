@@ -19,6 +19,14 @@ PRIMARY_LANGUAGE_OPTIONS = (
     "English (US)",
     "Preserve source language",
 )
+PROJECT_NAMING_OPTIONS = (
+    ("action", "Writing action or folder (current behaviour)"),
+    ("single", "One project for everything"),
+    ("application", "Application the text came from"),
+)
+PROJECT_NAMING_VALUES = tuple(
+    value for value, _label in PROJECT_NAMING_OPTIONS
+)
 RESULTING_TEXT_LENGTH_OPTIONS = (
     ("default", "Default"),
     ("extra_short", "Extra short"),
@@ -127,10 +135,12 @@ class ApplicationProfile:
 @dataclass(frozen=True, slots=True)
 class AppSettings:
     project_name: str = DEFAULT_PROJECT_NAME
+    project_naming_mode: str = "action"
     theme: str = "auto"
     popup_hotkey: str = "Ctrl+Alt+Space"
     capture_timeout_ms: int = 1000
     automation_timeout_seconds: float = 8.0
+    first_run_setup_completed: bool = True
     startup_enabled: bool = False
     check_for_updates_enabled: bool = True
     chatgpt_uri: str = "chatgpt:"

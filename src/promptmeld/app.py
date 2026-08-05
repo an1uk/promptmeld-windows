@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QMenu,
     QMessageBox,
     QProgressDialog,
@@ -88,11 +89,27 @@ if TYPE_CHECKING:
     from .ui import LauncherPopup
 
 
-def project_name_for_action(
+def project_name_for_request(
     base_project_name: str,
-    action: WritingAction,
+    naming_mode: str = "action",
+    source_application: str = "",
+    action: WritingAction | None = None,
 ) -> str:
-    """Return the dedicated ChatGPT project for an action's configured folder."""
+    """Return the ChatGPT project selected by the overall naming strategy."""
+
+    if naming_mode == "single":
+        return base_project_name
+    if naming_mode == "application":
+        if not source_application.strip():
+            return base_project_name
+        return " - ".join(
+            (
+                base_project_name,
+                application_display_name(source_application),
+            )
+        )
+    if action is None:
+        return base_project_name
 
     folder_parts = [
         part.strip()
@@ -102,6 +119,22 @@ def project_name_for_action(
     if not folder_parts:
         return base_project_name
     return " - ".join((base_project_name, *folder_parts))
+
+
+def project_name_for_action(
+    base_project_name: str,
+    action: WritingAction,
+    naming_mode: str = "action",
+    source_application: str = "",
+) -> str:
+    """Compatibility wrapper for action-based project-name resolution."""
+
+    return project_name_for_request(
+        base_project_name,
+        naming_mode,
+        source_application,
+        action,
+    )
 
 
 def configure_logging(paths: AppPaths) -> None:
@@ -172,6 +205,7 @@ class PromptMeld:
         self.startup = StartupManager()
         self.startup.migrate_legacy_registration()
         self.settings_dialog: ActionSettingsDialog | None = None
+        self.first_run_wizard = None
         self.update_state_path = paths.data_dir / "update-state.json"
         self.update_downloads_dir = paths.data_dir / "updates"
         self.update_state = load_update_state(self.update_state_path)
@@ -267,6 +301,8 @@ class PromptMeld:
         self.register_hotkeys()
         self.tray.show()
         self._refresh_update_surfaces()
+        if not self.settings.first_run_setup_completed:
+            QTimer.singleShot(250, self.open_first_run_setup)
         if getattr(sys, "frozen", False):
             QTimer.singleShot(10_000, self._scheduled_update_check)
 
@@ -366,6 +402,58 @@ class PromptMeld:
                 QSystemTrayIcon.MessageIcon.Warning,
                 7000,
             )
+
+    def open_first_run_setup(self) -> None:
+        if self.first_run_wizard is not None:
+            self.first_run_wizard.showNormal()
+            self.first_run_wizard.raise_()
+            self.first_run_wizard.activateWindow()
+            return
+        from .settings_ui import FirstRunSetupWizard
+
+        action_hotkeys = {
+            action.hotkey: action.name
+            for action in self.registry.all()
+            if action.hotkey
+        }
+        wizard = FirstRunSetupWizard(
+            self.settings.popup_hotkey,
+            self.hotkeys.is_available,
+            action_hotkeys,
+            self.startup.is_enabled(),
+        )
+        self.first_run_wizard = wizard
+        try:
+            if wizard.exec() != QDialog.DialogCode.Accepted:
+                return
+            updated = replace(
+                self.settings,
+                popup_hotkey=wizard.selected_hotkey(),
+                startup_enabled=wizard.start_with_windows.isChecked(),
+                first_run_setup_completed=True,
+            )
+            save_settings(self.paths.settings_file, updated)
+            self.hotkeys.unregister_all()
+            self._reload_configuration(register_hotkeys=True)
+            self._apply_startup_preference()
+            self._refresh_update_surfaces()
+            self.notify(
+                "PromptMeld setup complete",
+                f"Select text and press {self.settings.popup_hotkey} to begin.",
+                QSystemTrayIcon.MessageIcon.Information,
+                6500,
+            )
+        except (OSError, ValueError) as exc:
+            LOGGER.exception("First-run setup could not be saved")
+            self.notify(
+                "Setup could not be saved",
+                str(exc),
+                QSystemTrayIcon.MessageIcon.Critical,
+                8000,
+            )
+        finally:
+            self.first_run_wizard = None
+            wizard.deleteLater()
 
     def handle_hotkey(self, command_id: str) -> None:
         # WM_HOTKEY is delivered on key-down. A fixed delay is unreliable for
@@ -601,11 +689,18 @@ class PromptMeld:
             ),
         )
         self.usage.record(action.id)
+        project_base = (
+            self.settings.project_name
+            if self.settings.project_naming_mode == "single"
+            else effective.project_name
+        )
         self._submit_prompt(
             prompt,
             project_name=project_name_for_action(
-                effective.project_name,
+                project_base,
                 action,
+                self.settings.project_naming_mode,
+                selection.source_app,
             ),
             selection=selection,
             effective_profile=effective,
@@ -808,7 +903,16 @@ class PromptMeld:
             selection,
         )
         settings = self._settings_with_application_profile(effective_profile)
-        project_name = project_name or effective_profile.project_name
+        project_base = (
+            self.settings.project_name
+            if self.settings.project_naming_mode == "single"
+            else effective_profile.project_name
+        )
+        project_name = project_name or project_name_for_request(
+            project_base,
+            self.settings.project_naming_mode,
+            selection.source_app if selection is not None else "",
+        )
         return_decision = resolve_return_decision(settings, selection)
         if return_decision.fallback_reason:
             self.notify(
@@ -1608,6 +1712,10 @@ class PromptMeld:
                 ("update_install_requested", self.download_update),
                 ("diagnostics_copy_requested", self.copy_diagnostics),
                 ("diagnostics_open_requested", self.open_log_folder),
+                (
+                    "configuration_restored",
+                    self.reload_configuration_after_save,
+                ),
             )
             for signal_name, callback in update_signals:
                 signal = getattr(dialog, signal_name, None)

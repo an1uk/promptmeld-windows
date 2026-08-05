@@ -1,9 +1,11 @@
 {
   "project_name": "PromptMeld",
+  "project_naming_mode": "action",
   "theme": "auto",
   "popup_hotkey": "Ctrl+Alt+Space",
   "capture_timeout_ms": 1000,
   "automation_timeout_seconds": 8.0,
+  "first_run_setup_completed": false,
   "startup_enabled": false,
   "check_for_updates_enabled": true,
   "chatgpt_uri": "chatgpt:",

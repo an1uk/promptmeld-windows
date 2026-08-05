@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 from promptmeld import settings_ui as settings_ui_module
+from promptmeld.action_packs import (
+    ActionPack,
+    load_action_pack,
+    save_action_pack,
+)
 from promptmeld.actions import ActionRegistry
 from promptmeld.app import PromptMeld, make_tray_icon
 from promptmeld.automation_progress import AutomationProgressWindow
@@ -22,9 +28,11 @@ from promptmeld.returning import (
     resolve_application_profile,
 )
 from promptmeld.settings_ui import (
+    ActionCreationWizard,
     ActionSettingsDialog,
     ApplicationProfileDialog,
     BranchArrowStyle,
+    FirstRunSetupWizard,
     HotkeyCaptureEdit,
     NoWheelComboBox,
 )
@@ -36,6 +44,7 @@ from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QHeaderView,
     QLabel,
     QMessageBox,
@@ -1168,19 +1177,57 @@ def test_general_preferences_are_separate_from_writing_defaults(
         "Applications",
         "Writing actions",
         "Hotkeys",
-        "Defaults & style",
+        "Overall defaults",
+        "Backup && recovery",
     ]
     general_page = dialog.tabs.widget(0)
     defaults_page = dialog.tabs.widget(3)
     for control in (
         dialog.theme,
         dialog.most_used_count,
+        dialog.project_name,
+        dialog.project_naming_mode,
         dialog.primary_language,
         dialog.start_with_windows,
         dialog.check_for_updates,
     ):
         assert general_page.isAncestorOf(control)
         assert not defaults_page.isAncestorOf(control)
+
+
+def test_project_naming_strategy_shows_examples_and_is_saved(qtbot, tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    settings_ui_module.save_settings(paths.settings_file, AppSettings())
+    dialog = ActionSettingsDialog(
+        [WritingAction("edit", "Edit", (), "Improve this.")],
+        paths,
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+        AppSettings(),
+    )
+    qtbot.addWidget(dialog)
+
+    assert "PromptMeld - Editing" in dialog.project_naming_example.text()
+
+    dialog.project_naming_mode.setCurrentIndex(
+        dialog.project_naming_mode.findData("single")
+    )
+    assert "Example: PromptMeld." in dialog.project_naming_example.text()
+
+    dialog.project_name.setText("My writing")
+    dialog.project_naming_mode.setCurrentIndex(
+        dialog.project_naming_mode.findData("application")
+    )
+    assert (
+        "My writing - Microsoft Outlook"
+        in dialog.project_naming_example.text()
+    )
+
+    assert dialog._save() is True
+    saved = load_settings(paths.settings_file)
+    assert saved.project_name == "My writing"
+    assert saved.project_naming_mode == "application"
 
 
 def test_general_tab_shows_about_version_and_github_link(qtbot, tmp_path):
@@ -1607,6 +1654,246 @@ def test_hotkey_capture_uses_the_pressed_key_combination(qtbot):
     assert editor.text() == "Ctrl+Alt+7"
 
 
+def test_first_run_setup_tests_launcher_shortcut_and_explains_scope(qtbot):
+    checked: list[str] = []
+    wizard = FirstRunSetupWizard(
+        "Ctrl+Alt+Space",
+        lambda hotkey: checked.append(hotkey) or True,
+        {"Ctrl+Alt+7": "Summarise"},
+        startup_enabled=True,
+    )
+    qtbot.addWidget(wizard)
+
+    assert wizard.hotkey_is_available is True
+    assert wizard.selected_hotkey() == "Ctrl+Alt+Space"
+    assert checked == ["Ctrl+Alt+Space"]
+    assert wizard.start_with_windows.isChecked() is True
+    assert "tested and available" in wizard.summary_label.text()
+
+    wizard.hotkey_editor.set_hotkey("Alt+Ctrl+7")
+    wizard._test_hotkey()
+
+    assert wizard.hotkey_is_available is False
+    assert "Summarise" in wizard.hotkey_status.text()
+
+
+def test_first_run_setup_is_saved_and_reloads_hotkeys(tmp_path, monkeypatch):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    original = AppSettings(first_run_setup_completed=False)
+    settings_ui_module.save_settings(paths.settings_file, original)
+    events: list[str] = []
+
+    class FakeWizard:
+        def __init__(self, *args):
+            self.start_with_windows = SimpleNamespace(
+                isChecked=lambda: True
+            )
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def selected_hotkey(self):
+            return "Ctrl+Shift+F8"
+
+        def deleteLater(self):
+            events.append("deleted")
+
+    class Hotkeys:
+        is_available = staticmethod(lambda _hotkey: True)
+
+        def unregister_all(self):
+            events.append("unregistered")
+
+    monkeypatch.setattr(
+        settings_ui_module,
+        "FirstRunSetupWizard",
+        FakeWizard,
+    )
+    app = object.__new__(PromptMeld)
+    app.first_run_wizard = None
+    app.settings = original
+    app.paths = paths
+    app.registry = SimpleNamespace(
+        all=lambda: [WritingAction("edit", "Edit", (), "Edit.")]
+    )
+    app.hotkeys = Hotkeys()
+    app.startup = SimpleNamespace(is_enabled=lambda: False)
+    app._reload_configuration = lambda register_hotkeys: (
+        setattr(app, "settings", load_settings(paths.settings_file)),
+        events.append(f"reloaded:{register_hotkeys}"),
+    )
+    app._apply_startup_preference = lambda: events.append("startup")
+    app._refresh_update_surfaces = lambda: events.append("updates")
+    app.notify = lambda *args: events.append("notified")
+
+    app.open_first_run_setup()
+
+    saved = load_settings(paths.settings_file)
+    assert saved.first_run_setup_completed is True
+    assert saved.popup_hotkey == "Ctrl+Shift+F8"
+    assert saved.startup_enabled is True
+    assert events == [
+        "unregistered",
+        "reloaded:True",
+        "startup",
+        "updates",
+        "notified",
+        "deleted",
+    ]
+
+
+def test_configuration_can_reopen_the_first_use_setup_guide(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
+    dialog = ActionSettingsDialog(
+        [WritingAction("edit", "Edit", (), "Improve this.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+        hotkey_availability=lambda _hotkey: True,
+    )
+    qtbot.addWidget(dialog)
+
+    class FakeWizard:
+        def __init__(self, *args):
+            self.start_with_windows = SimpleNamespace(
+                isChecked=lambda: True
+            )
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def selected_hotkey(self):
+            return "Ctrl+Shift+F8"
+
+    monkeypatch.setattr(
+        settings_ui_module,
+        "FirstRunSetupWizard",
+        FakeWizard,
+    )
+
+    dialog._open_setup_guide()
+
+    assert dialog.popup_hotkey == "Ctrl+Shift+F8"
+    assert dialog.launcher_hotkey_editor.text() == "Ctrl+Shift+F8"
+    assert dialog.start_with_windows.isChecked() is True
+    assert dialog.has_unsaved_changes() is True
+
+
+def test_action_creation_wizard_builds_and_validates_an_action(qtbot, tmp_path):
+    source = WritingAction(
+        "new-action",
+        "",
+        (),
+        "",
+        icon="lucide:wand-sparkles",
+        folder="Replies",
+    )
+    wizard = ActionCreationWizard(
+        source,
+        ActionIconProvider(tmp_path),
+        folders=("Replies", "Editing"),
+        used_hotkeys={"Ctrl+Alt+Space": "Open launcher"},
+        hotkey_availability=lambda hotkey: hotkey != "Ctrl+Alt+9",
+    )
+    qtbot.addWidget(wizard)
+    wizard.name.setText("Make diplomatic")
+    wizard.instruction.setPlainText("Rewrite this with a tactful tone.")
+    wizard.keywords.setText("polite, tactful")
+    wizard.show_on_home.setChecked(True)
+    wizard.guided_drafting.setChecked(True)
+    wizard.natural_voice.setCurrentIndex(
+        wizard.natural_voice.findData("always")
+    )
+
+    action = wizard.action("make-diplomatic")
+
+    assert action.name == "Make diplomatic"
+    assert action.instruction == "Rewrite this with a tactful tone."
+    assert action.keywords == ("polite", "tactful")
+    assert action.folder == "Replies"
+    assert action.show_on_home is True
+    assert action.guided_drafting is True
+    assert action.natural_voice == "always"
+
+    wizard.sample_text.setPlainText("This example is difficult to read.")
+    wizard._preview_action()
+    preview = wizard.prompt_preview.toPlainText()
+    assert "Rewrite this with a tactful tone." in preview
+    assert "This example is difficult to read." in preview
+    assert "<<<SOURCE>>>" in preview
+
+    wizard.hotkey.set_hotkey("Alt+Ctrl+Space")
+    wizard._test_hotkey()
+    assert wizard.hotkey_is_available is False
+    assert "Open launcher" in wizard.hotkey_status.text()
+
+    wizard.hotkey.set_hotkey("Ctrl+Alt+9")
+    wizard._test_hotkey()
+    assert wizard.hotkey_is_available is False
+    assert "Unavailable" in wizard.hotkey_status.text()
+
+    wizard.hotkey.clear_hotkey()
+    assert wizard.hotkey_is_available is True
+    assert "No shortcut assigned" in wizard.hotkey_status.text()
+
+
+def test_action_settings_add_and_duplicate_use_the_guided_wizard(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
+    original = WritingAction("edit", "Edit", (), "Improve this.")
+    dialog = ActionSettingsDialog(
+        [original],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+    calls: list[tuple[str, str]] = []
+
+    class AcceptedWizard:
+        def __init__(self, source, mode):
+            self.source = source
+            self.mode = mode
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def action(self, action_id):
+            calls.append((self.mode, action_id))
+            return replace(
+                self.source,
+                id=action_id,
+                name=(
+                    "Created with wizard"
+                    if self.mode == "create"
+                    else self.source.name
+                ),
+                instruction="Wizard instruction.",
+            )
+
+    monkeypatch.setattr(
+        dialog,
+        "_action_wizard",
+        lambda source, mode: AcceptedWizard(source, mode),
+    )
+
+    dialog._add_action()
+    assert dialog.actions[-1].name == "Created with wizard"
+    assert calls[0] == ("create", "new-action")
+
+    dialog._refresh_list(0)
+    dialog._duplicate_action()
+    assert dialog.actions[1].name == "Edit copy"
+    assert dialog.actions[1].hotkey is None
+    assert calls[1] == ("duplicate", "edit-copy")
+
+
 def test_hotkeys_tab_edits_clears_and_reports_clashes(qtbot, tmp_path):
     actions = [
         WritingAction("one", "One", (), "First.", "Ctrl+Alt+1"),
@@ -1671,6 +1958,34 @@ def test_hotkeys_tab_edits_clears_and_reports_clashes(qtbot, tmp_path):
     assert (
         next(action for action in dialog.actions if action.id == "two").hotkey
         is None
+    )
+
+
+def test_hotkeys_sort_unavailable_first_then_by_shortcut_and_empty_last(
+    qtbot,
+    tmp_path,
+):
+    actions = [
+        WritingAction("later", "Later", (), "Later.", "Ctrl+Alt+F10"),
+        WritingAction("empty", "Empty", (), "Empty."),
+        WritingAction("unavailable", "Unavailable", (), "No.", "Ctrl+Alt+F9"),
+        WritingAction("first", "First", (), "First.", "Ctrl+Alt+F2"),
+    ]
+    dialog = ActionSettingsDialog(
+        actions,
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+        hotkey_availability=lambda hotkey: hotkey != "Ctrl+Alt+F9",
+    )
+    qtbot.addWidget(dialog)
+
+    assert [
+        dialog.hotkey_table.item(row, 0).text()
+        for row in range(dialog.hotkey_table.rowCount())
+    ] == ["Unavailable", "First", "Later", "Empty"]
+    assert dialog.hotkey_status_labels["unavailable"].text() == (
+        "Already used by Windows or another app"
     )
 
 
@@ -1744,6 +2059,93 @@ def test_action_settings_can_load_shipped_starter_set(
 
     assert len(dialog.actions) == 26
     assert dialog.actions[0].id == "edit-improve"
+
+
+def test_action_settings_offers_and_adds_five_builtin_starter_packs(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *args: None)
+
+    assert [pack.pack_id for pack in dialog.builtin_action_packs] == [
+        "editing",
+        "email",
+        "complaints",
+        "reports",
+        "social-posts",
+    ]
+    reports = next(
+        pack for pack in dialog.builtin_action_packs if pack.pack_id == "reports"
+    )
+
+    dialog._add_builtin_action_pack(reports)
+
+    assert len(dialog.actions) == 5
+    assert dialog.actions[1].id == "report-from-notes"
+    assert dialog.actions[1].folder == "Reports"
+    assert dialog.has_unsaved_changes() is True
+
+
+def test_action_settings_imports_and_exports_readable_action_packs(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
+    imported_path = tmp_path / "import.json"
+    exported_path = tmp_path / "export.json"
+    save_action_pack(
+        imported_path,
+        ActionPack(
+            "Imported tools",
+            "A test pack.",
+            (WritingAction("imported", "Imported", (), "Transform this."),),
+        ),
+    )
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *args: None)
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *args, **kwargs: (str(imported_path), ""),
+    )
+
+    dialog._import_action_pack()
+
+    assert [action.id for action in dialog.actions] == ["one", "imported"]
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(exported_path), ""),
+    )
+    dialog._export_action_pack(selected_only=False)
+
+    exported = load_action_pack(exported_path)
+    assert [action.id for action in exported.actions] == ["one", "imported"]
 
 
 def test_application_result_policy_is_accessible_and_saved(qtbot, tmp_path):
@@ -1867,6 +2269,13 @@ def test_configuration_exposes_privacy_filtered_diagnostics_actions(
         "Ctrl+Alt+Space",
     )
     qtbot.addWidget(dialog)
+    recovery_index = next(
+        index
+        for index in range(dialog.tabs.count())
+        if dialog.tabs.tabText(index) == "Backup && recovery"
+    )
+    recovery_page = dialog.tabs.widget(recovery_index)
+    assert recovery_page.isAncestorOf(dialog.copy_diagnostics_button)
     copy_requested = QSignalSpy(dialog.diagnostics_copy_requested)
     open_requested = QSignalSpy(dialog.diagnostics_open_requested)
 
@@ -1881,3 +2290,95 @@ def test_configuration_exposes_privacy_filtered_diagnostics_actions(
 
     assert copy_requested.count() == 1
     assert open_requested.count() == 1
+
+
+def test_configuration_creates_one_backup_file(qtbot, tmp_path, monkeypatch):
+    paths = AppPaths.discover(tmp_path)
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        paths,
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+    destination = tmp_path / "portable-backup"
+    created = []
+    monkeypatch.setattr(
+        settings_ui_module.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(destination), ""),
+    )
+    monkeypatch.setattr(
+        settings_ui_module,
+        "create_configuration_backup",
+        lambda supplied_paths, supplied_destination: (
+            created.append((supplied_paths, supplied_destination))
+            or SimpleNamespace(action_count=3, icon_count=2)
+        ),
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
+
+    qtbot.mouseClick(
+        dialog.create_backup_button,
+        Qt.MouseButton.LeftButton,
+    )
+
+    assert created == [(paths, tmp_path / "portable-backup.zip")]
+
+
+def test_configuration_restore_confirms_reloads_and_closes(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
+    paths = AppPaths.discover(tmp_path)
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        paths,
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+    archive = tmp_path / "portable-backup.zip"
+    safety = tmp_path / "PromptMeld-pre-restore.zip"
+    restored = []
+    monkeypatch.setattr(
+        settings_ui_module.QFileDialog,
+        "getOpenFileName",
+        lambda *args, **kwargs: (str(archive), ""),
+    )
+    monkeypatch.setattr(
+        settings_ui_module,
+        "inspect_configuration_backup",
+        lambda supplied: SimpleNamespace(
+            format_version=1,
+            created_at="2026-08-05T12:00:00+00:00",
+            app_version="0.1.5",
+            action_count=26,
+            icon_count=2,
+        ),
+    )
+    monkeypatch.setattr(
+        settings_ui_module,
+        "restore_configuration_backup",
+        lambda supplied_paths, supplied_archive: (
+            restored.append((supplied_paths, supplied_archive))
+            or SimpleNamespace(safety_backup=safety)
+        ),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
+    restore_signal = QSignalSpy(dialog.configuration_restored)
+
+    qtbot.mouseClick(
+        dialog.restore_backup_button,
+        Qt.MouseButton.LeftButton,
+    )
+
+    assert restored == [(paths, archive)]
+    assert restore_signal.count() == 1
+    assert dialog.result() == QDialog.DialogCode.Accepted

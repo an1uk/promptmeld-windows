@@ -131,7 +131,13 @@ PromptMeld stores the following files under `%LOCALAPPDATA%\PromptMeld`:
 - `updates\`: a verified installer while an update is being applied; old update
   downloads are removed on a later launch.
 - `icons\`: images you import for actions or folders.
+- `backups\`: automatic pre-restore configuration safety backups. These contain
+  saved actions, settings, application profiles, hotkeys, and custom icons.
 - Migration backups of older configuration files, when applicable.
+
+Configuration backups you create manually are single ZIP files stored wherever
+you choose. They contain the same saved configuration and custom-icon data, but
+not usage history, logs, update state, selected text, prompts, or responses.
 
 The operational log does not include selected text, one-off custom
 instructions, completed prompts, clipboard contents, or ChatGPT responses.
@@ -167,6 +173,9 @@ delete:
 ```text
 %LOCALAPPDATA%\PromptMeld
 ```
+
+Delete any manually created `PromptMeld-backup-*.zip` files separately from
+the locations where you saved them.
 
 Review and clear Windows Clipboard History or any third-party clipboard history
 separately if required.
