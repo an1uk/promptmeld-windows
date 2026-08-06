@@ -16,13 +16,16 @@ from .models import (
     RECIPIENT_AUDIENCE_VALUES,
     RESULTING_TEXT_FORMATTING_VALUES,
     RESULTING_TEXT_LENGTH_VALUES,
+    TITLE_SUBJECT_VALUES,
     AppSettings,
     ApplicationProfile,
     WritingAction,
 )
 from .returning import (
+    APPLICATION_RESPONSE_WAIT_VALUES,
     APPLICATION_RETURN_MODE_VALUES,
     APPLICATION_TOGGLE_VALUES,
+    LEGACY_RECOMMENDED_APPLICATION_PROFILES_V2,
     RECOMMENDED_APPLICATION_PROFILES,
     normalize_application_name,
 )
@@ -30,6 +33,8 @@ from .paths import AppPaths
 
 DEFAULT_ACTION_ICONS = {
     "edit-improve": "lucide:sparkles",
+    "proofread": "lucide:spell-check-2",
+    "draft-reply": "lucide:message-square-text",
     "improve": "lucide:sparkles",
     "shorten": "lucide:scissors",
     "expand-argument": "lucide:expand",
@@ -60,6 +65,42 @@ DEFAULT_ACTION_ICONS = {
 }
 
 DEFAULT_FOLDER_ICONS = {
+    "Essentials": "lucide:sparkles",
+    "Reply": "lucide:message-square-text",
+    "Reply/General replies": "lucide:send",
+    "Reply/Complaints": "lucide:landmark",
+    "Reply/Social": "lucide:message-square-text",
+    "Reply/Social media": "lucide:message-square-text",
+    "Reply/Customer relations": "lucide:heart",
+    "Edit & revise": "lucide:pencil",
+    "Edit & revise/Advanced editing": "lucide:file-pen-line",
+    "Edit & revise/Tone & voice": "lucide:sparkles",
+    "Edit & revise/Arguments & evidence": "lucide:search-check",
+    "Edit & revise/Email": "lucide:send",
+    "Edit & revise/Reviews": "lucide:heart",
+    "Edit & revise/Social media": "lucide:pencil",
+    "Draft & create": "lucide:file-pen-line",
+    "Draft & create/General": "lucide:file-pen-line",
+    "Draft & create/Email": "lucide:send",
+    "Draft & create/Complaints": "lucide:landmark",
+    "Draft & create/Reports": "lucide:list-checks",
+    "Draft & create/Social": "lucide:message-square-text",
+    "Draft & create/Social media": "lucide:message-square-text",
+    "Draft & create/Reviews": "lucide:heart",
+    "Draft & create/Meetings": "lucide:list-checks",
+    "Draft & create/Technical": "lucide:text-cursor-input",
+    "Draft & create/Career": "lucide:briefcase-business",
+    "Summarise & understand": "lucide:shrink",
+    "Summarise & understand/General": "lucide:shrink",
+    "Summarise & understand/Complaints": "lucide:landmark",
+    "Summarise & understand/Reports": "lucide:list-checks",
+    "Summarise & understand/Meetings": "lucide:list-checks",
+    "Explain & learn": "lucide:book-open-check",
+    "Explain & learn/Technical": "lucide:text-cursor-input",
+    "Explain & learn/Study": "lucide:book-open-check",
+    "Plan & decide": "lucide:search-check",
+    "Plan & decide/General": "lucide:search-check",
+    "Plan & decide/Technical": "lucide:list-checks",
     "Editing": "lucide:pencil",
     "Editing/Reviews": "lucide:heart",
     "Replies & arguments": "lucide:message-square-text",
@@ -70,10 +111,21 @@ DEFAULT_FOLDER_ICONS = {
     "Correspondence": "lucide:send",
     "Correspondence/Email": "lucide:briefcase-business",
     "Correspondence/Customer & marketplace": "lucide:message-square-text",
+    "Tone & voice": "lucide:sparkles",
+    "Complaints": "lucide:landmark",
+    "Reports": "lucide:file-pen-line",
+    "Social writing": "lucide:message-square-text",
+    "Reviews & feedback": "lucide:heart",
+    "Meetings": "lucide:list-checks",
+    "Study & learning": "lucide:book-open-check",
+    "Career writing": "lucide:briefcase-business",
+    "Summaries & extraction": "lucide:shrink",
+    "Draft from selection": "lucide:file-pen-line",
+    "Decisions & planning": "lucide:search-check",
 }
 
-CURRENT_STARTER_ACTION_VERSION = 2
-CURRENT_STARTER_APPLICATION_POLICY_VERSION = 2
+CURRENT_STARTER_ACTION_VERSION = 3
+CURRENT_STARTER_APPLICATION_POLICY_VERSION = 3
 LEGACY_PROJECT_NAMES = {
     "Writing Launcher",
     "WritingAssistant",
@@ -85,16 +137,6 @@ LEGACY_NATURAL_VOICE_INSTRUCTION = (
     "stock transitions, excessive structure, and unnecessarily polished phrasing. "
     "Do not invent personal details or deliberately introduce errors."
 )
-CORRESPONDENCE_ACTION_IDS = {
-    "reply-email",
-    "formal-email-reply",
-    "follow-up-reminder",
-    "reply-customer-message",
-    "reply-marketplace-message",
-    "respond-complaint",
-}
-
-
 class ConfigurationError(ValueError):
     """Raised when a user-editable configuration file is invalid."""
 
@@ -116,7 +158,7 @@ def ensure_user_configuration(paths: AppPaths) -> None:
         shutil.copyfile(_resource_path("default_actions.json"), paths.actions_file)
     if not paths.settings_file.exists():
         shutil.copyfile(_resource_path("default_settings.json"), paths.settings_file)
-    _migrate_correspondence_actions(
+    _migrate_starter_action_marker(
         paths,
         force=settings_existed is False and actions_existed,
     )
@@ -153,6 +195,11 @@ def _migrate_application_return_policies(paths: AppPaths) -> None:
             # Enrich the exact v1 starter set. Any deletion or modification is
             # treated as a user choice and left untouched.
             profiles = dict(RECOMMENDED_APPLICATION_PROFILES)
+    elif (
+        settings.starter_application_policy_version == 2
+        and profiles == LEGACY_RECOMMENDED_APPLICATION_PROFILES_V2
+    ):
+        profiles = dict(RECOMMENDED_APPLICATION_PROFILES)
     policies = {
         application: profile.return_mode
         for application, profile in profiles.items()
@@ -202,44 +249,21 @@ def _migrate_launcher_defaults(paths: AppPaths) -> None:
         )
 
 
-def _migrate_correspondence_actions(
+def _migrate_starter_action_marker(
     paths: AppPaths,
     *,
     force: bool = False,
 ) -> None:
-    """Add the V2 correspondence starter actions once without replacing edits."""
+    """Advance the catalogue marker without changing an existing library."""
 
     settings = load_settings(paths.settings_file)
     current_version = 1 if force else settings.starter_action_version
     if current_version >= CURRENT_STARTER_ACTION_VERSION:
         return
-
-    actions = load_actions(paths.actions_file)
-    existing_ids = {action.id for action in actions}
-    additions = [
-        action
-        for action in load_default_actions()
-        if action.id in CORRESPONDENCE_ACTION_IDS
-        and action.id not in existing_ids
-    ]
-    if additions:
-        backup = paths.data_dir / "actions.pre-correspondence-v2-backup.json"
-        if not backup.exists():
-            shutil.copyfile(paths.actions_file, backup)
-        save_actions(paths.actions_file, [*actions, *additions])
-
-    folder_icons = dict(settings.folder_icons)
-    for folder in (
-        "Correspondence",
-        "Correspondence/Email",
-        "Correspondence/Customer & marketplace",
-    ):
-        folder_icons.setdefault(folder, DEFAULT_FOLDER_ICONS[folder])
     save_settings(
         paths.settings_file,
         replace(
             settings,
-            folder_icons=folder_icons,
             starter_action_version=CURRENT_STARTER_ACTION_VERSION,
         ),
     )
@@ -256,6 +280,12 @@ def _is_untouched_legacy_default(path: Path) -> bool:
 
 def load_default_actions() -> list[WritingAction]:
     return load_actions(_resource_path("default_actions.json"))
+
+
+def load_default_settings() -> AppSettings:
+    """Load the packaged settings used for a new PromptMeld installation."""
+
+    return load_settings(_resource_path("default_settings.json"))
 
 
 def normalize_folder(value: str) -> str:
@@ -275,6 +305,7 @@ _APPLICATION_PROFILE_KEYS = {
     "primary_language",
     "resulting_text_length",
     "resulting_text_formatting",
+    "title_subject",
     "editing_strength",
     "preserve_facts",
     "natural_voice",
@@ -282,6 +313,8 @@ _APPLICATION_PROFILE_KEYS = {
     "writing_block",
     "auto_submit",
     "temporary_chat",
+    "privacy_preview",
+    "response_wait",
     "project_name",
 }
 
@@ -344,6 +377,11 @@ def _application_profile_from_dict(
             "inherit",
             ("inherit", *RESULTING_TEXT_FORMATTING_VALUES),
         ),
+        title_subject=enum_value(
+            "title_subject",
+            "inherit",
+            ("inherit", *TITLE_SUBJECT_VALUES),
+        ),
         editing_strength=enum_value(
             "editing_strength",
             "inherit",
@@ -379,6 +417,16 @@ def _application_profile_from_dict(
             "inherit",
             APPLICATION_TOGGLE_VALUES,
         ),
+        privacy_preview=enum_value(
+            "privacy_preview",
+            "inherit",
+            APPLICATION_TOGGLE_VALUES,
+        ),
+        response_wait=enum_value(
+            "response_wait",
+            "inherit",
+            APPLICATION_RESPONSE_WAIT_VALUES,
+        ),
         project_name=text_value("project_name"),
     )
 
@@ -392,6 +440,7 @@ def _application_profile_to_dict(
         "primary_language": profile.primary_language,
         "resulting_text_length": profile.resulting_text_length,
         "resulting_text_formatting": profile.resulting_text_formatting,
+        "title_subject": profile.title_subject,
         "editing_strength": profile.editing_strength,
         "preserve_facts": profile.preserve_facts,
         "natural_voice": profile.natural_voice,
@@ -399,6 +448,8 @@ def _application_profile_to_dict(
         "writing_block": profile.writing_block,
         "auto_submit": profile.auto_submit,
         "temporary_chat": profile.temporary_chat,
+        "privacy_preview": profile.privacy_preview,
+        "response_wait": profile.response_wait,
         "project_name": profile.project_name,
     }
 
@@ -466,6 +517,14 @@ def actions_from_data(
             raise ConfigurationError(
                 f"Action '{action_id}' guided_drafting must be true or false."
             )
+        recipient_audience = str(
+            raw.get("recipient_audience", "inherit")
+        ).strip().casefold()
+        if recipient_audience not in ("inherit", *RECIPIENT_AUDIENCE_VALUES):
+            raise ConfigurationError(
+                f"Action '{action_id}' recipient_audience must be one of: "
+                f"inherit, {', '.join(RECIPIENT_AUDIENCE_VALUES)}."
+            )
         actions.append(
             WritingAction(
                 id=action_id,
@@ -481,6 +540,7 @@ def actions_from_data(
                 show_on_home=bool(raw.get("show_on_home", False)),
                 natural_voice=natural_voice,
                 guided_drafting=guided_drafting,
+                recipient_audience=recipient_audience,
             )
         )
     return actions
@@ -503,6 +563,7 @@ def action_to_dict(action: WritingAction) -> dict[str, object]:
         "show_on_home": action.show_on_home,
         "natural_voice": action.natural_voice,
         "guided_drafting": action.guided_drafting,
+        "recipient_audience": action.recipient_audience,
     }
 
 
@@ -596,6 +657,11 @@ def load_settings(path: Path) -> AppSettings:
     auto_submit_enabled = raw.get("auto_submit_enabled", False)
     if not isinstance(auto_submit_enabled, bool):
         raise ConfigurationError("auto_submit_enabled must be true or false.")
+    privacy_preview_enabled = raw.get("privacy_preview_enabled", True)
+    if not isinstance(privacy_preview_enabled, bool):
+        raise ConfigurationError(
+            "privacy_preview_enabled must be true or false."
+        )
     replace_selected_text_enabled = raw.get(
         "replace_selected_text_enabled",
         False,
@@ -724,6 +790,17 @@ def load_settings(path: Path) -> AppSettings:
             "resulting_text_formatting must be one of: "
             f"{', '.join(RESULTING_TEXT_FORMATTING_VALUES)}."
         )
+    title_subject_value = raw.get("title_subject", "none")
+    if not isinstance(title_subject_value, str):
+        raise ConfigurationError("title_subject must be text.")
+    title_subject = (
+        title_subject_value.strip().casefold().replace(" ", "_")
+    )
+    if title_subject not in TITLE_SUBJECT_VALUES:
+        raise ConfigurationError(
+            "title_subject must be one of: "
+            f"{', '.join(TITLE_SUBJECT_VALUES)}."
+        )
     try:
         starter_action_version = int(raw.get("starter_action_version", 1))
     except (TypeError, ValueError) as exc:
@@ -765,6 +842,7 @@ def load_settings(path: Path) -> AppSettings:
         "natural_voice_enabled",
         "natural_voice_instruction",
         "auto_submit_enabled",
+        "privacy_preview_enabled",
         "replace_selected_text_enabled",
         "copy_generated_text_enabled",
         "application_return_policies",
@@ -775,6 +853,7 @@ def load_settings(path: Path) -> AppSettings:
         "resulting_text_length",
         "writing_block_enabled",
         "resulting_text_formatting",
+        "title_subject",
         "starter_action_version",
         "starter_application_policy_version",
     }
@@ -800,6 +879,7 @@ def load_settings(path: Path) -> AppSettings:
         natural_voice_enabled=natural_voice_enabled,
         natural_voice_instruction=natural_voice_instruction,
         auto_submit_enabled=auto_submit_enabled,
+        privacy_preview_enabled=privacy_preview_enabled,
         replace_selected_text_enabled=replace_selected_text_enabled,
         copy_generated_text_enabled=copy_generated_text_enabled,
         application_return_policies=application_return_policies,
@@ -810,6 +890,7 @@ def load_settings(path: Path) -> AppSettings:
         resulting_text_length=resulting_text_length,
         writing_block_enabled=writing_block_enabled,
         resulting_text_formatting=resulting_text_formatting,
+        title_subject=title_subject,
         starter_action_version=starter_action_version,
         starter_application_policy_version=(
             starter_application_policy_version
@@ -838,6 +919,7 @@ def settings_to_dict(settings: AppSettings) -> dict[str, object]:
         "natural_voice_enabled": settings.natural_voice_enabled,
         "natural_voice_instruction": settings.natural_voice_instruction,
         "auto_submit_enabled": settings.auto_submit_enabled,
+        "privacy_preview_enabled": settings.privacy_preview_enabled,
         "replace_selected_text_enabled": settings.replace_selected_text_enabled,
         "copy_generated_text_enabled": settings.copy_generated_text_enabled,
         "application_return_policies": dict(
@@ -855,6 +937,7 @@ def settings_to_dict(settings: AppSettings) -> dict[str, object]:
         "resulting_text_length": settings.resulting_text_length,
         "writing_block_enabled": settings.writing_block_enabled,
         "resulting_text_formatting": settings.resulting_text_formatting,
+        "title_subject": settings.title_subject,
         "starter_action_version": settings.starter_action_version,
         "starter_application_policy_version": (
             settings.starter_application_policy_version

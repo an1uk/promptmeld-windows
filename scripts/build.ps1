@@ -126,10 +126,36 @@ try {
         throw "The packaged PromptMeld executable failed its startup smoke test."
     }
 
+    Copy-Item `
+        -LiteralPath (Join-Path $helperOutput "PromptMeldAutomation.exe") `
+        -Destination $mainInternal `
+        -Force
+    Get-ChildItem -LiteralPath $helperOutput |
+        Where-Object Name -ne "PromptMeldAutomation.exe" |
+        ForEach-Object {
+            Copy-Item `
+                -LiteralPath $_.FullName `
+                -Destination $mainInternal `
+                -Recurse `
+                -Force
+        }
+
+    # The helper belongs inside the main package. Do not leave a second
+    # user-facing application folder beside PromptMeld.
+    $distRoot = [System.IO.Path]::GetFullPath(
+        (Join-Path $projectRoot "dist")
+    )
+    $resolvedHelperOutput = [System.IO.Path]::GetFullPath($helperOutput)
+    $expectedHelperOutput = Join-Path $distRoot "PromptMeldAutomation"
+    if ($resolvedHelperOutput -ne $expectedHelperOutput) {
+        throw "Refusing to remove an unexpected helper output path."
+    }
+    Remove-Item -LiteralPath $resolvedHelperOutput -Recurse -Force
+
     # PyInstaller collects all Qt platform input plugins. PromptMeld does not
     # use Qt PDF, QML, Quick, or Virtual Keyboard. In particular, Virtual
-    # Keyboard is GPL-only in the open-source Qt distribution, so prevent
-    # unused copyleft-only binaries from entering the MIT release.
+    # Keyboard is GPL-only in the open-source Qt distribution, so remove these
+    # after merging the helper package to prevent it reintroducing them.
     $unusedQtFiles = @(
         "PySide6\Qt6Pdf.dll",
         "PySide6\Qt6Qml.dll",
@@ -158,32 +184,6 @@ try {
             Remove-Item -LiteralPath $target -Force
         }
     }
-
-    Copy-Item `
-        -LiteralPath (Join-Path $helperOutput "PromptMeldAutomation.exe") `
-        -Destination $mainInternal `
-        -Force
-    Get-ChildItem -LiteralPath $helperOutput |
-        Where-Object Name -ne "PromptMeldAutomation.exe" |
-        ForEach-Object {
-            Copy-Item `
-                -LiteralPath $_.FullName `
-                -Destination $mainInternal `
-                -Recurse `
-                -Force
-        }
-
-    # The helper belongs inside the main package. Do not leave a second
-    # user-facing application folder beside PromptMeld.
-    $distRoot = [System.IO.Path]::GetFullPath(
-        (Join-Path $projectRoot "dist")
-    )
-    $resolvedHelperOutput = [System.IO.Path]::GetFullPath($helperOutput)
-    $expectedHelperOutput = Join-Path $distRoot "PromptMeldAutomation"
-    if ($resolvedHelperOutput -ne $expectedHelperOutput) {
-        throw "Refusing to remove an unexpected helper output path."
-    }
-    Remove-Item -LiteralPath $resolvedHelperOutput -Recurse -Force
 
     & $python "tools\check_licenses.py" `
         --collect-licenses (Join-Path $mainOutput "LICENSES") `

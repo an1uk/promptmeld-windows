@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, Signal
-from PySide6.QtGui import QCursor, QKeyEvent
+from PySide6.QtGui import QAccessible, QAccessibleEvent, QCursor, QKeyEvent
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -13,13 +13,21 @@ from PySide6.QtWidgets import (
 )
 
 from .models import SubmissionResult
-from .theme import resolve_theme
+from .theme import (
+    high_contrast_stylesheet,
+    resolve_theme,
+    system_high_contrast_enabled,
+    system_reduced_motion_enabled,
+)
 
 
 class AutomationProgressWindow(QWidget):
     """A non-focus-stealing history of the current ChatGPT automation."""
 
     cancel_requested = Signal()
+    copy_result_requested = Signal()
+    apply_result_requested = Signal()
+    stage_announced = Signal(str)
 
     def __init__(self, theme: str = "auto"):
         super().__init__()
@@ -28,6 +36,7 @@ class AutomationProgressWindow(QWidget):
         self.current_operation: QLabel | None = None
         self.last_operation: tuple[str, str] | None = None
         self.scroll_animation: QPropertyAnimation | None = None
+        self.reduced_motion = system_reduced_motion_enabled()
         self.hide_timer = QTimer(self)
         self.hide_timer.setSingleShot(True)
         self.hide_timer.timeout.connect(self.hide)
@@ -91,6 +100,26 @@ class AutomationProgressWindow(QWidget):
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
+        self.copy_result_button = QPushButton("Copy result")
+        self.copy_result_button.setAccessibleName("Copy generated result")
+        self.copy_result_button.clicked.connect(
+            self.copy_result_requested.emit
+        )
+        self.copy_result_button.hide()
+        button_row.addWidget(self.copy_result_button)
+        self.apply_result_button = QPushButton("Apply now")
+        self.apply_result_button.setAccessibleName(
+            "Apply generated result to the original selection"
+        )
+        self.apply_result_button.setToolTip(
+            "Return to the original application, verify the selected text, "
+            "and replace it with this result."
+        )
+        self.apply_result_button.clicked.connect(
+            self.apply_result_requested.emit
+        )
+        self.apply_result_button.hide()
+        button_row.addWidget(self.apply_result_button)
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setAccessibleName("Cancel ChatGPT automation")
         self.cancel_button.setToolTip(
@@ -105,9 +134,14 @@ class AutomationProgressWindow(QWidget):
         self.close_button.hide()
         button_row.addWidget(self.close_button)
         layout.addLayout(button_row)
+        self.setTabOrder(self.copy_result_button, self.apply_result_button)
+        self.setTabOrder(self.apply_result_button, self.cancel_button)
         self.setTabOrder(self.cancel_button, self.close_button)
 
         self._apply_progress_style()
+        app = QApplication.instance()
+        if app is not None:
+            app.paletteChanged.connect(self._system_appearance_changed)
 
     def begin(
         self,
@@ -126,6 +160,11 @@ class AutomationProgressWindow(QWidget):
             else f"Project: {project_name}"
         )
         self.close_button.hide()
+        self.copy_result_button.setText("Copy result")
+        self.copy_result_button.hide()
+        self.apply_result_button.setText("Apply now")
+        self.apply_result_button.setEnabled(True)
+        self.apply_result_button.hide()
         self.cancel_button.setEnabled(True)
         self.cancel_button.show()
         self.update_stage("preparing", "Preparing the writing request")
@@ -138,8 +177,16 @@ class AutomationProgressWindow(QWidget):
         self._complete_current_operation()
         self._append_operation(*operation, state="current")
 
-    def finish(self, result: SubmissionResult) -> None:
+    def finish(
+        self,
+        result: SubmissionResult,
+        *,
+        can_apply: bool = False,
+    ) -> None:
         self.cancel_button.hide()
+        has_result = bool(result.generated_text)
+        self.copy_result_button.setVisible(has_result)
+        self.apply_result_button.setVisible(has_result and can_apply)
         if result.cancelled:
             self.title.setText("Cancelled")
             self._complete_current_operation()
@@ -163,14 +210,21 @@ class AutomationProgressWindow(QWidget):
             return
 
         if result.submitted:
-            self.title.setText("Complete")
+            self.title.setText("Response ready" if has_result else "Complete")
             self._complete_current_operation()
             self._append_operation(
                 "complete",
-                "Prompt submitted to ChatGPT",
+                (
+                    "The generated result is ready"
+                    if has_result
+                    else "Prompt submitted to ChatGPT"
+                ),
                 state="success",
             )
-            self.hide_timer.start(3500)
+            if has_result:
+                self.close_button.show()
+            else:
+                self.hide_timer.start(3500)
             return
 
         if result.prepared:
@@ -194,6 +248,13 @@ class AutomationProgressWindow(QWidget):
             state="error",
         )
         self.close_button.show()
+
+    def mark_result_copied(self) -> None:
+        self.copy_result_button.setText("Copied")
+
+    def mark_result_applied(self) -> None:
+        self.apply_result_button.setText("Applied")
+        self.apply_result_button.setEnabled(False)
 
     def _request_cancel(self) -> None:
         if not self.cancel_button.isEnabled():
@@ -223,6 +284,13 @@ class AutomationProgressWindow(QWidget):
         self.current_operation = label
         self.last_operation = (stage, message)
         self._set_operation_state(label, state)
+        QTimer.singleShot(
+            0,
+            lambda current=label, text=message: self._announce_stage(
+                current,
+                text,
+            ),
+        )
         QTimer.singleShot(0, self._centre_current_operation)
 
     def _complete_current_operation(self) -> None:
@@ -241,8 +309,31 @@ class AutomationProgressWindow(QWidget):
         }[state]
         label.setProperty("state", state)
         label.setText(f"{marker}  {label.property('operationText')}")
+        accessible_state = {
+            "current": "Current automation stage",
+            "complete": "Completed automation stage",
+            "success": "Automation completed",
+            "error": "Automation needs attention",
+        }[state]
+        label.setAccessibleName(
+            f"{accessible_state}: {label.property('operationText')}"
+        )
         label.style().unpolish(label)
         label.style().polish(label)
+
+    def _announce_stage(self, label: QLabel, message: str) -> None:
+        if label not in self.operation_labels:
+            return
+        announcement = f"Automation status: {message}"
+        self.setAccessibleDescription(announcement)
+        self.history.setAccessibleDescription(announcement)
+        QAccessible.updateAccessibility(
+            QAccessibleEvent(label, QAccessible.Event.NameChanged)
+        )
+        # Alert events can produce a Windows notification sound for every
+        # automation stage. NameChanged still exposes each updated stage to
+        # screen readers without treating routine progress as an urgent alert.
+        self.stage_announced.emit(announcement)
 
     def _clear_history(self) -> None:
         while self.history_layout.count():
@@ -273,6 +364,11 @@ class AutomationProgressWindow(QWidget):
 
         if self.scroll_animation is not None:
             self.scroll_animation.stop()
+        self.reduced_motion = system_reduced_motion_enabled()
+        if self.reduced_motion:
+            scrollbar.setValue(target)
+            self.scroll_animation = None
+            return
         animation = QPropertyAnimation(scrollbar, b"value", self)
         animation.setDuration(280)
         animation.setStartValue(scrollbar.value())
@@ -309,6 +405,24 @@ class AutomationProgressWindow(QWidget):
         self.show()
 
     def _apply_progress_style(self) -> None:
+        if system_high_contrast_enabled():
+            self.setStyleSheet(
+                high_contrast_stylesheet()
+                + """
+                QLabel#progressOperation {
+                    border: 2px solid palette(window-text);
+                    padding: 9px 11px;
+                }
+                QLabel#progressOperation[state="current"],
+                QLabel#progressOperation[state="success"],
+                QLabel#progressOperation[state="error"] {
+                    color: palette(highlighted-text);
+                    background-color: palette(highlight);
+                    font-weight: 700;
+                }
+                """
+            )
+            return
         if resolve_theme(self.theme) == "light":
             self.setStyleSheet(
                 """
@@ -458,3 +572,6 @@ class AutomationProgressWindow(QWidget):
             QPushButton:hover { background: #6d8df2; }
             """
         )
+
+    def _system_appearance_changed(self, *args) -> None:
+        self._apply_progress_style()

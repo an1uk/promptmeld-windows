@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from .alternatives import alternative_output_rule, validate_alternative_count
 from .models import (
     EDITING_STRENGTH_VALUES,
     RECIPIENT_AUDIENCE_VALUES,
+    TITLE_SUBJECT_VALUES,
     CapturedSelection,
     WritingAction,
 )
@@ -66,6 +68,27 @@ class PromptBuilder:
             "Use restrained Markdown formatting, such as headings, lists, or "
             "emphasis, where it materially improves readability. Do not "
             "over-format the result."
+        ),
+    }
+    TITLE_SUBJECT_RULES = {
+        "none": "",
+        "automatic": (
+            "Generate one concise title or subject line for the finished "
+            "text, choosing whichever label best fits the writing task. Put "
+            "it on the first line as either 'Title: ...' or 'Subject: ...', "
+            "then leave a blank line before the main text. Return both the "
+            "labelled suggestion and the complete main text."
+        ),
+        "title": (
+            "Generate one concise title for the finished text. Put it on the "
+            "first line as 'Title: ...', then leave a blank line before the "
+            "main text. Return both the title and the complete main text."
+        ),
+        "subject": (
+            "Generate one concise subject line for the finished text. Put it "
+            "on the first line as 'Subject: ...', then leave a blank line "
+            "before the main text. Return both the subject and the complete "
+            "main text."
         ),
     }
     EDITING_STRENGTH_RULES = {
@@ -143,10 +166,12 @@ class PromptBuilder:
         resulting_text_length: str = "default",
         writing_block_enabled: bool = False,
         resulting_text_formatting: str = "default",
+        title_subject: str = "none",
         additional_information: str = "",
         editing_strength: str = "default",
         preserve_facts: bool = True,
-        recipient_audience: str = "unspecified",
+        recipient_audience: str | None = None,
+        alternative_count: int = 1,
     ) -> str:
         apply_natural_voice = (
             action.natural_voice == "always"
@@ -154,6 +179,14 @@ class PromptBuilder:
                 action.natural_voice == "inherit"
                 and natural_voice_enabled
             )
+        )
+        effective_audience = (
+            action.recipient_audience
+            if recipient_audience is None
+            and action.recipient_audience not in {"", "inherit"}
+            else "unspecified"
+            if recipient_audience is None
+            else recipient_audience
         )
         prompt = self.build_custom(
             action.instruction,
@@ -164,10 +197,12 @@ class PromptBuilder:
             resulting_text_length=resulting_text_length,
             writing_block_enabled=writing_block_enabled,
             resulting_text_formatting=resulting_text_formatting,
+            title_subject=title_subject,
             additional_information=additional_information,
             editing_strength=editing_strength,
             preserve_facts=preserve_facts,
-            recipient_audience=recipient_audience,
+            recipient_audience=effective_audience,
+            alternative_count=alternative_count,
         )
         if guided_drafting_enabled and action.guided_drafting:
             prompt = prompt.replace(
@@ -191,14 +226,17 @@ class PromptBuilder:
         resulting_text_length: str = "default",
         writing_block_enabled: bool = False,
         resulting_text_formatting: str = "default",
+        title_subject: str = "none",
         additional_information: str = "",
         editing_strength: str = "default",
         preserve_facts: bool = True,
         recipient_audience: str = "unspecified",
+        alternative_count: int = 1,
     ) -> str:
         clean_instruction = instruction.strip()
         if not clean_instruction:
             raise ValueError("Instruction cannot be empty.")
+        alternative_count = validate_alternative_count(alternative_count)
         requirements = (
             f"{self.OUTPUT_RULES}\n"
             f"{self._language_rule(primary_language)}"
@@ -238,7 +276,21 @@ class PromptBuilder:
                 f"{requirements}\n\n"
                 f"Resulting text formatting:\n{formatting_rule}"
             )
-        if writing_block_enabled:
+        title_subject_rule = self._title_subject_rule(title_subject)
+        if title_subject_rule:
+            requirements = (
+                f"{requirements}\n\n"
+                "Title or subject:\n"
+                f"{title_subject_rule}"
+            )
+        alternatives_rule = alternative_output_rule(alternative_count)
+        if alternatives_rule:
+            requirements = (
+                f"{requirements}\n\n"
+                "Alternative output:\n"
+                f"{alternatives_rule}"
+            )
+        if writing_block_enabled and alternative_count == 1:
             requirements = (
                 f"{requirements}\n\n"
                 "Output presentation:\n"
@@ -316,6 +368,13 @@ class PromptBuilder:
             raise ValueError(
                 f"Unknown resulting text formatting: {value}"
             ) from exc
+
+    @classmethod
+    def _title_subject_rule(cls, value: str) -> str:
+        normalized = value.strip().casefold().replace(" ", "_")
+        if normalized not in TITLE_SUBJECT_VALUES:
+            raise ValueError(f"Unknown title or subject option: {value}")
+        return cls.TITLE_SUBJECT_RULES[normalized]
 
     @classmethod
     def _editing_strength_rule(cls, value: str) -> str:

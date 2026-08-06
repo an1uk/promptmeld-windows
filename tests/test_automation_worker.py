@@ -21,12 +21,13 @@ def test_worker_requests_per_monitor_v2_dpi_awareness(monkeypatch):
 
 def test_worker_forwards_temporary_chat_choice(monkeypatch):
     calls = []
+    adapter_options = []
 
     class FakeAdapter:
         timings = []
 
         def __init__(self, **kwargs):
-            pass
+            adapter_options.append(kwargs)
 
         def submit(self, prompt, project_name, **kwargs):
             calls.append((prompt, project_name, kwargs))
@@ -55,6 +56,142 @@ def test_worker_forwards_temporary_chat_choice(monkeypatch):
         )
     ]
     assert response["prepared"] is True
+    assert adapter_options[0]["response_timeout_seconds"] == 300.0
+
+
+def test_worker_forwards_configured_response_timeout(monkeypatch):
+    adapter_options = []
+
+    class FakeAdapter:
+        timings = []
+
+        def __init__(self, **kwargs):
+            adapter_options.append(kwargs)
+
+        def submit(self, prompt, project_name, **kwargs):
+            return SubmissionResult(submitted=True, message="Submitted.")
+
+    monkeypatch.setattr(automation_worker, "ChatGPTDesktop", FakeAdapter)
+
+    automation_worker._process_payload(
+        {
+            "prompt": "complete prompt",
+            "project_name": "PromptMeld",
+            "response_timeout_seconds": 240.0,
+        }
+    )
+
+    assert adapter_options[0]["response_timeout_seconds"] == 240.0
+
+
+def test_worker_forwards_indefinite_response_wait(monkeypatch):
+    adapter_options = []
+
+    class FakeAdapter:
+        timings = []
+
+        def __init__(self, **kwargs):
+            adapter_options.append(kwargs)
+
+        def submit(self, prompt, project_name, **kwargs):
+            return SubmissionResult(submitted=True, message="Submitted.")
+
+    monkeypatch.setattr(automation_worker, "ChatGPTDesktop", FakeAdapter)
+
+    automation_worker._process_payload(
+        {
+            "prompt": "complete prompt",
+            "project_name": "PromptMeld",
+            "response_timeout_seconds": None,
+        }
+    )
+
+    assert adapter_options[0]["response_timeout_seconds"] is None
+
+
+def test_worker_returns_generated_text_to_the_main_process(monkeypatch):
+    class FakeAdapter:
+        timings = []
+
+        def __init__(self, **kwargs):
+            pass
+
+        def submit(self, prompt, project_name, **kwargs):
+            return SubmissionResult(
+                submitted=True,
+                generated_text="Generated answer",
+            )
+
+    monkeypatch.setattr(automation_worker, "ChatGPTDesktop", FakeAdapter)
+
+    response = automation_worker._process_payload(
+        {"prompt": "complete prompt", "project_name": "PromptMeld"}
+    )
+
+    assert response["generated_text"] == "Generated answer"
+
+
+def test_worker_forwards_capture_without_clipboard_output(monkeypatch):
+    calls = []
+
+    class FakeAdapter:
+        timings = []
+
+        def __init__(self, **kwargs):
+            pass
+
+        def submit(self, prompt, project_name, **kwargs):
+            calls.append(kwargs)
+            return SubmissionResult(
+                submitted=True,
+                generated_text="Alternatives",
+            )
+
+    monkeypatch.setattr(automation_worker, "ChatGPTDesktop", FakeAdapter)
+
+    automation_worker._process_payload(
+        {
+            "prompt": "complete prompt",
+            "project_name": "PromptMeld",
+            "capture_generated_text": True,
+        }
+    )
+
+    assert calls[0]["capture_generated_text"] is True
+    assert calls[0]["copy_generated_text"] is False
+    assert calls[0]["replace_selected_text"] is False
+
+
+def test_worker_forwards_redaction_key_for_local_result_restoration(
+    monkeypatch,
+):
+    calls = []
+
+    class FakeAdapter:
+        timings = []
+
+        def __init__(self, **kwargs):
+            pass
+
+        def submit(self, prompt, project_name, **kwargs):
+            calls.append(kwargs)
+            return SubmissionResult(submitted=True)
+
+    monkeypatch.setattr(automation_worker, "ChatGPTDesktop", FakeAdapter)
+
+    automation_worker._process_payload(
+        {
+            "prompt": "Email [EMAIL_1]",
+            "project_name": "PromptMeld",
+            "redaction_replacements": {
+                "[EMAIL_1]": "jane@example.com"
+            },
+        }
+    )
+
+    assert calls[0]["redaction_replacements"] == {
+        "[EMAIL_1]": "jane@example.com"
+    }
 
 
 def test_server_processes_multiple_requests_before_shutdown(monkeypatch):

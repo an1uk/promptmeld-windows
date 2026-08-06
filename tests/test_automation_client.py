@@ -58,7 +58,131 @@ def test_automation_client_sends_prompt_to_helper(monkeypatch):
     assert calls[0][0]["copy_generated_text"] is False
     assert calls[0][0]["source_text"] == "private source"
     assert calls[0][0]["source_app"] == "winword.exe"
+    assert calls[0][0]["response_timeout_seconds"] == 300.0
+    assert calls[0][0]["redaction_replacements"] == {}
     assert calls[0][1] == 75.0
+
+
+def test_automation_client_sends_local_redaction_key_to_helper(monkeypatch):
+    calls = []
+
+    def fake_request(payload, timeout_seconds, progress_callback=None):
+        calls.append(payload)
+        return {"submitted": True, "message": "Submitted."}
+
+    monkeypatch.setattr(
+        automation_client,
+        "_request_from_helper",
+        fake_request,
+    )
+
+    automation_client.submit_via_worker(
+        "Email [EMAIL_1]",
+        "PromptMeld",
+        AppSettings(),
+        redaction_replacements={"[EMAIL_1]": "jane@example.com"},
+    )
+
+    assert calls[0]["redaction_replacements"] == {
+        "[EMAIL_1]": "jane@example.com"
+    }
+
+
+def test_generated_result_wait_gets_a_five_minute_helper_window(monkeypatch):
+    calls = []
+
+    def fake_request(payload, timeout_seconds, progress_callback=None):
+        calls.append((payload, timeout_seconds))
+        return {
+            "submitted": True,
+            "generated_text_copied": True,
+            "generated_text": "Generated answer",
+            "message": "Generated text copied.",
+        }
+
+    monkeypatch.setattr(
+        automation_client,
+        "_request_from_helper",
+        fake_request,
+    )
+
+    result = automation_client.submit_via_worker(
+        "private prompt",
+        "PromptMeld",
+        AppSettings(
+            auto_submit_enabled=True,
+            copy_generated_text_enabled=True,
+        ),
+    )
+
+    assert calls[0][0]["response_timeout_seconds"] == 300.0
+    assert calls[0][1] == 360.0
+    assert result.generated_text == "Generated answer"
+
+
+def test_alternative_capture_waits_without_copying_or_replacing(monkeypatch):
+    calls = []
+
+    def fake_request(payload, timeout_seconds, progress_callback=None):
+        calls.append((payload, timeout_seconds))
+        return {
+            "submitted": True,
+            "generated_text": "Marked alternatives",
+        }
+
+    monkeypatch.setattr(
+        automation_client,
+        "_request_from_helper",
+        fake_request,
+    )
+
+    result = automation_client.submit_via_worker(
+        "private prompt",
+        "PromptMeld",
+        AppSettings(auto_submit_enabled=True),
+        replace_selected_text=False,
+        copy_generated_text=False,
+        capture_generated_text=True,
+    )
+
+    assert calls[0][0]["capture_generated_text"] is True
+    assert calls[0][0]["copy_generated_text"] is False
+    assert calls[0][0]["replace_selected_text"] is False
+    assert calls[0][1] == 360.0
+    assert result.generated_text == "Marked alternatives"
+
+
+@pytest.mark.parametrize(
+    ("response_timeout", "helper_timeout"),
+    [(600.0, 660.0), (None, None)],
+)
+def test_generated_result_uses_per_application_wait_window(
+    monkeypatch,
+    response_timeout,
+    helper_timeout,
+):
+    calls = []
+
+    def fake_request(payload, timeout_seconds, progress_callback=None):
+        calls.append((payload, timeout_seconds))
+        return {"submitted": True, "generated_text": "Generated answer"}
+
+    monkeypatch.setattr(
+        automation_client,
+        "_request_from_helper",
+        fake_request,
+    )
+
+    automation_client.submit_via_worker(
+        "private prompt",
+        "PromptMeld",
+        AppSettings(auto_submit_enabled=True),
+        capture_generated_text=True,
+        response_timeout_seconds=response_timeout,
+    )
+
+    assert calls[0][0]["response_timeout_seconds"] == response_timeout
+    assert calls[0][1] == helper_timeout
 
 
 def test_temporary_chat_allows_time_for_user_confirmation(monkeypatch):
@@ -277,6 +401,6 @@ def test_helper_session_observes_cancellation_while_waiting():
     with pytest.raises(automation_client.AutomationCancelled):
         session.request(
             {"prompt": "private prompt"},
-            1.0,
+            None,
             is_cancelled=lambda: True,
         )

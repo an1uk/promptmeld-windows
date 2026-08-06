@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from . import display_version
 from .actions import ActionRegistry
+from .alternatives import parse_generated_alternatives, validate_alternative_count
 from .automation_client import (
     shutdown_automation_helper,
     submit_via_worker,
@@ -44,6 +45,11 @@ from .models import (
     WritingAction,
 )
 from .paths import AppPaths
+from .privacy import (
+    RedactionResult,
+    add_placeholder_instruction,
+    detect_sensitive_text,
+)
 from .prompting import PromptBuilder
 from .returning import (
     EffectiveApplicationProfile,
@@ -54,6 +60,7 @@ from .returning import (
 )
 from .single_instance import SingleInstance
 from .startup import StartupManager
+from .theme import apply_message_box_theme
 from .usage import UsageTracker
 from .updates import (
     RELEASES_URL,
@@ -76,6 +83,7 @@ from .windows import (
     SelectionCaptureError,
     SourceRecoveryError,
     is_hotkey_released,
+    replace_source_selection,
     undo_source_replacement,
 )
 from .worker import FunctionWorker
@@ -85,6 +93,7 @@ LOGGER = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from .automation_progress import AutomationProgressWindow
     from .icons import ActionIconProvider
+    from .result_review import ResultReviewDialog
     from .settings_ui import ActionSettingsDialog
     from .ui import LauncherPopup
 
@@ -197,6 +206,7 @@ class PromptMeld:
         self.capture = None
         self.popup: LauncherPopup | None = None
         self.automation_progress: AutomationProgressWindow | None = None
+        self.result_review: ResultReviewDialog | None = None
         self.icons: ActionIconProvider | None = None
         self.current_selection: CapturedSelection | None = None
         self.prompt_builder = PromptBuilder()
@@ -223,6 +233,9 @@ class PromptMeld:
         self.preserved_original: CapturedSelection | None = None
         self.last_replacement: CapturedSelection | None = None
         self.last_automation_result: SubmissionResult | None = None
+        self.pending_result_text = ""
+        self.pending_result_selection: CapturedSelection | None = None
+        self.pending_result_applied = False
         cleanup_update_downloads(self.update_downloads_dir)
         cached_release = self.update_state.cached_release
         if cached_release is not None:
@@ -258,6 +271,14 @@ class PromptMeld:
         self.cancel_automation_action.triggered.connect(
             self.cancel_automation
         )
+        self.copy_result_action = self.menu.addAction("Copy latest result")
+        self.copy_result_action.setEnabled(False)
+        self.copy_result_action.triggered.connect(self.copy_latest_result)
+        self.apply_result_action = self.menu.addAction(
+            "Apply latest result now"
+        )
+        self.apply_result_action.setEnabled(False)
+        self.apply_result_action.triggered.connect(self.apply_latest_result)
         self.undo_replacement_action = self.menu.addAction(
             "Undo last replacement"
         )
@@ -308,6 +329,7 @@ class PromptMeld:
 
     def _load_components(self, first_load: bool = False) -> None:
         self.settings = load_settings(self.paths.settings_file)
+        apply_message_box_theme(self.settings.theme)
         self.actions = load_actions(self.paths.actions_file)
         self.registry = ActionRegistry(self.actions, self.usage)
         self.capture = SelectionCapture(self.settings.capture_timeout_ms)
@@ -325,6 +347,7 @@ class PromptMeld:
                 self.settings.writing_block_enabled,
                 self.settings.resulting_text_formatting,
                 self.settings.replace_selected_text_enabled,
+                self.settings.title_subject,
             )
             self.popup.set_theme(self.settings.theme)
 
@@ -353,6 +376,7 @@ class PromptMeld:
                 self.settings.writing_block_enabled,
                 self.settings.resulting_text_formatting,
                 self.settings.replace_selected_text_enabled,
+                self.settings.title_subject,
             )
             self.popup.action_requested.connect(self.run_action)
             self.popup.custom_requested.connect(self.run_custom)
@@ -380,6 +404,7 @@ class PromptMeld:
             self.popup.resulting_text_formatting_changed.connect(
                 self.set_resulting_text_formatting
             )
+            self.popup.title_subject_changed.connect(self.set_title_subject)
         return self.popup
 
     def register_hotkeys(self) -> None:
@@ -421,6 +446,7 @@ class PromptMeld:
             self.hotkeys.is_available,
             action_hotkeys,
             self.startup.is_enabled(),
+            theme=self.settings.theme,
         )
         self.first_run_wizard = wizard
         try:
@@ -536,6 +562,7 @@ class PromptMeld:
                 self.current_selection,
             ),
             effective,
+            self.current_selection.text,
         )
         popup.show_at_cursor()
 
@@ -548,11 +575,13 @@ class PromptMeld:
             auto_submit_enabled=effective.auto_submit_enabled,
             temporary_chat_enabled=effective.temporary_chat_enabled,
             natural_voice_enabled=effective.natural_voice_enabled,
+            privacy_preview_enabled=effective.privacy_preview_enabled,
             guided_drafting_enabled=effective.guided_drafting_enabled,
             writing_block_enabled=effective.writing_block_enabled,
             primary_language=effective.primary_language,
             resulting_text_length=effective.resulting_text_length,
             resulting_text_formatting=effective.resulting_text_formatting,
+            title_subject=effective.title_subject,
         )
 
     def capture_and_submit(self, action: WritingAction) -> None:
@@ -570,6 +599,7 @@ class PromptMeld:
         editing_strength: str | None = None,
         preserve_facts: bool | None = None,
         recipient_audience: str | None = None,
+        alternative_count: int = 1,
     ) -> None:
         action = self.registry.get(action_id)
         if action is None or self.current_selection is None:
@@ -586,6 +616,7 @@ class PromptMeld:
             editing_strength=editing_strength,
             preserve_facts=preserve_facts,
             recipient_audience=recipient_audience,
+            alternative_count=alternative_count,
         )
 
     def run_custom(
@@ -595,6 +626,7 @@ class PromptMeld:
         editing_strength: str | None = None,
         preserve_facts: bool | None = None,
         recipient_audience: str | None = None,
+        alternative_count: int = 1,
     ) -> None:
         if self.current_selection is None:
             self.notify(
@@ -621,6 +653,7 @@ class PromptMeld:
                 resulting_text_length=effective.resulting_text_length,
                 writing_block_enabled=effective.writing_block_enabled,
                 resulting_text_formatting=effective.resulting_text_formatting,
+                title_subject=effective.title_subject,
                 additional_information=additional_information,
                 editing_strength=(
                     effective.editing_strength
@@ -637,6 +670,7 @@ class PromptMeld:
                     if recipient_audience is None
                     else recipient_audience
                 ),
+                alternative_count=alternative_count,
             )
         except ValueError as exc:
             self.notify(APP_NAME, str(exc), QSystemTrayIcon.MessageIcon.Warning)
@@ -646,6 +680,7 @@ class PromptMeld:
             prompt,
             selection=self.current_selection,
             effective_profile=effective,
+            alternative_count=alternative_count,
         )
 
     def _submit_action(
@@ -657,10 +692,16 @@ class PromptMeld:
         editing_strength: str | None = None,
         preserve_facts: bool | None = None,
         recipient_audience: str | None = None,
+        alternative_count: int = 1,
     ) -> None:
         if not self._confirm_automatic_replacement(selection):
             return
         effective = resolve_application_profile(self.settings, selection)
+        default_audience = (
+            action.recipient_audience
+            if action.recipient_audience not in {"", "inherit"}
+            else effective.recipient_audience
+        )
         prompt = self.prompt_builder.build(
             action,
             selection,
@@ -671,6 +712,7 @@ class PromptMeld:
             resulting_text_length=effective.resulting_text_length,
             writing_block_enabled=effective.writing_block_enabled,
             resulting_text_formatting=effective.resulting_text_formatting,
+            title_subject=effective.title_subject,
             additional_information=additional_information,
             editing_strength=(
                 effective.editing_strength
@@ -683,10 +725,11 @@ class PromptMeld:
                 else preserve_facts
             ),
             recipient_audience=(
-                effective.recipient_audience
+                default_audience
                 if recipient_audience is None
                 else recipient_audience
             ),
+            alternative_count=alternative_count,
         )
         self.usage.record(action.id)
         project_base = (
@@ -704,6 +747,7 @@ class PromptMeld:
             ),
             selection=selection,
             effective_profile=effective,
+            alternative_count=alternative_count,
         )
 
     def _confirm_automatic_replacement(
@@ -883,12 +927,32 @@ class PromptMeld:
             return
         self.settings = updated
 
+    def set_title_subject(self, value: str) -> None:
+        if value == self.settings.title_subject:
+            return
+        previous = self.settings
+        updated = replace(previous, title_subject=value)
+        try:
+            save_settings(self.paths.settings_file, updated)
+        except (OSError, ValueError) as exc:
+            LOGGER.exception("Could not save title or subject setting")
+            if self.popup is not None:
+                self.popup.set_title_subject(previous.title_subject)
+            self.notify(
+                "Setting could not be saved",
+                str(exc),
+                QSystemTrayIcon.MessageIcon.Warning,
+            )
+            return
+        self.settings = updated
+
     def _submit_prompt(
         self,
         prompt: str,
         project_name: str | None = None,
         selection: CapturedSelection | None = None,
         effective_profile: EffectiveApplicationProfile | None = None,
+        alternative_count: int = 1,
     ) -> None:
         if self.automation_worker is not None:
             self.notify(
@@ -902,7 +966,23 @@ class PromptMeld:
             self.settings,
             selection,
         )
+        privacy_result = (
+            self._review_prompt_privacy(prompt)
+            if effective_profile.privacy_preview_enabled
+            else RedactionResult(prompt, {})
+        )
+        if privacy_result is None:
+            return
+        prompt = privacy_result.text
+        redaction_replacements = privacy_result.replacements
+        if redaction_replacements:
+            prompt = add_placeholder_instruction(prompt)
         settings = self._settings_with_application_profile(effective_profile)
+        alternative_count = validate_alternative_count(alternative_count)
+        if alternative_count > 1 and not settings.auto_submit_enabled:
+            if not self._confirm_alternative_submission(alternative_count):
+                return
+            settings = replace(settings, auto_submit_enabled=True)
         project_base = (
             self.settings.project_name
             if self.settings.project_naming_mode == "single"
@@ -921,7 +1001,11 @@ class PromptMeld:
                 QSystemTrayIcon.MessageIcon.Information,
                 6500,
             )
-        if return_decision.replace_selection and selection is not None:
+        if (
+            alternative_count == 1
+            and return_decision.replace_selection
+            and selection is not None
+        ):
             self.preserved_original = selection
             self.last_replacement = None
             self.copy_original_action.setEnabled(True)
@@ -944,8 +1028,20 @@ class PromptMeld:
                 ),
                 source_text=(selection.text if selection else ""),
                 source_app=(selection.source_app if selection else ""),
-                replace_selected_text=return_decision.replace_selection,
-                copy_generated_text=return_decision.copy_result,
+                replace_selected_text=(
+                    return_decision.replace_selection
+                    and alternative_count == 1
+                ),
+                copy_generated_text=(
+                    return_decision.copy_result and alternative_count == 1
+                ),
+                capture_generated_text=(
+                    alternative_count > 1 or return_decision.review_result
+                ),
+                response_timeout_seconds=(
+                    effective_profile.response_timeout_seconds
+                ),
+                redaction_replacements=redaction_replacements,
                 progress_callback=report_progress,
                 is_cancelled=self.automation_cancel_event.is_set,
             ),
@@ -955,15 +1051,50 @@ class PromptMeld:
         worker.signals.finished.connect(
             lambda result, window=progress_window, captured=selection, decision=(
                 return_decision
-            ): self._submission_finished(
+            ), alternatives=alternative_count: self._submission_finished(
                 result,
                 window,
                 captured,
                 decision,
+                alternatives,
             )
         )
         self.automation_worker = worker
         self.thread_pool.start(worker)
+
+    def _review_prompt_privacy(
+        self,
+        prompt: str,
+    ) -> RedactionResult | None:
+        matches = detect_sensitive_text(prompt)
+        if not matches:
+            return RedactionResult(prompt, {})
+
+        from .privacy_preview import PrivacyPreviewDialog
+
+        dialog = PrivacyPreviewDialog(
+            prompt,
+            matches,
+            theme=self.settings.theme,
+            parent=getattr(self, "popup", None),
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return dialog.redaction_result()
+
+    def _confirm_alternative_submission(self, alternative_count: int) -> bool:
+        response = QMessageBox.question(
+            self.popup,
+            "Submit this request to generate alternatives?",
+            f"Generating {alternative_count} alternatives and showing them "
+            "in PromptMeld's review window requires automatic submission for "
+            "this request. Your remembered submission setting will not be "
+            "changed.",
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Yes,
+        )
+        return response == QMessageBox.StandardButton.Yes
 
     def _show_automation_progress(
         self,
@@ -985,6 +1116,12 @@ class PromptMeld:
             self.automation_progress.cancel_requested.connect(
                 self.cancel_automation
             )
+            self.automation_progress.copy_result_requested.connect(
+                self.copy_latest_result
+            )
+            self.automation_progress.apply_result_requested.connect(
+                self.apply_latest_result
+            )
         self.automation_progress.begin(
             project_name,
             temporary_chat=temporary_chat,
@@ -997,6 +1134,7 @@ class PromptMeld:
         progress_window: AutomationProgressWindow | None = None,
         selection: CapturedSelection | None = None,
         return_decision: ReturnDecision | None = None,
+        alternative_count: int = 1,
     ) -> None:
         self.automation_worker = None
         self.automation_cancel_event = None
@@ -1005,8 +1143,39 @@ class PromptMeld:
             cancel_action.setText("Cancel current automation")
             cancel_action.setEnabled(False)
         self.last_automation_result = result
+        if result.generated_text:
+            self._clear_result_review()
+        if alternative_count > 1 and result.generated_text:
+            alternatives = parse_generated_alternatives(
+                result.generated_text,
+                alternative_count,
+            )
+            selected_result = replace(
+                result,
+                generated_text=alternatives[0],
+            )
+            can_apply = self._remember_completed_result(
+                selected_result,
+                selection,
+            )
+            if progress_window is not None:
+                progress_window.finish(selected_result, can_apply=False)
+                progress_window.hide()
+            self._show_result_review(
+                alternatives,
+                requested_count=alternative_count,
+                can_apply=can_apply,
+            )
+            self.notify(
+                "Alternatives ready",
+                "Choose a generated option in the PromptMeld review window.",
+                QSystemTrayIcon.MessageIcon.Information,
+                7000,
+            )
+            return
+        can_apply = self._remember_completed_result(result, selection)
         if progress_window is not None:
-            progress_window.finish(result)
+            progress_window.finish(result, can_apply=can_apply)
         if result.selection_replaced and selection is not None:
             self.preserved_original = selection
             self.last_replacement = selection
@@ -1035,6 +1204,19 @@ class PromptMeld:
                 9000,
             )
             return
+        if (
+            return_decision is not None
+            and return_decision.review_result
+            and result.generated_text
+        ):
+            self.notify(
+                "Response ready",
+                "Use Copy result or Apply now in the PromptMeld completion "
+                "window. The same actions remain available from the tray.",
+                QSystemTrayIcon.MessageIcon.Information,
+                8000,
+            )
+            return
         if result.selection_replaced:
             self.notify(
                 "Text replaced",
@@ -1059,6 +1241,153 @@ class PromptMeld:
                 QSystemTrayIcon.MessageIcon.Warning,
                 8000,
             )
+
+    def _remember_completed_result(
+        self,
+        result: SubmissionResult,
+        selection: CapturedSelection | None,
+    ) -> bool:
+        if not result.generated_text:
+            return False
+        self.pending_result_text = result.generated_text
+        self.pending_result_selection = selection
+        self.pending_result_applied = result.selection_replaced
+        self._refresh_completion_actions()
+        return bool(
+            selection is not None
+            and selection.source_is_editable
+            and not result.selection_replaced
+        )
+
+    def _clear_result_review(self) -> None:
+        review = getattr(self, "result_review", None)
+        if review is not None:
+            review.clear_results()
+
+    def _show_result_review(
+        self,
+        alternatives: list[str],
+        *,
+        requested_count: int,
+        can_apply: bool,
+    ) -> None:
+        from .result_review import ResultReviewDialog
+
+        review = getattr(self, "result_review", None)
+        if review is None or review.theme != self.settings.theme:
+            if review is not None:
+                review.close()
+            review = ResultReviewDialog(self.settings.theme)
+            review.selected_result_changed.connect(
+                self._select_completed_result
+            )
+            review.copy_result_requested.connect(self.copy_latest_result)
+            review.apply_result_requested.connect(self.apply_latest_result)
+            self.result_review = review
+        review.set_results(
+            alternatives,
+            requested_count=requested_count,
+            can_apply=can_apply,
+        )
+        review.show()
+        review.raise_()
+
+    def _select_completed_result(self, generated_text: str) -> None:
+        if not generated_text:
+            return
+        self.pending_result_text = generated_text
+        self._refresh_completion_actions()
+
+    def _refresh_completion_actions(self) -> None:
+        result_available = bool(getattr(self, "pending_result_text", ""))
+        selection = getattr(self, "pending_result_selection", None)
+        can_apply = bool(
+            result_available
+            and selection is not None
+            and selection.source_is_editable
+            and not getattr(self, "pending_result_applied", False)
+        )
+        copy_action = getattr(self, "copy_result_action", None)
+        if copy_action is not None:
+            copy_action.setEnabled(result_available)
+        apply_action = getattr(self, "apply_result_action", None)
+        if apply_action is not None:
+            apply_action.setEnabled(can_apply)
+
+    def copy_latest_result(self) -> None:
+        generated_text = getattr(self, "pending_result_text", "")
+        if not generated_text:
+            return
+        try:
+            write_clipboard_text(generated_text)
+        except Exception as exc:
+            self.notify(
+                "Result could not be copied",
+                str(exc),
+                QSystemTrayIcon.MessageIcon.Warning,
+            )
+            return
+        progress = getattr(self, "automation_progress", None)
+        if progress is not None:
+            progress.mark_result_copied()
+        review = getattr(self, "result_review", None)
+        if review is not None and review.isVisible():
+            review.mark_result_copied()
+        self.notify(
+            "Result copied",
+            "The latest generated result is on the clipboard.",
+            QSystemTrayIcon.MessageIcon.Information,
+        )
+
+    def apply_latest_result(self) -> None:
+        generated_text = getattr(self, "pending_result_text", "")
+        selection = getattr(self, "pending_result_selection", None)
+        if (
+            not generated_text
+            or selection is None
+            or not selection.source_is_editable
+            or getattr(self, "pending_result_applied", False)
+        ):
+            return
+        try:
+            replace_source_selection(
+                selection.source_hwnd,
+                selection.text,
+                generated_text,
+                selection.source_app,
+            )
+        except SourceRecoveryError as exc:
+            try:
+                write_clipboard_text(generated_text)
+                fallback = " The result was copied instead."
+            except Exception:
+                fallback = " The result also could not be copied."
+            self.notify(
+                "Result could not be applied safely",
+                f"{exc}{fallback}",
+                QSystemTrayIcon.MessageIcon.Warning,
+                9000,
+            )
+            return
+
+        self.pending_result_applied = True
+        self.preserved_original = selection
+        self.last_replacement = selection
+        self._refresh_completion_actions()
+        self._refresh_recovery_actions()
+        progress = getattr(self, "automation_progress", None)
+        if progress is not None:
+            progress.mark_result_applied()
+        review = getattr(self, "result_review", None)
+        if review is not None and review.isVisible():
+            review.mark_result_applied()
+        self.notify(
+            "Result applied",
+            "The original selection was verified and replaced. Undo remains "
+            "available from the PromptMeld tray menu.",
+            QSystemTrayIcon.MessageIcon.Information,
+            7000,
+        )
 
     def cancel_automation(self) -> None:
         if self.automation_cancel_event is None:
@@ -1206,6 +1535,16 @@ class PromptMeld:
             and self.settings.check_for_updates_enabled
         ):
             QTimer.singleShot(0, self._scheduled_update_check)
+
+    def _close_after_configuration_reset(self) -> None:
+        try:
+            reset_settings = load_settings(self.paths.settings_file)
+            self.startup.set_enabled(reset_settings.startup_enabled)
+        except Exception:
+            LOGGER.exception(
+                "Windows startup registration could not be reset"
+            )
+        self.quit()
 
     def _reload_configuration(self, register_hotkeys: bool = True) -> None:
         try:
@@ -1716,6 +2055,10 @@ class PromptMeld:
                     "configuration_restored",
                     self.reload_configuration_after_save,
                 ),
+                (
+                    "configuration_reset",
+                    self._close_after_configuration_reset,
+                ),
             )
             for signal_name, callback in update_signals:
                 signal = getattr(dialog, signal_name, None)
@@ -1861,6 +2204,7 @@ class PromptMeld:
             return
         LOGGER.info("Configuration window closed (result=%s)", result)
         self.settings_dialog = None
+        apply_message_box_theme(self.settings.theme)
         if self.icons is not None:
             self.icons.clear_cache()
         self.hotkeys.unregister_all()

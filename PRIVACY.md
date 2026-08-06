@@ -15,18 +15,68 @@ below.
   Ring command.
 - Selected text is transferred through the Windows clipboard and held
   transiently in process memory while PromptMeld assembles the request.
+- Smart action suggestions inspect the captured text locally and retain only
+  the source executable, word count and length band, and detected type labels
+  while the launcher is open. No ranking request is made over the network.
 - The completed prompt is inserted into the verified ChatGPT composer through
   local Windows accessibility controls. The clipboard is used when direct
   insertion is unavailable and for the manual fallback.
+- When the enabled privacy-preview setting finds likely email addresses, phone
+  numbers, account numbers, or names, it shows an optional redaction preview.
+  No replacement happens without an explicit choice.
 - PromptMeld does not save selected text, one-off custom instructions,
   completed prompts, or ChatGPT responses to disk.
 - The automation progress window shows stage descriptions only, not the
   selected text or completed prompt.
+- The alternatives review window displays generated response text locally when
+  two or three results were requested.
 - By default, PromptMeld checks GitHub at most once per day for a stable update.
   This can be disabled in Configuration. No selected text, prompt, response, or
   configuration content is included in the request.
 - The ChatGPT desktop app communicates with OpenAI after text is inserted into
   it.
+
+## Privacy preview and reversible redaction
+
+Before a prompt is opened in ChatGPT, PromptMeld locally checks it for patterns
+that may be email addresses, phone numbers, account numbers, or personal names.
+This is deterministic pattern matching inside PromptMeld; no text is sent to a
+detection service. Name detection includes common titles, greetings, labelled
+fields, signatures, and capitalised full names in user-content blocks. The
+check can produce false positives and false negatives.
+
+Privacy preview is enabled by default. It can be disabled under
+**Configuration > Overall defaults > Submission**, or inherited, enabled, or
+disabled for a particular executable under **Configuration > Applications**.
+When it is enabled and matches are found, PromptMeld displays the preview. The
+user chooses each value to redact, continues with the original prompt unchanged,
+or cancels. No detected value is replaced silently. Selected values become
+tokens such as `[EMAIL_1]` or `[NAME_1]`, and only the redacted prompt is
+inserted into ChatGPT. When it is disabled, PromptMeld does not perform the
+local check or offer redaction for that prompt.
+
+The placeholder-to-original replacement key is held in process memory and sent
+only through PromptMeld's local automation-helper pipe. It is not written to
+settings, usage history, logs, diagnostics, backups, or update state. When
+PromptMeld retrieves a completed response, exact placeholders are restored
+locally before the result is copied or applied. If PromptMeld does not retrieve
+the result, placeholders remain in ChatGPT. A placeholder that ChatGPT changes
+or omits cannot be restored automatically. The replacement key is forgotten
+when the request finishes or PromptMeld exits.
+
+## Local action suggestions
+
+PromptMeld locally classifies the selection into broad categories such as
+email, question, complaint, technical text, notes, review, or online argument.
+It combines those labels with the source executable, a word-count length band,
+and local action usage history to order suggestions and equally relevant search
+results. The classifier is deterministic Python code included with PromptMeld;
+it does not call ChatGPT or another detection or ranking service.
+
+The suggestion context does not contain the selected words and is discarded
+when replaced by a later capture or when PromptMeld exits. Only normal
+per-action counts and last-used times remain in `usage.json`; they contain no
+source text, derived text-type history, source-application history, or prompt.
 
 ## What happens to selected text
 
@@ -35,13 +85,17 @@ below.
 3. The selected text enters the Windows clipboard and is read into PromptMeld's
    process memory.
 4. PromptMeld combines the selected text with the chosen action and any enabled
-   style options. This completed prompt is held in memory and passed to the
-   local automation companion through a local inter-process pipe.
-5. PromptMeld inserts the completed prompt into a verified ChatGPT message
+   style options. This completed prompt is held in memory.
+5. PromptMeld checks the prompt locally. If possible private details are found,
+   the privacy preview waits for an explicit redaction, unchanged, or cancel
+   choice.
+6. The chosen prompt and any in-memory replacement key pass to the local
+   automation companion through a local inter-process pipe.
+7. PromptMeld inserts the chosen prompt into a verified ChatGPT message
    composer through local Windows accessibility controls. If that direct method
    is unavailable, it places the prompt on the clipboard and performs a
    control-targeted paste instead.
-6. PromptMeld reads the composer back and continues only after verifying the
+8. PromptMeld reads the composer back and continues only after verifying the
    complete prompt. After successful insertion, it restores the original
    selected text to the clipboard.
 
@@ -110,7 +164,16 @@ handling.
 When generated-result copying or replacement is enabled, PromptMeld reads the
 completed response through ChatGPT's local Copy control. The response is held
 briefly in memory and placed on the clipboard or pasted into the verified
-source selection. It is not written to PromptMeld's files or diagnostics.
+source selection. The latest retrieved response remains in process memory so
+the completion window and tray can offer **Copy result** and **Apply now**. It
+is replaced by the next retrieved response and forgotten when PromptMeld
+exits. It is not written to PromptMeld's files or diagnostics.
+
+When alternatives are requested, the retrieved response and its separated
+options remain in process memory while the review window is available. The
+chosen option becomes the latest result used by the tray commands. Alternatives
+are cleared when a newer response arrives and are forgotten when PromptMeld
+exits; they are never written to settings, logs, diagnostics, or backups.
 
 For replacement, the original selected text is preserved in memory so the
 tray can copy it for recovery and invoke the source application's native Undo

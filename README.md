@@ -18,29 +18,44 @@ conversation, and can return the generated result to the original application.
 
 ## What it does
 
-* Turns selected text into focused ChatGPT requests using 26 included writing
-  actions or your own custom instruction.
+* Turns selected text into focused ChatGPT requests using four universal
+  essentials, optional starter packs, or your own custom instruction.
 * Guides first-time setup, including a live Windows check of the launcher
   shortcut, and provides step-by-step creation and duplication of actions.
-* Imports and exports readable JSON action packs, with built-in packs for
-  editing, email, complaints, reports, and social posts.
-* Supports editing, rewriting, replies, tone changes, correspondence, technical
-  help, and other everyday writing tasks.
+* Imports and exports readable JSON action packs, with nineteen built-in packs
+  organised by what you want to do: reply, edit, draft, summarise, plan, or use
+  explain-and-learn tools. Nested folders keep larger action libraries
+  manageable.
+* Suggests useful actions locally from the source application, text length and
+  type, and recent use—for example, placing email replies first in Outlook.
+* Supports editing, rewriting, replies, customer relations, tone changes,
+  correspondence, technical help, and platform-aware YouTube, Reddit, and
+  Facebook writing.
 * Opens a new chat in the appropriate ChatGPT Project or, optionally, uses
   Temporary Chat to avoid filling your chat history with unrelated
   conversations. Projects can be organised by writing action, source
   application, or one shared PromptMeld project.
 * Provides straightforward controls for audience, editing strength, factual
-  preservation, natural voice, language, length, formatting, and additional
-  context.
+  preservation, natural voice, language, length, formatting, optional titles
+  or subject lines, and additional context. Actions can supply a sensible
+  audience default that remains overridable for one request.
 * Clearly separates remembered overall defaults, application-specific
   overrides, and guidance that applies only to the current request.
+* Previews possible email addresses, phone numbers, account numbers, and names
+  before sending when enabled, with optional reversible placeholders and no
+  silent redaction.
 * Supports application profiles, allowing Outlook to use different writing
-  defaults from Word, Teams, browsers, or other Windows applications.
+  defaults, response waits, and completion behaviour from Word, Teams,
+  browsers, or other Windows applications.
 * Can leave the prompt for review, submit it automatically, copy the result, or
   safely replace the original selection where possible.
+* Provides completion controls to copy a finished result or safely apply it to
+  the original selection when convenient.
+* Can request two or three alternatives, present them side by side in a review
+  window, and copy or safely apply the chosen option.
 * Includes cancellation, verified text replacement, clipboard fallback, Undo,
-  local diagnostics, configurable shortcuts, and keyboard-accessible controls.
+  local diagnostics, configurable shortcuts, screen-reader stage
+  announcements, reduced-motion behaviour, and Windows High Contrast support.
 * Runs locally without an OpenAI API key, telemetry, or advertising.
 
 ![PromptMeld launcher and ChatGPT automation progress](docs/promptmeld-overview.png)
@@ -71,10 +86,12 @@ repository.
 
 1. Select text in Word, Outlook, a browser, or another application.
 2. Press `Ctrl+Alt+Space`.
-3. Choose a writing action.
+3. Choose a writing action and select **Send _action name_** (or press Enter).
 
 Prompts are left unsubmitted by default, giving you an opportunity to review
-them and choose your ChatGPT settings before submission.
+them and choose your ChatGPT settings before submission. Application profiles
+can choose how long PromptMeld waits for an automatic result—including until
+cancelled—and whether it applies, copies, or simply notifies you when ready.
 
 Double-click the PromptMeld notification-area icon to open Configuration.
 
@@ -91,7 +108,8 @@ recovery, and the example Outlook configuration.
 Configuration allows you to manage guided writing-action creation and testing,
 portable action packs, folders, icons, shortcuts, overall defaults, updates,
 application-specific profiles, versioned single-file backups, restoration, and
-diagnostics. Editable files are stored under `%LOCALAPPDATA%\PromptMeld`.
+factory reset, and diagnostics. Editable files are stored under
+`%LOCALAPPDATA%\PromptMeld`.
 
 See [Configuration and customisation](docs/CONFIGURATION.md) for details of the
 interface, JSON formats, local files, and migration behaviour.
@@ -100,7 +118,8 @@ interface, JSON formats, local files, and migration behaviour.
 
 PromptMeld processes selected text locally and does not save selected text,
 generated prompts, or ChatGPT responses in its settings, usage records, or
-logs.
+logs. Smart action ranking is also performed locally and does not transmit the
+selected text.
 
 Text sent to ChatGPT is governed by your ChatGPT account settings and OpenAI's
 policies. PromptMeld makes no network connections other than update checks

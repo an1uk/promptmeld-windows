@@ -25,7 +25,15 @@ guide can be opened again from **Configuration > General > Launcher**.
 
 1. Select text in another application.
 2. Press `Ctrl+Alt+Space`.
-3. Search for or choose a writing action.
+3. Search for or choose a writing action, then select **Send _action name_**.
+
+Double-clicking an action or selecting it and pressing Enter starts the same
+process. For a one-off request, enter an instruction at the bottom of the
+launcher and select **Use instruction**. The action list receives most of the
+launcher by default. Select **Request options and custom instruction** only
+when you need remembered choices, output or guidance controls, additional
+context, or a one-off instruction; select **Hide request options** to return
+that space to the action list.
 
 The shortcut preserves the source application's focus and selection while the
 launcher opens. PromptMeld combines the selected text with the action's
@@ -41,15 +49,49 @@ Double-click the PromptMeld notification-area icon to open Configuration. The
 tray menu also shows the configured launcher shortcut, cancellation and recovery
 commands when relevant, updates, and application exit.
 
+## Smart action suggestions
+
+After text is captured, the top of the launcher shows up to four **Suggested**
+actions. PromptMeld ranks these from four local signals:
+
+- The source application, such as Outlook, Word, a browser, Teams, or Visual
+  Studio Code.
+- Whether the selection is short, medium, or long.
+- Locally recognised text types such as email, question, complaint, technical
+  text, rough notes, review, or online argument.
+- How often and how recently you used each action.
+
+For example, Outlook favours email and reply actions, browsers favour comment
+and review actions, and Visual Studio Code favours technical explanations and
+troubleshooting. Long passages favour shortening and editing, while bullet-like
+notes favour actions that shape rough notes.
+
+Suggestions never hide or disable actions. Pinned actions remain under
+**Direct actions**, folders remain available, and search uses the same context
+to order equally relevant matches. Pause over a suggestion to see why it was
+ranked there.
+
+This classification runs entirely inside PromptMeld. It retains only the
+source executable, word count and length band, and detected type labels for the
+open launcher. It does not retain the selected words in the suggestion context,
+write them to usage history, or send them to a ranking service.
+
 ## Writing actions and guidance
 
-PromptMeld includes 26 actions for editing, replies and arguments, tone and
-polish, technical help, and correspondence. **Add** and **Duplicate** open a
-short wizard for the action's instruction, location, search terms, icon,
-behaviour, and optional tested shortcut. Its final page combines sample text
-with the action and shows the complete request PromptMeld would send, without
-contacting ChatGPT. Actions can then be reorganised, disabled, or removed in
-Configuration. A one-off custom instruction remains available in the launcher.
+PromptMeld starts with four universal actions: **Edit, revise & improve**,
+**Proofread with minimal changes**, **Shorten without losing meaning**, and
+**Draft a reply**. All four are pinned to the launcher home screen and have
+default shortcuts. This small core keeps first use straightforward; add only
+the specialised packs that suit your writing.
+
+**Add** and **Duplicate** open a short wizard for the action's instruction,
+location, search terms, icon, behaviour, and optional tested shortcut. Its
+final page combines sample text with the action and shows the complete request
+PromptMeld would send, without contacting ChatGPT. Actions can then be
+reorganised, disabled, or removed in Configuration. Selecting a folder and
+choosing **Delete** removes that folder, nested folders, and their actions only
+after a confirmation shows how many actions will be affected. A one-off custom
+instruction remains available in the launcher.
 
 The Writing actions tab can import and export human-readable JSON action packs.
 Export either the selected action or the complete library. Imported actions are
@@ -58,9 +100,51 @@ adapted and shortcut clashes are cleared. Custom image files are referenced by
 the JSON but are not embedded, so use built-in icons or emoji for a pack that
 will move between computers.
 
-Five optional starter packs add focused sets for editing, email, complaints,
-reports, and social posts. They can be combined, edited, exported, or removed
-like any other actions.
+Nineteen optional starter packs provide four actions each. **Add starter pack**
+groups them by what you want to do with the selected text:
+
+- **Reply or respond**: Replies to selected text, Social media replies,
+  Customer relations, Email and correspondence, and Complaints and resolution.
+- **Edit or revise**: Advanced editing, Tone and voice, Social media editing,
+  Arguments and evidence, and Reviews and feedback.
+- **Draft or create**: Draft from selected text, Reports and updates, Social
+  media writing, Meetings and actions, and CVs and applications.
+- **Summarise or extract**: Summaries and extraction.
+- **Plan or decide**: Decisions and planning.
+- **Explain or learn**: Technical communication and Study and learning.
+
+**Replies to selected text** now concentrates on direct responses, including
+**Sarcastic reply** and **Challenge the selected text**. Strengthening an
+argument and checking claims belong to **Arguments and evidence**. Packs are
+additive and can be combined, edited, exported, or removed like any other
+actions.
+
+The social packs separate creating, replying, and editing. YouTube actions
+favour compact conversational text, Reddit actions allow more context and
+reasoning, and Facebook actions use accessible, moderately brief wording for a
+mixed audience. **Customer relations** treats the selection as a customer
+query, case history, or request and provides reply, clarification, limitation,
+and resolution workflows.
+
+Each writing action can define a **Default audience**. For example, social
+actions default to **Public or online audience**, while customer-relation
+replies default to **Customer or client**. An action set to inherit uses the
+source application's audience. Choosing an audience under **Change this
+request** overrides both for that request only.
+
+The action library supports nested folders, so actions from different packs can
+share intent-led roots such as `Reply`, `Edit & revise`, and
+`Summarise & understand`. Expand a folder in the tree to browse its children.
+Choose **New subfolder** to select a parent and name a nested level, or edit a
+folder path directly with `/` between levels.
+
+The launcher's **Remembered output** menu can also request a separate title or
+subject line alongside the complete rewritten text. Choose **Generate a
+title**, **Generate a subject line**, or **Choose title or subject
+automatically**. PromptMeld asks ChatGPT to put the labelled suggestion first,
+followed by the complete main text, so a review title or email subject can be
+copied into its separate field. **Do not add one** preserves the previous
+single-result behaviour and remains the default.
 
 Use **This request: intent or additional context** to add a desired outcome,
 constraint, or point that is not already present in the source. PromptMeld
@@ -73,9 +157,13 @@ The **Change this request** menu provides per-request controls for:
   URLs, product details, policies, and commitments.
 - **Recipient or audience:** adapts wording for personal, workplace, customer,
   support, public, or general-reader contexts.
+- **Number of alternatives:** requests one result, two alternatives, or three
+  alternatives.
 
-These choices reset for each newly captured selection unless the source
-application has configured defaults.
+These choices reset for each newly captured selection. The selected action's
+audience default applies first, then the source application's audience when the
+action inherits it; an audience chosen in the launcher takes priority over
+both.
 
 ## Application profiles
 
@@ -83,11 +171,16 @@ The **Applications** tab can give each Windows executable its own writing and
 delivery defaults. Double-click an application row to configure:
 
 - Audience and primary language.
-- Result length, formatting, editing strength, and factual preservation.
+- Result length, formatting, optional title or subject generation, editing
+  strength, and factual preservation.
 - Natural voice, guided questions, and writing blocks.
-- ChatGPT Project base name, automatic submission, and Temporary Chat.
-- Whether the generated result is left in ChatGPT, copied, or used to replace
-  the original selection.
+- ChatGPT Project base name, automatic submission, Temporary Chat, and privacy
+  preview and redaction.
+- How long PromptMeld waits for a completed response, including an indefinite
+  but cancellable wait.
+- Whether the generated result is left in ChatGPT, applied automatically,
+  copied with a notification, or held for review with **Copy result** and
+  **Apply now** actions.
 
 Every setting can inherit the overall default, so a profile only needs to
 specify what is different for that application.
@@ -115,26 +208,94 @@ application profile overrides them for one executable, and controls labelled
 
 New configurations include useful examples:
 
-- Word replaces a verified editable selection.
+- Word waits until completion or cancellation, then replaces a verified
+  editable selection.
 - Notepad replaces the selection and requests plain text.
 - Outlook and New Outlook copy plain-text results for manual placement.
-- Chrome, Edge, and Firefox copy the result rather than assuming the original
-  browser content is editable.
+- Chrome, Edge, and Firefox wait up to ten minutes, notify, and copy the result
+  rather than assuming the original browser content is editable.
 - Teams and Slack copy short, plain-text wording aimed at a colleague or peer.
 
 All starter profiles can be edited or removed.
 
+## Privacy preview and redaction
+
+Before opening the request in ChatGPT, PromptMeld checks the completed prompt
+locally for likely email addresses, phone numbers, account numbers, and names.
+Names are recognised from titles, greetings, labelled fields, signatures, and
+capitalised full names in the selected source or additional-context blocks.
+Detection is deliberately presented as a suggestion: it can miss details or
+mark ordinary text, so every match must be reviewed.
+
+**Show a privacy preview and offer reversible redaction before sending** is on
+by default under **Configuration > Overall defaults > Submission**. Clear it
+to skip this check entirely and send the prompt unchanged. An application
+profile can inherit that choice or force the preview on or off for one source
+application.
+
+When possible private information is found, **Privacy preview** shows its type,
+detected value, proposed placeholder, and the exact redacted text that would be
+sent. Every row can be selected independently. Choose **Redact selected and
+continue**, **Continue unchanged**, or **Cancel**. PromptMeld never redacts a
+request without displaying this window and receiving an explicit choice.
+
+Placeholders use forms such as `[EMAIL_1]`, `[PHONE_1]`, `[ACCOUNT_1]`, and
+`[NAME_1]`. The replacement key remains only in memory and is passed to the
+local automation helper. When PromptMeld retrieves ChatGPT's completed result,
+it restores exact placeholders before copying, reviewing, or applying the
+text. If result handling is configured to leave the response in ChatGPT—or the
+prompt is left for manual submission—the placeholders remain in ChatGPT and
+must be interpreted there. Altered or omitted placeholders cannot be restored
+automatically.
+
+![Privacy preview with individually selectable redactions](privacy-preview.png)
+
 ## Generated results, replacement, and recovery
 
-After automatic submission, PromptMeld can copy generated text or replace the
-original selection. Before replacement it returns to the source window and
-verifies that the same text remains selected in an editable control.
+After automatic submission, PromptMeld can notify, copy generated text, or
+replace the original selection. The inherited response wait is five minutes,
+and each application profile can choose one, three, five, ten, or twenty
+minutes, or wait indefinitely until you cancel. You can continue working in
+another window during that time; monitoring and copying a finished response
+use background-safe accessibility controls and do not take focus merely to
+check progress.
+
+Before replacement, PromptMeld returns to the source window and verifies that
+the same text remains selected in an editable control. If you are actively
+working in a different window when the response arrives, PromptMeld avoids
+interrupting you and copies the result instead. If the selection or document
+changed, it likewise will not paste over the changed content.
 
 If focus, selection, editability, or paste access changed, PromptMeld leaves the
 original alone and copies the generated result instead. The original text is
 preserved in memory and the tray offers **Undo last replacement** and
 **Copy preserved original**. Preserved text is never written to disk and is
 forgotten when PromptMeld closes or a newer original replaces it.
+
+When a generated response is available, the completion window provides
+**Copy result** and, for an editable captured source, **Apply now**. The same
+commands remain available in the tray as **Copy latest result** and
+**Apply latest result now** after the completion window is closed. Applying
+later returns to the original application and verifies that the same text is
+still selected before replacing it. If verification fails, PromptMeld leaves
+the source untouched and copies the result instead.
+
+Only the latest generated result is retained, in memory, for these commands.
+It is forgotten when PromptMeld closes and is not included in settings, logs,
+diagnostics, or backups.
+
+When **Two alternatives** or **Three alternatives** is selected under
+**Change this request**, PromptMeld asks ChatGPT for distinct complete options
+and opens a review window after generation. Choose an option on the left to
+read it, then use **Copy result** or **Apply now**. The selected option also
+becomes the latest result available from the tray.
+
+Alternative review requires automatic submission so PromptMeld can retrieve
+the response. If automatic submission is normally off, PromptMeld asks for
+permission to enable it for that request only; the remembered setting is not
+changed. Automatic copying and replacement are paused until an alternative is
+chosen. If ChatGPT does not follow the requested separators, PromptMeld shows
+the complete response as one option rather than guessing where to split it.
 
 The automation progress window can be cancelled with its button or Escape.
 Actionable failures remain visible, while Configuration can copy
@@ -155,6 +316,12 @@ configuration as a separate safety backup. The restored configuration is then
 reloaded immediately. The same tab contains privacy-filtered diagnostics and
 log-folder access.
 
+Use **Reset configuration** in the same tab to return actions, application
+profiles, shortcuts, writing defaults, and custom icons to their original
+defaults. After confirmation, PromptMeld creates a pre-reset safety backup,
+keeps usage history and logs, and closes. Open it again to run through the
+first-use setup guide with the default launcher shortcut and startup choice.
+
 ## Temporary Chat
 
 Turn on **Temporary Chat** in the launcher or an application profile when you
@@ -167,16 +334,34 @@ read and respond to that dialog yourself; it never accepts it for you.
 | Shortcut | Action |
 |---|---|
 | `Ctrl+Alt+Space` | Capture selected text and open the launcher |
-| `Ctrl+Alt+1` | Edit, revise, and improve |
-| `Ctrl+Alt+2` | Shorten and make punchier |
-| `Ctrl+Alt+3` | Expand and strengthen argument |
-| `Ctrl+Alt+4` | Reply to selected comment |
-| `Ctrl+Alt+5` | Sarcastic reply |
-| `Ctrl+Alt+6` | Polite but firm reply |
+| `Ctrl+Alt+1` | Edit, revise & improve |
+| `Ctrl+Alt+2` | Proofread with minimal changes |
+| `Ctrl+Alt+3` | Shorten without losing meaning |
+| `Ctrl+Alt+4` | Draft a reply |
 
 Shortcuts can be changed in **Configuration > Hotkeys**. PromptMeld identifies
 duplicates and asks Windows whether a shortcut is already registered by another
 application.
+
+## Accessibility
+
+PromptMeld supports keyboard navigation throughout the launcher,
+Configuration, setup guide, progress window, and generated-result review.
+Automation stage changes are exposed as quiet screen-reader status updates,
+including the current operation, completion, cancellation, and failures. The
+accessible stage history identifies which operations are current or completed.
+
+Confirmation, information, warning, and error dialogs use explicit high-
+contrast text, background, detail-text, button, hover, and keyboard-focus
+colours in both PromptMeld light and dark modes. Windows High Contrast replaces
+these fixed colours with the active system palette.
+
+When **Show animations in Windows** is turned off, PromptMeld positions the
+active progress stage immediately instead of smoothly scrolling it into view.
+Windows High Contrast overrides PromptMeld's selected light or dark theme: the
+main windows use the active Windows colours, selection colours, borders, and
+focus indicators. These behaviours are automatic and require no separate
+PromptMeld setting.
 
 ## Updates
 

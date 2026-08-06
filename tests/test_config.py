@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from promptmeld.config import (
-    CORRESPONDENCE_ACTION_IDS,
     LEGACY_NATURAL_VOICE_INSTRUCTION,
     ConfigurationError,
     ensure_user_configuration,
@@ -18,9 +17,10 @@ from promptmeld.config import (
     save_actions,
     save_settings,
 )
-from promptmeld.models import AppSettings
+from promptmeld.models import AppSettings, WritingAction
 from promptmeld.paths import AppPaths
 from promptmeld.returning import (
+    LEGACY_RECOMMENDED_APPLICATION_PROFILES_V2,
     RECOMMENDED_APPLICATION_PROFILES,
     RECOMMENDED_APPLICATION_RETURN_POLICIES,
 )
@@ -52,6 +52,7 @@ def test_load_actions(tmp_path):
     assert actions[0].hotkey == "Ctrl+Alt+2"
     assert actions[0].icon == "lucide:scissors"
     assert actions[0].folder == "Editing/Quick actions"
+    assert actions[0].recipient_audience == "inherit"
 
 
 def test_save_actions_round_trips_icon_and_order(tmp_path):
@@ -90,25 +91,23 @@ def test_save_actions_round_trips_icon_and_order(tmp_path):
     ]
 
 
-def test_shipped_starter_set_contains_grouped_actions():
+def test_shipped_starter_set_contains_four_general_actions():
     actions = load_default_actions()
 
-    assert len(actions) == 26
-    assert {action.id for action in actions} >= {
+    assert [action.id for action in actions] == [
         "edit-improve",
-        "reply-comment",
-        "fact-check",
-        "troubleshooting-checklist",
-        "improve-review",
-        *CORRESPONDENCE_ACTION_IDS,
-    }
-    assert any("/" in action.folder for action in actions)
-    assert sum(action.show_on_home for action in actions) == 3
-    assert all(
-        action.guided_drafting
-        for action in actions
-        if action.id in CORRESPONDENCE_ACTION_IDS
-    )
+        "proofread",
+        "shorten",
+        "draft-reply",
+    ]
+    assert [action.hotkey for action in actions] == [
+        "Ctrl+Alt+1",
+        "Ctrl+Alt+2",
+        "Ctrl+Alt+3",
+        "Ctrl+Alt+4",
+    ]
+    assert all(action.enabled for action in actions)
+    assert all(action.show_on_home for action in actions)
 
 
 def test_duplicate_action_ids_are_rejected(tmp_path):
@@ -158,6 +157,7 @@ def test_load_settings_includes_home_and_folder_display_defaults(tmp_path):
     assert settings.resulting_text_length == "default"
     assert settings.writing_block_enabled is False
     assert settings.resulting_text_formatting == "default"
+    assert settings.title_subject == "none"
     assert settings.starter_action_version == 1
 
 
@@ -261,6 +261,7 @@ def test_application_profile_writing_defaults_round_trip(tmp_path):
                         "primary_language": "English (US)",
                         "resulting_text_length": "short",
                         "resulting_text_formatting": "plain",
+                        "title_subject": "subject",
                         "editing_strength": "improve",
                         "preserve_facts": "on",
                         "natural_voice": "off",
@@ -268,6 +269,8 @@ def test_application_profile_writing_defaults_round_trip(tmp_path):
                         "writing_block": "off",
                         "auto_submit": "on",
                         "temporary_chat": "off",
+                        "privacy_preview": "off",
+                        "response_wait": "600",
                         "project_name": "Email writing",
                     }
                 }
@@ -281,6 +284,9 @@ def test_application_profile_writing_defaults_round_trip(tmp_path):
     assert profile.recipient_audience == "customer_client"
     assert profile.primary_language == "English (US)"
     assert profile.auto_submit == "on"
+    assert profile.privacy_preview == "off"
+    assert profile.response_wait == "600"
+    assert profile.title_subject == "subject"
     assert profile.project_name == "Email writing"
 
     save_settings(path, settings)
@@ -289,6 +295,59 @@ def test_application_profile_writing_defaults_round_trip(tmp_path):
         "editing_strength"
     ] == "improve"
     assert saved["application_return_policies"]["outlook.exe"] == "copy"
+
+
+def test_privacy_preview_defaults_to_enabled_and_round_trips(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text("{}", encoding="utf-8")
+
+    assert load_settings(path).privacy_preview_enabled is True
+
+    save_settings(path, AppSettings(privacy_preview_enabled=False))
+
+    assert load_settings(path).privacy_preview_enabled is False
+
+
+def test_invalid_privacy_preview_values_are_rejected(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"privacy_preview_enabled": "sometimes"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="privacy_preview_enabled"):
+        load_settings(path)
+
+    path.write_text(
+        json.dumps(
+            {
+                "application_profiles": {
+                    "outlook.exe": {"privacy_preview": "sometimes"}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="privacy_preview"):
+        load_settings(path)
+
+
+def test_invalid_application_response_wait_is_rejected(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "application_profiles": {
+                    "outlook.exe": {"response_wait": "forever-ish"}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="response_wait"):
+        load_settings(path)
 
 
 def test_invalid_application_profile_option_is_rejected(tmp_path):
@@ -321,8 +380,10 @@ def test_new_configuration_contains_recommended_application_policies(
         == RECOMMENDED_APPLICATION_RETURN_POLICIES
     )
     assert settings.application_profiles == RECOMMENDED_APPLICATION_PROFILES
-    assert settings.starter_application_policy_version == 2
+    assert settings.starter_action_version == 3
+    assert settings.starter_application_policy_version == 3
     assert settings.first_run_setup_completed is False
+    assert settings.folder_icons == {"Essentials": "lucide:sparkles"}
 
 
 def test_first_run_setup_state_round_trips(tmp_path):
@@ -368,7 +429,7 @@ def test_empty_application_policies_receive_recommendations_only_once(
         == RECOMMENDED_APPLICATION_RETURN_POLICIES
     )
     assert migrated.application_profiles == RECOMMENDED_APPLICATION_PROFILES
-    assert migrated.starter_application_policy_version == 2
+    assert migrated.starter_application_policy_version == 3
 
     save_settings(
         paths.settings_file,
@@ -412,6 +473,30 @@ def test_v1_starter_policies_are_enriched_with_writing_defaults(tmp_path):
     )
 
 
+def test_v2_starter_profiles_receive_per_application_wait_defaults(tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    save_settings(
+        paths.settings_file,
+        AppSettings(
+            application_profiles=(
+                LEGACY_RECOMMENDED_APPLICATION_PROFILES_V2
+            ),
+            starter_application_policy_version=2,
+        ),
+    )
+
+    ensure_user_configuration(paths)
+
+    settings = load_settings(paths.settings_file)
+    assert settings.application_profiles == RECOMMENDED_APPLICATION_PROFILES
+    assert settings.application_profiles["winword.exe"].response_wait == (
+        "indefinite"
+    )
+    assert settings.application_profiles["chrome.exe"].response_wait == "600"
+    assert settings.starter_application_policy_version == 3
+
+
 def test_existing_application_policies_are_preserved_during_migration(
     tmp_path,
 ):
@@ -436,7 +521,7 @@ def test_existing_application_policies_are_preserved_during_migration(
     assert settings.application_profiles["thunderbird.exe"].return_mode == (
         "copy"
     )
-    assert settings.starter_application_policy_version == 2
+    assert settings.starter_application_policy_version == 3
 
 
 def test_load_settings_rejects_invalid_temporary_chat_value(tmp_path):
@@ -480,6 +565,17 @@ def test_load_settings_validates_resulting_text_formatting(tmp_path):
     )
 
     with pytest.raises(ConfigurationError, match="resulting_text_formatting"):
+        load_settings(path)
+
+
+def test_load_settings_validates_title_or_subject_mode(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"title_subject": "headline-ish"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="title_subject"):
         load_settings(path)
 
 
@@ -536,6 +632,48 @@ def test_action_guided_drafting_round_trips(tmp_path):
     save_actions(path, actions)
 
     assert load_actions(path)[0].guided_drafting is True
+
+
+def test_action_default_audience_round_trips(tmp_path):
+    path = tmp_path / "actions.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "social-reply",
+                    "name": "Social reply",
+                    "instruction": "Draft a reply.",
+                    "recipient_audience": "public_online",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    actions = load_actions(path)
+    save_actions(path, actions)
+
+    assert load_actions(path)[0].recipient_audience == "public_online"
+
+
+def test_invalid_action_default_audience_is_rejected(tmp_path):
+    path = tmp_path / "actions.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "reply",
+                    "name": "Reply",
+                    "instruction": "Draft a reply.",
+                    "recipient_audience": "everyone-on-earth",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="recipient_audience"):
+        load_actions(path)
 
 
 def test_invalid_action_guided_drafting_is_rejected(tmp_path):
@@ -595,12 +733,16 @@ def test_untouched_legacy_defaults_are_backed_up_and_migrated(tmp_path):
 
     actions = load_actions(paths.actions_file)
     backup = paths.data_dir / "actions.legacy-v1-backup.json"
-    assert len(actions) == 26
-    assert all(action.folder for action in actions)
+    assert [action.id for action in actions] == [
+        "edit-improve",
+        "proofread",
+        "shorten",
+        "draft-reply",
+    ]
     assert backup.read_text(encoding="utf-8") == legacy
 
 
-def test_customized_legacy_configuration_is_preserved_during_additive_migration(
+def test_customized_legacy_configuration_is_preserved_during_version_migration(
     tmp_path,
 ):
     paths = AppPaths.discover(tmp_path)
@@ -616,33 +758,43 @@ def test_customized_legacy_configuration_is_preserved_during_additive_migration(
     legacy = json.loads(legacy_path.read_text(encoding="utf-8"))
     legacy[0]["name"] = "My customized action"
     paths.actions_file.write_text(json.dumps(legacy), encoding="utf-8")
+    paths.settings_file.write_text(
+        json.dumps({"starter_action_version": 2}),
+        encoding="utf-8",
+    )
+    before = load_actions(paths.actions_file)
+    before_json = paths.actions_file.read_text(encoding="utf-8")
 
     ensure_user_configuration(paths)
 
     actions = load_actions(paths.actions_file)
-    assert len(actions) == 14
-    assert actions[0].name == "My customized action"
-    assert {action.id for action in actions} >= CORRESPONDENCE_ACTION_IDS
+    settings = load_settings(paths.settings_file)
+    assert actions == before
+    assert paths.actions_file.read_text(encoding="utf-8") == before_json
+    assert settings.starter_action_version == 3
     assert not (paths.data_dir / "actions.legacy-v1-backup.json").exists()
-    assert (
-        paths.data_dir / "actions.pre-correspondence-v2-backup.json"
-    ).exists()
+    assert not list(paths.data_dir.glob("actions.*-backup.json"))
 
 
-def test_correspondence_actions_are_added_once_to_existing_configuration(
-    tmp_path,
-):
+def test_action_catalogue_version_migration_only_updates_settings(tmp_path):
     paths = AppPaths.discover(tmp_path)
     paths.ensure()
-    old_actions = [
-        action
-        for action in load_default_actions()
-        if action.id not in CORRESPONDENCE_ACTION_IDS
+    custom_actions = [
+        WritingAction(
+            id="my-action",
+            name="My action",
+            keywords=("custom",),
+            instruction="Keep this action exactly as configured.",
+            hotkey="Ctrl+Alt+9",
+            folder="My tools",
+        ),
     ]
-    save_actions(paths.actions_file, old_actions)
+    save_actions(paths.actions_file, custom_actions)
+    before_json = paths.actions_file.read_text(encoding="utf-8")
     paths.settings_file.write_text(
         json.dumps(
             {
+                "starter_action_version": 2,
                 "folder_icons": {
                     "Editing": "lucide:sparkles",
                 },
@@ -655,27 +807,11 @@ def test_correspondence_actions_are_added_once_to_existing_configuration(
 
     migrated = load_actions(paths.actions_file)
     settings = load_settings(paths.settings_file)
-    assert len(migrated) == 26
-    assert {action.id for action in migrated} >= CORRESPONDENCE_ACTION_IDS
+    assert migrated == custom_actions
+    assert paths.actions_file.read_text(encoding="utf-8") == before_json
     assert settings.folder_icons["Editing"] == "lucide:sparkles"
-    assert (
-        settings.folder_icons["Correspondence/Email"]
-        == "lucide:briefcase-business"
-    )
-    assert settings.starter_action_version == 2
-    assert (
-        paths.data_dir / "actions.pre-correspondence-v2-backup.json"
-    ).exists()
-
-    save_actions(
-        paths.actions_file,
-        [action for action in migrated if action.id != "reply-email"],
-    )
-    ensure_user_configuration(paths)
-
-    assert "reply-email" not in {
-        action.id for action in load_actions(paths.actions_file)
-    }
+    assert settings.starter_action_version == 3
+    assert not list(paths.data_dir.glob("actions.*-backup.json"))
 
 
 def test_earlier_launcher_defaults_are_migrated(tmp_path):

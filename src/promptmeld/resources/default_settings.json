@@ -15,6 +15,7 @@
   "natural_voice_enabled": false,
   "natural_voice_instruction": "Preserve the writer's individual voice, vocabulary, and level of formality. Make only the changes needed for the selected task. Avoid generic filler, stock transitions, excessive structure, and unnecessarily polished phrasing. Do not use em dashes (—). Use a standard dash (-), comma, colon, semicolon, brackets, or a separate sentence instead. Do not invent personal details or deliberately introduce errors.",
   "auto_submit_enabled": false,
+  "privacy_preview_enabled": true,
   "replace_selected_text_enabled": false,
   "copy_generated_text_enabled": false,
   "application_return_policies": {
@@ -29,15 +30,15 @@
     "winword.exe": "replace"
   },
   "application_profiles": {
-    "chrome.exe": {"return_mode": "copy"},
-    "firefox.exe": {"return_mode": "copy"},
+    "chrome.exe": {"return_mode": "copy", "response_wait": "600"},
+    "firefox.exe": {"return_mode": "copy", "response_wait": "600"},
     "ms-teams.exe": {"return_mode": "copy", "recipient_audience": "colleague_peer", "resulting_text_length": "short", "resulting_text_formatting": "plain"},
-    "msedge.exe": {"return_mode": "copy"},
+    "msedge.exe": {"return_mode": "copy", "response_wait": "600"},
     "notepad.exe": {"return_mode": "replace", "resulting_text_formatting": "plain"},
     "olk.exe": {"return_mode": "copy", "resulting_text_formatting": "plain"},
     "outlook.exe": {"return_mode": "copy", "resulting_text_formatting": "plain"},
     "slack.exe": {"return_mode": "copy", "recipient_audience": "colleague_peer", "resulting_text_length": "short", "resulting_text_formatting": "plain"},
-    "winword.exe": {"return_mode": "replace"}
+    "winword.exe": {"return_mode": "replace", "response_wait": "indefinite"}
   },
   "temporary_chat_enabled": false,
   "primary_language": "English (UK)",
@@ -45,18 +46,10 @@
   "resulting_text_length": "default",
   "writing_block_enabled": false,
   "resulting_text_formatting": "default",
-  "starter_action_version": 2,
-  "starter_application_policy_version": 2,
+  "title_subject": "none",
+  "starter_action_version": 3,
+  "starter_application_policy_version": 3,
   "folder_icons": {
-    "Editing": "lucide:pencil",
-    "Editing/Reviews": "lucide:heart",
-    "Replies & arguments": "lucide:message-square-text",
-    "Replies & arguments/Replies": "lucide:send",
-    "Replies & arguments/Analysis": "lucide:search-check",
-    "Tone & polish": "lucide:sparkles",
-    "Technical help": "lucide:list-checks",
-    "Correspondence": "lucide:send",
-    "Correspondence/Email": "lucide:briefcase-business",
-    "Correspondence/Customer & marketplace": "lucide:message-square-text"
+    "Essentials": "lucide:sparkles"
   }
 }

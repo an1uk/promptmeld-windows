@@ -7,8 +7,22 @@ from collections.abc import Callable
 
 from .clipboard import read_clipboard_text, write_clipboard_text
 from .models import SubmissionResult
+from .privacy import restore_placeholders
+from .windows import SourceRecoveryError, replace_source_selection
 
 LOGGER = logging.getLogger(__name__)
+DEFAULT_RESPONSE_TIMEOUT_SECONDS = 300.0
+
+
+def _foreground_window_handle() -> int | None:
+    try:
+        import win32gui
+
+        handle = int(win32gui.GetForegroundWindow())
+        return handle or None
+    except Exception:
+        LOGGER.debug("Could not read the foreground window", exc_info=True)
+        return None
 
 
 class ChatGPTAutomationError(RuntimeError):
@@ -121,6 +135,8 @@ class ChatGPTDesktop:
         send_keys: Callable[..., None] | None = None,
         mouse_clicker: Callable[[object], None] | None = None,
         progress_callback: Callable[[str, str], None] | None = None,
+        response_timeout_seconds: float | None = DEFAULT_RESPONSE_TIMEOUT_SECONDS,
+        foreground_window_reader: Callable[[], int | None] | None = None,
     ):
         self.timeout_seconds = timeout_seconds
         self.chatgpt_uri = chatgpt_uri
@@ -132,6 +148,14 @@ class ChatGPTDesktop:
         self.send_keys = send_keys
         self.mouse_clicker = mouse_clicker
         self.progress_callback = progress_callback
+        self.response_timeout_seconds = (
+            None
+            if response_timeout_seconds is None
+            else max(0.01, float(response_timeout_seconds))
+        )
+        self.foreground_window_reader = (
+            foreground_window_reader or _foreground_window_handle
+        )
         self.timings: list[dict[str, float | str]] = []
         self.navigation_failure: str | None = None
 
@@ -148,6 +172,8 @@ class ChatGPTDesktop:
         source_app: str = "",
         replace_selected_text: bool = False,
         copy_generated_text: bool = False,
+        capture_generated_text: bool = False,
+        redaction_replacements: dict[str, str] | None = None,
     ) -> SubmissionResult:
         import pythoncom
 
@@ -285,18 +311,27 @@ class ChatGPTDesktop:
             generated_text = None
             selection_replaced = False
             generated_text_copied = False
-            wants_generated_text = copy_generated_text or (
+            wants_generated_text = capture_generated_text or copy_generated_text or (
                 replace_selected_text and source_is_editable
             )
             if wants_generated_text:
+                response_wait_foreground = (
+                    self._native_window_handle(window)
+                    or self.foreground_window_reader()
+                )
                 self._report_progress(
                     "waiting-for-response",
-                    "Waiting for ChatGPT to finish the response",
+                    "Waiting for ChatGPT to finish the response. You can "
+                    "continue working in another window.",
                 )
                 try:
                     generated_text = self._copy_latest_response(
                         window,
                         prompt,
+                    )
+                    generated_text = restore_placeholders(
+                        generated_text,
+                        redaction_replacements or {},
                     )
                 except Exception as exc:
                     LOGGER.exception("ChatGPT response could not be retrieved")
@@ -314,6 +349,27 @@ class ChatGPTDesktop:
                     )
 
                 if replace_selected_text and source_is_editable:
+                    if self._foreground_changed_while_waiting(
+                        response_wait_foreground,
+                        source_hwnd,
+                    ):
+                        self._report_progress(
+                            "copying-response",
+                            "Another window is in use, so the response will be "
+                            "copied without changing focus",
+                        )
+                        self.clipboard_writer(generated_text)
+                        return SubmissionResult(
+                            submitted=True,
+                            generated_text_copied=True,
+                            generated_text=generated_text,
+                            message=(
+                                "ChatGPT finished while you were working in "
+                                "another window. PromptMeld left the original "
+                                "selection unchanged and copied the generated "
+                                "result to the clipboard."
+                            ),
+                        )
                     self._report_progress(
                         "replacing-selection",
                         "Replacing the selected text in its original application",
@@ -335,11 +391,12 @@ class ChatGPTDesktop:
                             submitted=True,
                             generated_text_copied=True,
                             output_failed=True,
+                            generated_text=generated_text,
                             message=(
                                 "PromptMeld could not safely replace the original "
                                 "selection. The generated result has been copied "
-                                "to the clipboard instead. The preserved original "
-                                f"is available from the tray menu. Details: {exc}"
+                                "to the clipboard instead. The original was left "
+                                f"unchanged. Details: {exc}"
                             ),
                         )
                 if copy_generated_text:
@@ -367,6 +424,7 @@ class ChatGPTDesktop:
                 submitted=True,
                 generated_text_copied=generated_text_copied,
                 selection_replaced=selection_replaced,
+                generated_text=generated_text or "",
                 message=(
                     destination_message
                     + (
@@ -1802,11 +1860,39 @@ class ChatGPTDesktop:
     def _copy_latest_response(self, window, prompt: str) -> str:
         """Use ChatGPT's verified response Copy control to get plain text."""
 
-        deadline = time.monotonic() + max(self.timeout_seconds, 15.0)
+        started = time.monotonic()
+        deadline = (
+            None
+            if self.response_timeout_seconds is None
+            else started
+            + max(self.timeout_seconds, self.response_timeout_seconds)
+        )
+        next_status_update = started + 30.0
         sentinel = "__PROMPTMELD_OUTPUT_NOT_READY__"
-        while time.monotonic() < deadline:
+        generation_seen = False
+        completed_checks = 0
+        while deadline is None or time.monotonic() < deadline:
+            now = time.monotonic()
+            if now >= next_status_update:
+                elapsed = int(now - started)
+                self._report_progress(
+                    "waiting-for-response",
+                    f"Still waiting for ChatGPT ({elapsed} seconds). You can "
+                    "continue working in another window.",
+                )
+                next_status_update = now + 30.0
             current = self._refresh_chatgpt_window() or window
             controls = self._descendants(current) or []
+            if self._response_is_generating(controls):
+                generation_seen = True
+                completed_checks = 0
+                time.sleep(0.15)
+                continue
+            if generation_seen:
+                completed_checks += 1
+                if completed_checks < 2:
+                    time.sleep(0.15)
+                    continue
             copy_controls = [
                 control
                 for control in controls
@@ -1818,7 +1904,11 @@ class ChatGPTDesktop:
             ]
             for control in reversed(copy_controls):
                 self.clipboard_writer(sentinel)
-                self._activate_control(control)
+                if not self._activate_control(
+                    control,
+                    allow_focus=False,
+                ):
+                    continue
                 time.sleep(0.08)
                 value = self.clipboard_reader()
                 if (
@@ -1832,8 +1922,61 @@ class ChatGPTDesktop:
             time.sleep(0.15)
         raise ChatGPTAutomationError(
             "ChatGPT did not expose a completed response Copy control before "
-            "the output timeout."
+            "the configured response timeout."
         )
+
+    @staticmethod
+    def _response_is_generating(controls) -> bool:
+        """Detect response controls that ChatGPT exposes while streaming."""
+
+        exact_names = {
+            "stop generating",
+            "stop generation",
+            "stop response",
+            "stop streaming",
+        }
+        for control in controls:
+            info = getattr(control, "element_info", None)
+            if info is None or getattr(info, "control_type", "") != "Button":
+                continue
+            if not bool(getattr(info, "enabled", True)):
+                continue
+            if not bool(getattr(info, "visible", True)):
+                continue
+            name = " ".join(
+                str(getattr(info, "name", "") or "")
+                .strip()
+                .casefold()
+                .split()
+            )
+            if name in exact_names or (
+                name.startswith("stop ")
+                and any(
+                    marker in name
+                    for marker in ("generat", "response", "stream")
+                )
+            ):
+                return True
+        return False
+
+    def _foreground_changed_while_waiting(
+        self,
+        expected_foreground: int | None,
+        source_hwnd: int | None,
+    ) -> bool:
+        """Avoid interrupting work begun in an unrelated window."""
+
+        try:
+            current_foreground = self.foreground_window_reader()
+        except Exception:
+            LOGGER.debug("Could not recheck the foreground window", exc_info=True)
+            return False
+        if expected_foreground is None or current_foreground is None:
+            return False
+        return current_foreground not in {
+            expected_foreground,
+            source_hwnd,
+        }
 
     def _replace_source_selection(
         self,
@@ -1842,79 +1985,18 @@ class ChatGPTDesktop:
         generated_text: str,
         source_app: str = "",
     ) -> None:
-        if not source_hwnd:
-            raise ChatGPTAutomationError(
-                "The original editable window could not be identified."
-            )
         try:
-            import win32gui
-
-            if not win32gui.IsWindow(source_hwnd):
-                raise ChatGPTAutomationError(
-                    "The original editable window is no longer available."
-                )
-            if win32gui.IsIconic(source_hwnd):
-                win32gui.ShowWindow(source_hwnd, 9)  # SW_RESTORE
-            try:
-                win32gui.BringWindowToTop(source_hwnd)
-            except Exception:
-                LOGGER.debug("Could not bring source window to top", exc_info=True)
-            win32gui.SetForegroundWindow(source_hwnd)
-            focus_timeout = (
-                2.5
-                if source_app.casefold()
-                in {
-                    "winword.exe",
-                    "outlook.exe",
-                    "olk.exe",
-                    "ms-teams.exe",
-                    "teams.exe",
-                    "chrome.exe",
-                    "msedge.exe",
-                    "firefox.exe",
-                }
-                else 1.5
+            replace_source_selection(
+                source_hwnd,
+                original_text,
+                generated_text,
+                source_app,
+                clipboard_reader=self.clipboard_reader,
+                clipboard_writer=self.clipboard_writer,
+                send_keys=self.send_keys,
             )
-            deadline = time.monotonic() + focus_timeout
-            while time.monotonic() < deadline:
-                if win32gui.GetForegroundWindow() == source_hwnd:
-                    break
-                time.sleep(0.03)
-            if win32gui.GetForegroundWindow() != source_hwnd:
-                raise ChatGPTAutomationError(
-                    "Windows did not return focus to the original application."
-                )
-
-            # A response can take long enough for the user to move the caret or
-            # change the selection. Re-copy and compare before any destructive
-            # paste so the result never lands in an unverified location.
-            marker = f"PromptMeld source verification {time.monotonic_ns()}"
-            self.clipboard_writer(marker)
-            self.send_keys("^c", pause=0.03)
-            verification_deadline = time.monotonic() + 0.55
-            selected_text = self.clipboard_reader()
-            while (
-                selected_text == marker
-                and time.monotonic() < verification_deadline
-            ):
-                time.sleep(0.03)
-                selected_text = self.clipboard_reader()
-            if self._normalise_composer_text(
-                str(selected_text or "")
-            ) != self._normalise_composer_text(original_text):
-                raise ChatGPTAutomationError(
-                    "The original selection changed while ChatGPT was responding."
-                )
-
-            self.clipboard_writer(generated_text)
-            self.send_keys("^v", pause=0.04)
-        except ChatGPTAutomationError:
-            raise
-        except Exception as exc:
-            raise ChatGPTAutomationError(
-                "Windows could not paste the generated text into the original "
-                "application."
-            ) from exc
+        except SourceRecoveryError as exc:
+            raise ChatGPTAutomationError(str(exc)) from exc
 
     @staticmethod
     def _normalise_composer_text(value: str) -> str:
@@ -1925,6 +2007,22 @@ class ChatGPTDesktop:
             .replace("\u2029", "\n")
             .rstrip("\n")
         )
+
+    @staticmethod
+    def _native_window_handle(window) -> int | None:
+        """Read a top-level UIA wrapper's native handle when it exposes one."""
+
+        for candidate in (
+            getattr(window, "handle", None),
+            getattr(getattr(window, "element_info", None), "handle", None),
+        ):
+            try:
+                handle = int(candidate or 0)
+            except (TypeError, ValueError):
+                continue
+            if handle:
+                return handle
+        return None
 
     @staticmethod
     def _descendants(window):
@@ -2034,7 +2132,12 @@ class ChatGPTDesktop:
                 partial = partial or control
         return exact or partial
 
-    def _activate_control(self, control) -> None:
+    def _activate_control(
+        self,
+        control,
+        *,
+        allow_focus: bool = True,
+    ) -> bool:
         """Activate a UIA control, keeping physical input as the last resort."""
 
         name = getattr(control.element_info, "name", "")
@@ -2042,7 +2145,7 @@ class ChatGPTDesktop:
         if callable(invoke):
             try:
                 invoke()
-                return
+                return True
             except Exception:
                 LOGGER.debug(
                     "UIA Invoke unavailable for control '%s'",
@@ -2057,7 +2160,7 @@ class ChatGPTDesktop:
         if callable(pattern_click):
             try:
                 pattern_click()
-                return
+                return True
             except Exception:
                 LOGGER.debug(
                     "UIA pattern click unavailable for control '%s'",
@@ -2069,13 +2172,20 @@ class ChatGPTDesktop:
         if callable(select):
             try:
                 select()
-                return
+                return True
             except Exception:
                 LOGGER.debug(
                     "UIA SelectionItem unavailable for control '%s'",
                     name,
                     exc_info=True,
                 )
+
+        if not allow_focus:
+            LOGGER.debug(
+                "No background-safe activation pattern for control '%s'",
+                name,
+            )
+            return False
 
         set_focus = getattr(control, "set_focus", None)
         if callable(set_focus):
@@ -2084,7 +2194,7 @@ class ChatGPTDesktop:
                 if self.send_keys is None:
                     self._ensure_automation_dependencies()
                 self.send_keys("{ENTER}", pause=0.02)
-                return
+                return True
             except Exception:
                 LOGGER.debug(
                     "Keyboard activation unavailable for control '%s'",
@@ -2097,6 +2207,7 @@ class ChatGPTDesktop:
             name,
         )
         (self.mouse_clicker or _click_control_on_virtual_desktop)(control)
+        return True
 
     def _log_timing(self, stage: str, started: float) -> None:
         elapsed_ms = (time.perf_counter() - started) * 1000

@@ -10,8 +10,10 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
+    QAction,
     QColor,
     QPainter,
+    QPalette,
     QPen,
     QPolygonF,
     QTextCharFormat,
@@ -27,6 +29,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QGroupBox,
     QHeaderView,
     QHBoxLayout,
@@ -37,7 +40,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProxyStyle,
     QPushButton,
-    QScrollArea,
     QSpinBox,
     QStyle,
     QTableWidget,
@@ -72,6 +74,7 @@ from .configuration_backup import (
     ConfigurationBackupError,
     create_configuration_backup,
     inspect_configuration_backup,
+    reset_configuration_to_defaults,
     restore_configuration_backup,
 )
 from .branding import APP_NAME, REPOSITORY_URL, TAGLINE
@@ -84,6 +87,7 @@ from .models import (
     RECIPIENT_AUDIENCE_OPTIONS,
     RESULTING_TEXT_FORMATTING_OPTIONS,
     RESULTING_TEXT_LENGTH_OPTIONS,
+    TITLE_SUBJECT_OPTIONS,
     AppSettings,
     ApplicationProfile,
     CapturedSelection,
@@ -92,13 +96,20 @@ from .models import (
 from .paths import AppPaths
 from .prompting import PromptBuilder
 from .returning import (
+    APPLICATION_RESPONSE_WAIT_OPTIONS,
     APPLICATION_RETURN_MODE_OPTIONS,
     APPLICATION_TOGGLE_OPTIONS,
     COMMON_APPLICATIONS,
     application_display_name,
     normalize_application_name,
 )
-from .theme import resolve_theme
+from .theme import (
+    apply_message_box_theme,
+    high_contrast_stylesheet,
+    message_box_stylesheet,
+    resolve_theme,
+    system_high_contrast_enabled,
+)
 from .windows import HotkeyParseError, parse_hotkey
 
 
@@ -141,13 +152,23 @@ class ApplicationProfileDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.application = application
+        self.appearance_parent = parent
+        self.theme = overall.theme
         label = application_display_name(application)
         self.setWindowTitle(f"Configure {label}")
         self.setAccessibleName(f"Application configuration for {label}")
         self.setModal(True)
-        self.resize(650, 690)
+        self.resize(650, 760)
         if parent is not None:
             self.setStyleSheet(parent.styleSheet())
+        elif system_high_contrast_enabled():
+            self.setStyleSheet(
+                high_contrast_stylesheet()
+                + message_box_stylesheet(self.theme)
+            )
+        app = QApplication.instance()
+        if app is not None:
+            app.paletteChanged.connect(self._system_appearance_changed)
 
         root = QVBoxLayout(self)
         heading = QLabel(f"{label} ({application})")
@@ -187,6 +208,11 @@ class ApplicationProfileDialog(QDialog):
             profile.resulting_text_formatting,
             "Default resulting text formatting",
         )
+        self.title_subject = self._combo(
+            (("inherit", "Use overall default"), *TITLE_SUBJECT_OPTIONS),
+            profile.title_subject,
+            "Default title or subject generation",
+        )
         self.editing_strength = self._combo(
             (("inherit", "Use launcher default"), *EDITING_STRENGTH_OPTIONS),
             profile.editing_strength,
@@ -216,6 +242,7 @@ class ApplicationProfileDialog(QDialog):
         self._add_row(writing_form, "Language", self.primary_language)
         self._add_row(writing_form, "Result length", self.length)
         self._add_row(writing_form, "Formatting", self.formatting)
+        self._add_row(writing_form, "Title or subject", self.title_subject)
         self._add_row(writing_form, "Editing strength", self.editing_strength)
         self._add_row(writing_form, "Preserve facts", self.preserve_facts)
         self._add_row(writing_form, "Natural voice", self.natural_voice)
@@ -247,11 +274,43 @@ class ApplicationProfileDialog(QDialog):
             profile.temporary_chat,
             "Temporary Chat",
         )
+        self.privacy_preview = self._combo(
+            APPLICATION_TOGGLE_OPTIONS,
+            profile.privacy_preview,
+            "Privacy preview and redaction",
+        )
+        self.privacy_preview.setToolTip(
+            "Show the local privacy preview before this application's prompts "
+            "are opened in ChatGPT. It can offer reversible placeholders for "
+            "possible email addresses, phone numbers, account numbers, and "
+            "names. Off sends the prompt without this preview."
+        )
         self.return_mode = self._combo(
             APPLICATION_RETURN_MODE_OPTIONS,
             profile.return_mode,
             "Generated result handling",
         )
+        self.response_wait = self._combo(
+            APPLICATION_RESPONSE_WAIT_OPTIONS,
+            profile.response_wait,
+            "Maximum response wait",
+        )
+        self.response_wait_help = self._help_button(
+            "ChatGPT may take seconds or several minutes to generate a response, "
+            "especially for longer requests, reasoning-heavy tasks, or when the "
+            "service is busy. After automatic submission, PromptMeld checks in "
+            "the background until this limit is reached, then follows this "
+            "application's completion behaviour. This does not make ChatGPT "
+            "respond faster and does not stop you using other windows. You can "
+            "cancel a wait at any time; indefinite means wait until cancelled.",
+            "Explain response wait time",
+        )
+        response_wait_field = QWidget()
+        response_wait_layout = QHBoxLayout(response_wait_field)
+        response_wait_layout.setContentsMargins(0, 0, 0, 0)
+        response_wait_layout.setSpacing(6)
+        response_wait_layout.addWidget(self.response_wait, 1)
+        response_wait_layout.addWidget(self.response_wait_help)
         self._add_row(
             delivery_form,
             "Project base override",
@@ -259,12 +318,27 @@ class ApplicationProfileDialog(QDialog):
         )
         self._add_row(delivery_form, "Submit automatically", self.auto_submit)
         self._add_row(delivery_form, "Temporary Chat", self.temporary_chat)
-        self._add_row(delivery_form, "Generated result", self.return_mode)
+        self._add_row(
+            delivery_form,
+            "Privacy preview and redaction",
+            self.privacy_preview,
+        )
+        self._add_row(
+            delivery_form,
+            "When the response completes",
+            self.return_mode,
+        )
+        self._add_row(
+            delivery_form,
+            "Wait for response",
+            response_wait_field,
+        )
         root.addWidget(delivery_group)
 
         note = QLabel(
-            "Replacing or copying a generated result requires automatic "
-            "submission. Unsafe replacement still falls back to copying. "
+            "Applying, reviewing, or copying a generated result requires "
+            "automatic submission. An indefinite wait remains cancellable. "
+            "Unsafe replacement still falls back to copying. "
             "The overall project-naming strategy still applies to any project "
             "base override above; one-project mode ignores this override."
         )
@@ -296,6 +370,36 @@ class ApplicationProfileDialog(QDialog):
         label.setBuddy(field)
         form.addRow(label, field)
 
+    @staticmethod
+    def _help_button(text: str, accessible_name: str) -> QToolButton:
+        button = QToolButton()
+        button.setText("?")
+        button.setObjectName("helpIcon")
+        button.setAccessibleName(accessible_name)
+        button.setAccessibleDescription(text)
+        button.setToolTip(
+            "<qt><table width='340' cellspacing='0' cellpadding='0'>"
+            f"<tr><td>{escape(text)}</td></tr></table></qt>"
+        )
+        button.setAutoRaise(True)
+        button.setFixedSize(20, 20)
+        button.setCursor(Qt.CursorShape.WhatsThisCursor)
+        return button
+
+    def _system_appearance_changed(self, *args) -> None:
+        QTimer.singleShot(0, self._sync_appearance)
+
+    def _sync_appearance(self) -> None:
+        if system_high_contrast_enabled():
+            self.setStyleSheet(
+                high_contrast_stylesheet()
+                + message_box_stylesheet(self.theme)
+            )
+        elif self.appearance_parent is not None:
+            self.setStyleSheet(self.appearance_parent.styleSheet())
+        else:
+            self.setStyleSheet("")
+
     def profile(self) -> ApplicationProfile:
         return ApplicationProfile(
             return_mode=str(self.return_mode.currentData() or "default"),
@@ -308,6 +412,9 @@ class ApplicationProfileDialog(QDialog):
             ),
             resulting_text_formatting=str(
                 self.formatting.currentData() or "inherit"
+            ),
+            title_subject=str(
+                self.title_subject.currentData() or "inherit"
             ),
             editing_strength=str(
                 self.editing_strength.currentData() or "inherit"
@@ -327,6 +434,12 @@ class ApplicationProfileDialog(QDialog):
             auto_submit=str(self.auto_submit.currentData() or "inherit"),
             temporary_chat=str(
                 self.temporary_chat.currentData() or "inherit"
+            ),
+            privacy_preview=str(
+                self.privacy_preview.currentData() or "inherit"
+            ),
+            response_wait=str(
+                self.response_wait.currentData() or "inherit"
             ),
             project_name=self.project_name.text().strip(),
         )
@@ -496,8 +609,12 @@ class FirstRunSetupWizard(QWizard):
         action_hotkeys: dict[str, str] | None = None,
         startup_enabled: bool = False,
         parent: QWidget | None = None,
+        theme: str = "auto",
     ) -> None:
         super().__init__(parent)
+        self.theme = theme
+        self.resolved_theme = resolve_theme(theme)
+        self.native_header_style = ""
         self.hotkey_availability = hotkey_availability
         self.action_hotkeys: dict[tuple[int, int], str] = {}
         for hotkey, name in (action_hotkeys or {}).items():
@@ -509,12 +626,16 @@ class FirstRunSetupWizard(QWizard):
                 (parsed.modifiers, parsed.virtual_key)
             ] = name
         self.setWindowTitle(f"Welcome to {APP_NAME}")
+        self.setAccessibleName(f"{APP_NAME} first-use setup guide")
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.setOption(QWizard.WizardOption.NoBackButtonOnStartPage)
-        self.resize(680, 470)
+        self.resize(720, 500)
 
         welcome = QWizardPage()
         welcome.setTitle("Write from anywhere in Windows")
+        welcome.setSubTitle(
+            "A quick introduction to selecting text and opening the launcher."
+        )
         welcome_layout = QVBoxLayout(welcome)
         welcome_text = QLabel(
             "Select text in Word, Outlook, a browser, or another application, "
@@ -522,19 +643,24 @@ class FirstRunSetupWizard(QWizard):
             "action and review the prepared request in ChatGPT."
         )
         welcome_text.setWordWrap(True)
+        welcome_text.setObjectName("setupBody")
         welcome_layout.addWidget(welcome_text)
         steps = QLabel(
-            "1. Select text\n"
-            "2. Press the launcher shortcut\n"
-            "3. Choose an action"
+            "<b>1&nbsp;&nbsp; Select text</b><br>"
+            "<b>2&nbsp;&nbsp; Press the launcher shortcut</b><br>"
+            "<b>3&nbsp;&nbsp; Choose a writing action</b>"
         )
-        steps.setObjectName("formLabel")
+        steps.setObjectName("setupSteps")
+        steps.setTextFormat(Qt.TextFormat.RichText)
         welcome_layout.addWidget(steps)
         welcome_layout.addStretch(1)
         self.addPage(welcome)
 
         hotkey_page = QWizardPage()
         hotkey_page.setTitle("Choose and test the launcher shortcut")
+        hotkey_page.setSubTitle(
+            "Confirm that the shortcut is valid and available in Windows."
+        )
         hotkey_layout = QVBoxLayout(hotkey_page)
         hotkey_text = QLabel(
             "PromptMeld uses this global shortcut to capture the current "
@@ -542,6 +668,7 @@ class FirstRunSetupWizard(QWizard):
             "have not reserved it."
         )
         hotkey_text.setWordWrap(True)
+        hotkey_text.setObjectName("setupBody")
         hotkey_layout.addWidget(hotkey_text)
         hotkey_row = QHBoxLayout()
         self.hotkey_editor = HotkeyCaptureEdit(popup_hotkey)
@@ -567,6 +694,9 @@ class FirstRunSetupWizard(QWizard):
 
         finish = QWizardPage()
         finish.setTitle("Understand which choices are remembered")
+        finish.setSubTitle(
+            "PromptMeld keeps global and application-specific choices separate."
+        )
         finish_layout = QVBoxLayout(finish)
         explanation = QLabel(
             "Overall defaults in Configuration are remembered for future "
@@ -576,6 +706,7 @@ class FirstRunSetupWizard(QWizard):
             "the current selection unless an application profile supplies them."
         )
         explanation.setWordWrap(True)
+        explanation.setObjectName("setupBody")
         finish_layout.addWidget(explanation)
         self.start_with_windows = QCheckBox(
             "Start PromptMeld when I sign in to Windows"
@@ -583,15 +714,241 @@ class FirstRunSetupWizard(QWizard):
         self.start_with_windows.setChecked(startup_enabled)
         finish_layout.addWidget(self.start_with_windows)
         self.summary_label = QLabel()
-        self.summary_label.setObjectName("formLabel")
+        self.summary_label.setObjectName("setupSummary")
         self.summary_label.setWordWrap(True)
         finish_layout.addWidget(self.summary_label)
         finish_layout.addStretch(1)
         self.addPage(finish)
 
         self.currentIdChanged.connect(self._update_summary)
+        self._apply_appearance()
+        app = QApplication.instance()
+        if app is not None:
+            app.paletteChanged.connect(self._system_appearance_changed)
         self._test_hotkey()
         self._update_summary()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._style_native_wizard_frames()
+
+    def _style_native_wizard_frames(self) -> None:
+        """Theme Qt's unlabelled ModernStyle header and separator widgets."""
+
+        page = self.currentPage()
+        if page is None:
+            return
+        title_label = next(
+            (
+                label
+                for label in self.findChildren(QLabel)
+                if label.text() == page.title()
+            ),
+            None,
+        )
+        if title_label is None:
+            return
+        header = title_label.parentWidget()
+        if header is None:
+            return
+        if system_high_contrast_enabled():
+            palette = self.palette()
+            background = palette.color(QPalette.ColorRole.Window).name()
+            border = palette.color(QPalette.ColorRole.WindowText).name()
+        else:
+            background = (
+                "#f5f7fa" if self.resolved_theme == "light" else "#17191e"
+            )
+            border = (
+                "#cbd2dc" if self.resolved_theme == "light" else "#343842"
+            )
+        self.native_header_style = (
+            f"background-color: {background}; border-bottom: 1px solid {border};"
+        )
+        header.setStyleSheet(self.native_header_style)
+        container = header.parentWidget()
+        if container is None:
+            return
+        for child in container.findChildren(
+            QWidget,
+            options=Qt.FindChildOption.FindDirectChildrenOnly,
+        ):
+            if child is not header and child.height() <= 3:
+                child.setStyleSheet(f"background-color: {border};")
+
+    def _apply_appearance(self) -> None:
+        self.resolved_theme = resolve_theme(self.theme)
+        apply_message_box_theme(self.theme)
+        if system_high_contrast_enabled():
+            app = QApplication.instance()
+            if app is not None:
+                self.setPalette(app.palette())
+            self.setStyleSheet(high_contrast_stylesheet())
+            self._style_native_wizard_frames()
+            return
+        checkmark = str(
+            files("promptmeld").joinpath(
+                "resources",
+                "icons",
+                "check-white.svg",
+            )
+        ).replace("\\", "/")
+        if self.resolved_theme == "light":
+            palette = self.palette()
+            palette.setColor(QPalette.ColorRole.Window, QColor("#f5f7fa"))
+            palette.setColor(QPalette.ColorRole.Base, QColor("#f5f7fa"))
+            palette.setColor(QPalette.ColorRole.WindowText, QColor("#202631"))
+            palette.setColor(QPalette.ColorRole.Text, QColor("#202631"))
+            palette.setColor(QPalette.ColorRole.Mid, QColor("#cbd2dc"))
+            self.setPalette(palette)
+            self.setStyleSheet(
+                """
+                QWizard, QWizardPage {
+                    color: #202631;
+                    background: #f5f7fa;
+                }
+                QWizard QLabel { color: #202631; }
+                QLabel#qt_wizard_title {
+                    color: #171c25;
+                    font-size: 20px;
+                    font-weight: 650;
+                }
+                QLabel#qt_wizard_subtitle { color: #596575; }
+                QLabel#setupBody {
+                    color: #303846;
+                    font-size: 14px;
+                    line-height: 1.35;
+                }
+                QLabel#setupSteps, QLabel#setupSummary {
+                    color: #244fae;
+                    background: #e8efff;
+                    border: 1px solid #a9bae7;
+                    border-radius: 9px;
+                    padding: 12px 14px;
+                    font-size: 14px;
+                }
+                QLabel#hotkeyStatus[state="available"] { color: #18733b; }
+                QLabel#hotkeyStatus[state="error"] { color: #a32626; }
+                QLineEdit {
+                    color: #202631;
+                    background: #ffffff;
+                    border: 1px solid #aeb8c5;
+                    border-radius: 7px;
+                    padding: 8px 10px;
+                    selection-background-color: #b9ceff;
+                }
+                QPushButton {
+                    color: #202631;
+                    background: #e4e9ef;
+                    border: 1px solid #b8c1cc;
+                    border-radius: 7px;
+                    padding: 8px 13px;
+                }
+                QPushButton:hover { background: #d7dee7; }
+                QPushButton:default {
+                    color: #ffffff;
+                    background: #315ecb;
+                    border-color: #315ecb;
+                    font-weight: 600;
+                }
+                QCheckBox { color: #202631; spacing: 8px; }
+                QCheckBox::indicator {
+                    width: 16px;
+                    height: 16px;
+                    border: 1px solid #687585;
+                    border-radius: 3px;
+                    background: #ffffff;
+                }
+                QCheckBox::indicator:checked {
+                    border-color: #244fae;
+                    background: #315ecb;
+                    image: url("__CHECKMARK__");
+                }
+                """.replace("__CHECKMARK__", checkmark)
+            )
+            self.setStyleSheet(
+                self.styleSheet() + message_box_stylesheet("light")
+            )
+            return
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#17191e"))
+        palette.setColor(QPalette.ColorRole.Base, QColor("#17191e"))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor("#f4f5f7"))
+        palette.setColor(QPalette.ColorRole.Text, QColor("#f4f5f7"))
+        palette.setColor(QPalette.ColorRole.Mid, QColor("#343842"))
+        self.setPalette(palette)
+        self.setStyleSheet(
+            """
+            QWizard, QWizardPage {
+                color: #f4f5f7;
+                background: #17191e;
+            }
+            QWizard QLabel { color: #f4f5f7; }
+            QLabel#qt_wizard_title {
+                color: #ffffff;
+                font-size: 20px;
+                font-weight: 650;
+            }
+            QLabel#qt_wizard_subtitle { color: #b4bbc8; }
+            QLabel#setupBody {
+                color: #e2e5eb;
+                font-size: 14px;
+                line-height: 1.35;
+            }
+            QLabel#setupSteps, QLabel#setupSummary {
+                color: #d9e2ff;
+                background: #242b3a;
+                border: 1px solid #52658f;
+                border-radius: 9px;
+                padding: 12px 14px;
+                font-size: 14px;
+            }
+            QLabel#hotkeyStatus[state="available"] { color: #7ee2a8; }
+            QLabel#hotkeyStatus[state="error"] { color: #ff9d9d; }
+            QLineEdit {
+                color: #ffffff;
+                background: #22252c;
+                border: 1px solid #596273;
+                border-radius: 7px;
+                padding: 8px 10px;
+                selection-background-color: #3e6ae1;
+            }
+            QLineEdit:focus { border-color: #85a0ff; }
+            QPushButton {
+                color: #f4f5f7;
+                background: #30343d;
+                border: 1px solid #596273;
+                border-radius: 7px;
+                padding: 8px 13px;
+            }
+            QPushButton:hover { background: #3a404c; }
+            QPushButton:default {
+                color: #ffffff;
+                background: #4f73df;
+                border-color: #7592ec;
+                font-weight: 600;
+            }
+            QCheckBox { color: #f4f5f7; spacing: 8px; }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 1px solid #798291;
+                border-radius: 3px;
+                background: #22252c;
+            }
+            QCheckBox::indicator:checked {
+                border-color: #7592ec;
+                background: #4f73df;
+                image: url("__CHECKMARK__");
+            }
+            """.replace("__CHECKMARK__", checkmark)
+        )
+        self.setStyleSheet(
+            self.styleSheet() + message_box_stylesheet("dark")
+        )
+
+    def _system_appearance_changed(self, *args) -> None:
+        self._apply_appearance()
 
     def selected_hotkey(self) -> str:
         return self.hotkey_editor.text().strip()
@@ -658,6 +1015,108 @@ class FirstRunSetupWizard(QWizard):
         super().accept()
 
 
+class NestedFolderDialog(QDialog):
+    """Choose a parent and name one folder level without typing a path."""
+
+    def __init__(
+        self,
+        folders: tuple[str, ...],
+        selected_parent: str = "",
+        *,
+        moving_action: bool,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Create a writing action folder")
+        self.setAccessibleName("Create a writing action folder")
+        self.setModal(True)
+        self.setMinimumWidth(470)
+        if parent is not None:
+            self.setStyleSheet(parent.styleSheet())
+
+        root = QVBoxLayout(self)
+        heading = QLabel("Choose where the new folder belongs")
+        heading.setObjectName("settingsTitle")
+        root.addWidget(heading)
+        explanation = QLabel(
+            (
+                "The selected writing action will move into the new folder."
+                if moving_action
+                else "A writing action will be created in the new folder. "
+                "Folders are kept only when they contain an action."
+            )
+        )
+        explanation.setObjectName("muted")
+        explanation.setWordWrap(True)
+        root.addWidget(explanation)
+
+        form = QFormLayout()
+        self.parent_folder = NoWheelComboBox()
+        self.parent_folder.setAccessibleName("Parent writing action folder")
+        self.parent_folder.addItem("Top level", "")
+        for folder in folders:
+            self.parent_folder.addItem(folder, folder)
+        parent_index = self.parent_folder.findData(selected_parent)
+        self.parent_folder.setCurrentIndex(max(0, parent_index))
+        self.folder_name = QLineEdit()
+        self.folder_name.setAccessibleName("New folder name")
+        self.folder_name.setPlaceholderText("e.g. Customer replies")
+        form.addRow("Parent folder", self.parent_folder)
+        form.addRow("New folder name", self.folder_name)
+        root.addLayout(form)
+
+        self.error_label = QLabel()
+        self.error_label.setObjectName("errorText")
+        self.error_label.setWordWrap(True)
+        self.error_label.hide()
+        root.addWidget(self.error_label)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        self.create_button = buttons.button(
+            QDialogButtonBox.StandardButton.Ok
+        )
+        self.create_button.setText(
+            "Move action" if moving_action else "Continue to new action"
+        )
+        self.create_button.setEnabled(False)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        self.folder_name.textChanged.connect(
+            lambda text: self.create_button.setEnabled(bool(text.strip()))
+        )
+        root.addWidget(buttons)
+
+    def folder_path(self) -> str:
+        parent = str(self.parent_folder.currentData() or "")
+        name = self.folder_name.text().strip()
+        return normalize_folder("/".join(part for part in (parent, name) if part))
+
+    def accept(self) -> None:
+        name = self.folder_name.text().strip()
+        if not name:
+            self._show_error("Enter a name for the new folder.")
+            return
+        if "/" in name or "\\" in name:
+            self._show_error(
+                "Enter one folder name only. Choose its parent from the list."
+            )
+            return
+        try:
+            self.folder_path()
+        except ValueError as exc:
+            self._show_error(str(exc))
+            return
+        super().accept()
+
+    def _show_error(self, message: str) -> None:
+        self.error_label.setText(message)
+        self.error_label.show()
+        self.folder_name.setFocus()
+
+
 class ActionCreationWizard(QWizard):
     """Guide creation or duplication of a writing action."""
 
@@ -670,8 +1129,12 @@ class ActionCreationWizard(QWizard):
         hotkey_availability: Callable[[str], bool] | None = None,
         mode: str = "create",
         parent: QWidget | None = None,
+        theme: str = "auto",
     ) -> None:
         super().__init__(parent)
+        self.theme = theme
+        self.resolved_theme = resolve_theme(theme)
+        self.native_header_style = ""
         self.icon_provider = icon_provider
         self.used_hotkeys: dict[tuple[int, int], str] = {}
         for hotkey, name in (used_hotkeys or {}).items():
@@ -685,8 +1148,13 @@ class ActionCreationWizard(QWizard):
         self.hotkey_availability = hotkey_availability
         self.hotkey_is_available = not bool(source.hotkey)
         duplicate = mode == "duplicate"
-        self.setWindowTitle(
+        window_title = (
             "Duplicate writing action" if duplicate else "Create writing action"
+        )
+        self.setWindowTitle(window_title)
+        self.setAccessibleName(window_title)
+        self.setAccessibleDescription(
+            "A four-step guide for configuring and testing a writing action."
         )
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.setOption(QWizard.WizardOption.NoBackButtonOnStartPage)
@@ -700,12 +1168,15 @@ class ActionCreationWizard(QWizard):
             "These are the details people see and the instruction sent with "
             "the selected text."
         )
+        essentials.setAccessibleName(essentials.title())
+        essentials.setAccessibleDescription(essentials.subTitle())
         essentials_form = QFormLayout(essentials)
         self.name = QLineEdit(source.name)
         self.name.setPlaceholderText("e.g. Make more diplomatic")
         self.name.setAccessibleName("Writing action name")
         self.folder = NoWheelComboBox()
         self.folder.setEditable(True)
+        self.folder.setAccessibleName("Writing action folder")
         self.folder.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.folder.addItem("Top level", "")
         for folder in folders:
@@ -715,12 +1186,20 @@ class ActionCreationWizard(QWizard):
             "Top level, or e.g. Replies / Customer service"
         )
         self.instruction = QPlainTextEdit(source.instruction)
+        self.instruction.setAccessibleName("Writing action instruction")
         self.instruction.setPlaceholderText(
             "Describe how ChatGPT should transform the selected text."
         )
         self.instruction.setMinimumHeight(180)
         essentials_form.addRow("Name", self.name)
-        essentials_form.addRow("Folder", self.folder)
+        essentials_form.addRow("Folder path", self.folder)
+        folder_help = QLabel(
+            "Choose an existing folder or type a path such as "
+            "Reply / Customer service. A slash creates each nested level."
+        )
+        folder_help.setObjectName("muted")
+        folder_help.setWordWrap(True)
+        essentials_form.addRow("", folder_help)
         essentials_form.addRow("Instruction", self.instruction)
         self.addPage(essentials)
 
@@ -730,8 +1209,11 @@ class ActionCreationWizard(QWizard):
             "Keywords improve launcher search. Choose a familiar icon, or use "
             "an image of your own."
         )
+        discovery.setAccessibleName(discovery.title())
+        discovery.setAccessibleDescription(discovery.subTitle())
         discovery_form = QFormLayout(discovery)
         self.keywords = QLineEdit(", ".join(source.keywords))
+        self.keywords.setAccessibleName("Writing action search keywords")
         self.keywords.setPlaceholderText("e.g. polite, tone, tactful")
         icon_row = QHBoxLayout()
         self.icon_preview = QLabel()
@@ -739,6 +1221,7 @@ class ActionCreationWizard(QWizard):
         self.icon_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.icon = NoWheelComboBox()
         self.icon.setEditable(True)
+        self.icon.setAccessibleName("Writing action icon")
         self.icon.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.icon.lineEdit().setPlaceholderText(
             "Choose an icon or type an emoji"
@@ -768,6 +1251,8 @@ class ActionCreationWizard(QWizard):
         behaviour.setSubTitle(
             "These choices can be changed later under Writing actions."
         )
+        behaviour.setAccessibleName(behaviour.title())
+        behaviour.setAccessibleDescription(behaviour.subTitle())
         behaviour_layout = QVBoxLayout(behaviour)
         behaviour_form = QFormLayout()
         self.enabled = QCheckBox("Show this action in the launcher")
@@ -783,6 +1268,28 @@ class ActionCreationWizard(QWizard):
         self.natural_voice.setCurrentIndex(
             max(0, self.natural_voice.findData(source.natural_voice))
         )
+        self.recipient_audience = NoWheelComboBox()
+        self.recipient_audience.setAccessibleName(
+            "Writing action default audience"
+        )
+        self.recipient_audience.addItem(
+            "Use application or launcher default",
+            "inherit",
+        )
+        for value, label in RECIPIENT_AUDIENCE_OPTIONS:
+            self.recipient_audience.addItem(label, value)
+        self.recipient_audience.setCurrentIndex(
+            max(
+                0,
+                self.recipient_audience.findData(
+                    source.recipient_audience
+                ),
+            )
+        )
+        self.recipient_audience.setToolTip(
+            "Used when this action is selected. A choice made in the launcher "
+            "for the current request takes priority."
+        )
         self.guided_drafting = QCheckBox(
             "Allow guided questions when enabled overall"
         )
@@ -790,6 +1297,7 @@ class ActionCreationWizard(QWizard):
         behaviour_form.addRow("Availability", self.enabled)
         behaviour_form.addRow("Launcher home", self.show_on_home)
         behaviour_form.addRow("Natural voice", self.natural_voice)
+        behaviour_form.addRow("Default audience", self.recipient_audience)
         behaviour_form.addRow("Guided drafting", self.guided_drafting)
         behaviour_layout.addLayout(behaviour_form)
         shortcut_label = QLabel("Optional global shortcut")
@@ -826,11 +1334,14 @@ class ActionCreationWizard(QWizard):
             "Preview the complete request that PromptMeld would prepare. "
             "Nothing is sent to ChatGPT from this page."
         )
+        preview.setAccessibleName(preview.title())
+        preview.setAccessibleDescription(preview.subTitle())
         preview_layout = QVBoxLayout(preview)
         sample_label = QLabel("Sample selected text")
         sample_label.setObjectName("formLabel")
         preview_layout.addWidget(sample_label)
         self.sample_text = QPlainTextEdit()
+        self.sample_text.setAccessibleName("Sample selected text")
         self.sample_text.setPlaceholderText(
             "Paste or type a short example that this action should handle."
         )
@@ -863,8 +1374,235 @@ class ActionCreationWizard(QWizard):
         self.icon.currentIndexChanged.connect(self._update_icon_preview)
         self.icon.lineEdit().textChanged.connect(self._update_icon_preview)
         self.currentIdChanged.connect(self._wizard_page_changed)
+        self._apply_appearance()
+        app = QApplication.instance()
+        if app is not None:
+            app.paletteChanged.connect(self._system_appearance_changed)
         self._update_icon_preview()
         self._test_hotkey()
+        self._update_accessible_page(self.currentId())
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._style_native_wizard_frames()
+
+    def _style_native_wizard_frames(self) -> None:
+        """Keep Qt's native ModernStyle header readable in every theme."""
+
+        page = self.currentPage()
+        if page is None:
+            return
+        title_label = next(
+            (
+                label
+                for label in self.findChildren(QLabel)
+                if label.text() == page.title()
+            ),
+            None,
+        )
+        if title_label is None:
+            return
+        header = title_label.parentWidget()
+        if header is None:
+            return
+        if system_high_contrast_enabled():
+            palette = self.palette()
+            background = palette.color(QPalette.ColorRole.Window).name()
+            border = palette.color(QPalette.ColorRole.WindowText).name()
+        else:
+            background = (
+                "#f5f7fa" if self.resolved_theme == "light" else "#17191e"
+            )
+            border = (
+                "#cbd2dc" if self.resolved_theme == "light" else "#343842"
+            )
+        self.native_header_style = (
+            f"background-color: {background}; border-bottom: 1px solid {border};"
+        )
+        header.setStyleSheet(self.native_header_style)
+
+    def _apply_appearance(self) -> None:
+        """Give the standalone action wizard explicit, readable colours."""
+
+        self.resolved_theme = resolve_theme(self.theme)
+        apply_message_box_theme(self.theme)
+        if system_high_contrast_enabled():
+            app = QApplication.instance()
+            if app is not None:
+                self.setPalette(app.palette())
+            self.setStyleSheet(
+                high_contrast_stylesheet()
+                + message_box_stylesheet(self.theme)
+            )
+            self._style_native_wizard_frames()
+            return
+        checkmark = str(
+            files("promptmeld").joinpath(
+                "resources",
+                "icons",
+                "check-white.svg",
+            )
+        ).replace("\\", "/")
+        if self.resolved_theme == "light":
+            palette = self.palette()
+            palette.setColor(QPalette.ColorRole.Window, QColor("#f5f7fa"))
+            palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
+            palette.setColor(QPalette.ColorRole.WindowText, QColor("#202631"))
+            palette.setColor(QPalette.ColorRole.Text, QColor("#202631"))
+            palette.setColor(
+                QPalette.ColorRole.PlaceholderText,
+                QColor("#697381"),
+            )
+            self.setPalette(palette)
+            style = """
+                QWizard, QWizardPage {
+                    color: #202631;
+                    background: #f5f7fa;
+                }
+                QWizard QLabel { color: #202631; }
+                QLabel#qt_wizard_title {
+                    color: #171c25;
+                    font-size: 20px;
+                    font-weight: 650;
+                }
+                QLabel#qt_wizard_subtitle { color: #4b5563; }
+                QLabel#muted { color: #596575; }
+                QLabel#hotkeyStatus[state="available"] { color: #18733b; }
+                QLabel#hotkeyStatus[state="error"] { color: #a32626; }
+                QLineEdit, QPlainTextEdit, QComboBox {
+                    color: #202631;
+                    background: #ffffff;
+                    border: 1px solid #aeb8c5;
+                    border-radius: 7px;
+                    padding: 7px 9px;
+                    selection-color: #111827;
+                    selection-background-color: #b9ceff;
+                }
+                QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus {
+                    border-color: #315ecb;
+                }
+                QComboBox QAbstractItemView {
+                    color: #202631;
+                    background: #ffffff;
+                    selection-color: #102e70;
+                    selection-background-color: #dce7ff;
+                }
+                QCheckBox { color: #202631; spacing: 8px; }
+                QCheckBox::indicator {
+                    width: 16px;
+                    height: 16px;
+                    border: 1px solid #687585;
+                    border-radius: 3px;
+                    background: #ffffff;
+                }
+                QCheckBox::indicator:checked {
+                    border-color: #244fae;
+                    background: #315ecb;
+                    image: url("__CHECKMARK__");
+                }
+                QPushButton {
+                    color: #202631;
+                    background: #e4e9ef;
+                    border: 1px solid #b8c1cc;
+                    border-radius: 7px;
+                    padding: 8px 13px;
+                }
+                QPushButton:hover { background: #d7dee7; }
+                QPushButton:default {
+                    color: #ffffff;
+                    background: #315ecb;
+                    border-color: #244fae;
+                    font-weight: 600;
+                }
+            """
+        else:
+            palette = self.palette()
+            palette.setColor(QPalette.ColorRole.Window, QColor("#17191e"))
+            palette.setColor(QPalette.ColorRole.Base, QColor("#22252c"))
+            palette.setColor(QPalette.ColorRole.WindowText, QColor("#f4f5f7"))
+            palette.setColor(QPalette.ColorRole.Text, QColor("#f4f5f7"))
+            palette.setColor(
+                QPalette.ColorRole.PlaceholderText,
+                QColor("#b4bbc8"),
+            )
+            self.setPalette(palette)
+            style = """
+                QWizard, QWizardPage {
+                    color: #f4f5f7;
+                    background: #17191e;
+                }
+                QWizard QLabel { color: #f4f5f7; }
+                QLabel#qt_wizard_title {
+                    color: #ffffff;
+                    font-size: 20px;
+                    font-weight: 650;
+                }
+                QLabel#qt_wizard_subtitle { color: #d2d7e0; }
+                QLabel#muted { color: #c1c7d0; }
+                QLabel#hotkeyStatus[state="available"] { color: #7ee2a8; }
+                QLabel#hotkeyStatus[state="error"] { color: #ff9d9d; }
+                QLineEdit, QPlainTextEdit, QComboBox {
+                    color: #ffffff;
+                    background: #22252c;
+                    border: 1px solid #646d7d;
+                    border-radius: 7px;
+                    padding: 7px 9px;
+                    selection-color: #ffffff;
+                    selection-background-color: #3e6ae1;
+                }
+                QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus {
+                    border-color: #85a0ff;
+                }
+                QComboBox QAbstractItemView {
+                    color: #ffffff;
+                    background: #22252c;
+                    selection-color: #ffffff;
+                    selection-background-color: #3e6ae1;
+                }
+                QCheckBox { color: #f4f5f7; spacing: 8px; }
+                QCheckBox::indicator {
+                    width: 16px;
+                    height: 16px;
+                    border: 1px solid #8b94a3;
+                    border-radius: 3px;
+                    background: #22252c;
+                }
+                QCheckBox::indicator:checked {
+                    border-color: #8fa8ff;
+                    background: #4f73df;
+                    image: url("__CHECKMARK__");
+                }
+                QPushButton {
+                    color: #f4f5f7;
+                    background: #30343d;
+                    border: 1px solid #646d7d;
+                    border-radius: 7px;
+                    padding: 8px 13px;
+                }
+                QPushButton:hover { background: #3a404c; }
+                QPushButton:default {
+                    color: #ffffff;
+                    background: #4f73df;
+                    border-color: #8fa8ff;
+                    font-weight: 600;
+                }
+            """
+        self.setStyleSheet(
+            style.replace("__CHECKMARK__", checkmark)
+            + message_box_stylesheet(self.theme)
+        )
+        self._style_native_wizard_frames()
+
+    def _system_appearance_changed(self, *args) -> None:
+        self._apply_appearance()
+
+    def _update_accessible_page(self, page_id: int) -> None:
+        page = self.page(page_id)
+        if page is None:
+            return
+        self.setAccessibleDescription(
+            f"Current step: {page.title()}. {page.subTitle()}"
+        )
 
     def _selected_icon_spec(self) -> str:
         index = self.icon.currentIndex()
@@ -942,6 +1680,8 @@ class ActionCreationWizard(QWizard):
         )
 
     def _wizard_page_changed(self, page_id: int) -> None:
+        self._update_accessible_page(page_id)
+        QTimer.singleShot(0, self._style_native_wizard_frames)
         if page_id == 3:
             self._preview_action()
 
@@ -989,6 +1729,9 @@ class ActionCreationWizard(QWizard):
             show_on_home=self.show_on_home.isChecked(),
             natural_voice=str(self.natural_voice.currentData() or "inherit"),
             guided_drafting=self.guided_drafting.isChecked(),
+            recipient_audience=str(
+                self.recipient_audience.currentData() or "inherit"
+            ),
         )
 
     def _go_back_to(self, page_id: int) -> None:
@@ -1042,6 +1785,7 @@ class ActionSettingsDialog(QDialog):
     diagnostics_copy_requested = Signal()
     diagnostics_open_requested = Signal()
     configuration_restored = Signal()
+    configuration_reset = Signal()
     ITEM_KIND_ROLE = Qt.ItemDataRole.UserRole + 1
 
     def __init__(
@@ -1109,12 +1853,13 @@ class ActionSettingsDialog(QDialog):
             "Auto updates when the Windows app colour mode changes."
         )
         appearance_note.setObjectName("muted")
+        appearance_note.setWordWrap(True)
         appearance_layout.addWidget(appearance_label)
         appearance_layout.addWidget(self.theme)
         appearance_layout.addWidget(appearance_note)
         appearance_layout.addStretch(1)
 
-        home_row = QHBoxLayout()
+        home_row = QGridLayout()
         home_label = QLabel("Most-used actions shown on launcher home")
         home_label.setObjectName("formLabel")
         self.most_used_count = NoWheelSpinBox()
@@ -1126,9 +1871,6 @@ class ActionSettingsDialog(QDialog):
         self.most_used_count.setToolTip(
             "Pinned direct actions are not counted or duplicated in this section."
         )
-        home_row.addWidget(home_label)
-        home_row.addWidget(self.most_used_count)
-        home_row.addStretch(1)
         language_label = QLabel("Primary writing language")
         language_label.setObjectName("formLabel")
         self.primary_language = NoWheelComboBox()
@@ -1143,8 +1885,11 @@ class ActionSettingsDialog(QDialog):
             "Used unless an action explicitly requests translation or another "
             "language."
         )
-        home_row.addWidget(language_label)
-        home_row.addWidget(self.primary_language)
+        home_row.addWidget(home_label, 0, 0)
+        home_row.addWidget(self.most_used_count, 0, 1)
+        home_row.addWidget(language_label, 1, 0)
+        home_row.addWidget(self.primary_language, 1, 1)
+        home_row.setColumnStretch(1, 1)
 
         output_group = QGroupBox("Output")
         output_layout = QVBoxLayout(output_group)
@@ -1190,6 +1935,29 @@ class ActionSettingsDialog(QDialog):
         length_row.addWidget(self.resulting_text_formatting)
         length_row.addWidget(self.resulting_text_formatting_help)
         length_row.addStretch(1)
+        title_subject_row = QHBoxLayout()
+        title_subject_label = QLabel("Title or subject")
+        title_subject_label.setObjectName("formLabel")
+        self.title_subject = NoWheelComboBox()
+        for value, label in TITLE_SUBJECT_OPTIONS:
+            self.title_subject.addItem(label, value)
+        selected_title_subject = self.title_subject.findData(
+            voice_settings.title_subject
+        )
+        self.title_subject.setCurrentIndex(max(0, selected_title_subject))
+        self.title_subject.setMinimumWidth(235)
+        self.title_subject_help = self._help_button(
+            "Optionally ask ChatGPT for a separate concise title or subject "
+            "line as well as the complete main text. Automatic chooses the "
+            "appropriate label from the writing task. The suggestion appears "
+            "on the first line so it can be copied into a separate field, "
+            "such as an Amazon review title or an email subject.",
+            "Explain title or subject generation",
+        )
+        title_subject_row.addWidget(title_subject_label)
+        title_subject_row.addWidget(self.title_subject)
+        title_subject_row.addWidget(self.title_subject_help)
+        title_subject_row.addStretch(1)
         self.writing_block_default = QCheckBox(
             "Request a copyable writing block when available"
         )
@@ -1207,6 +1975,7 @@ class ActionSettingsDialog(QDialog):
         writing_block_row.addWidget(self.writing_block_help)
         writing_block_row.addStretch(1)
         output_layout.addLayout(length_row)
+        output_layout.addLayout(title_subject_row)
         output_layout.addLayout(writing_block_row)
 
         submission_group = QGroupBox("Submission")
@@ -1223,6 +1992,21 @@ class ActionSettingsDialog(QDialog):
             "without submitting it, so you can choose the model or reasoning "
             "level before pressing Enter.",
             "Explain automatic submission",
+        )
+        self.privacy_preview_default = QCheckBox(
+            "Show a privacy preview and offer reversible redaction before sending"
+        )
+        self.privacy_preview_default.setChecked(
+            voice_settings.privacy_preview_enabled
+        )
+        self.privacy_preview_help = self._help_button(
+            "Before a prompt is opened in ChatGPT, look locally for possible "
+            "email addresses, phone numbers, account numbers, and names. When "
+            "matches are found, you can redact chosen values with reversible "
+            "placeholders, continue unchanged, or cancel. Nothing is redacted "
+            "without your explicit choice. Turning this off skips the preview "
+            "and sends the prompt unchanged.",
+            "Explain privacy preview and redaction",
         )
         self.replace_selected_text_default = QCheckBox(
             "Replace the original selection with the generated result"
@@ -1273,6 +2057,7 @@ class ActionSettingsDialog(QDialog):
         )
         for option, help_button in (
             (self.auto_submit_default, self.auto_submit_help),
+            (self.privacy_preview_default, self.privacy_preview_help),
             (
                 self.replace_selected_text_default,
                 self.replace_selected_text_help,
@@ -1379,6 +2164,11 @@ class ActionSettingsDialog(QDialog):
         self.add_button = QPushButton("Add")
         self.duplicate_button = QPushButton("Duplicate")
         self.delete_button = QPushButton("Delete")
+        self.delete_button.setAccessibleName("Delete selected writing action")
+        self.delete_button.setAccessibleDescription(
+            "Delete the selected writing action. When a folder is selected, "
+            "this button deletes that folder and every writing action inside it."
+        )
         list_buttons.addWidget(self.add_button)
         list_buttons.addWidget(self.duplicate_button)
         list_buttons.addWidget(self.delete_button)
@@ -1408,18 +2198,76 @@ class ActionSettingsDialog(QDialog):
 
         self.starter_pack_button = QPushButton("Add starter pack")
         self.starter_pack_menu = QMenu(self.starter_pack_button)
+        self.starter_pack_actions: dict[str, QAction] = {}
+        pack_groups = (
+            (
+                "Reply or respond",
+                (
+                    "replies-arguments",
+                    "social-replies",
+                    "customer-relations",
+                    "email",
+                    "complaints",
+                ),
+            ),
+            (
+                "Edit or revise",
+                (
+                    "editing",
+                    "tone-voice",
+                    "social-editing",
+                    "argument-editing",
+                    "reviews-feedback",
+                ),
+            ),
+            (
+                "Draft or create",
+                (
+                    "draft-from-selection",
+                    "reports",
+                    "social-posts",
+                    "meetings",
+                    "career-writing",
+                ),
+            ),
+            (
+                "Summarise or extract",
+                ("summaries-extraction",),
+            ),
+            (
+                "Plan or decide",
+                ("decisions-planning",),
+            ),
+            (
+                "Explain or learn",
+                (
+                    "technical-communication",
+                    "learning",
+                ),
+            ),
+        )
+        packs_by_id = {
+            pack.pack_id: pack for pack in self.builtin_action_packs
+        }
+        shown_pack_ids: set[str] = set()
+        for group_name, pack_ids in pack_groups:
+            group_menu = self.starter_pack_menu.addMenu(group_name)
+            for pack_id in pack_ids:
+                pack = packs_by_id.get(pack_id)
+                if pack is None:
+                    continue
+                self._add_starter_pack_menu_action(group_menu, pack)
+                shown_pack_ids.add(pack_id)
         for pack in self.builtin_action_packs:
-            pack_action = self.starter_pack_menu.addAction(pack.name)
-            pack_action.setToolTip(pack.description)
-            pack_action.triggered.connect(
-                lambda _checked=False, selected=pack: (
-                    self._add_builtin_action_pack(selected)
+            if pack.pack_id not in shown_pack_ids:
+                self._add_starter_pack_menu_action(
+                    self.starter_pack_menu,
+                    pack,
                 )
-            )
         self.starter_pack_button.setMenu(self.starter_pack_menu)
         left.addWidget(self.starter_pack_button)
 
-        self.starter_button = QPushButton("Replace with default library…")
+        self.starter_button = QPushButton("Replace with essential actions…")
         left.addWidget(self.starter_button)
 
         left_widget = QWidget()
@@ -1467,14 +2315,22 @@ class ActionSettingsDialog(QDialog):
             "Top level, or e.g. Replies / Sarcastic"
         )
         self._populate_folder_choices()
-        form.addRow(self._form_label("Folder"), self.folder_combo)
-
-        folder_help = QLabel(
-            "Leave blank for the launcher root. Use / to create nested subfolders."
+        folder_row = QHBoxLayout()
+        folder_row.addWidget(self.folder_combo, 1)
+        self.new_subfolder_button = QPushButton("New subfolder...")
+        self.new_subfolder_button.setAccessibleName(
+            "Create a nested writing action folder"
         )
-        folder_help.setObjectName("muted")
-        folder_help.hide()
-        form.addRow("", folder_help)
+        folder_row.addWidget(self.new_subfolder_button)
+        form.addRow(self._form_label("Folder path"), folder_row)
+
+        self.folder_help = QLabel(
+            "Folders can be nested. Use New subfolder, or type a path with / "
+            "between each level. Leave the path blank for the launcher root."
+        )
+        self.folder_help.setObjectName("muted")
+        self.folder_help.setWordWrap(True)
+        form.addRow("", self.folder_help)
 
         icon_row = QHBoxLayout()
         self.icon_preview = QLabel()
@@ -1522,6 +2378,25 @@ class ActionSettingsDialog(QDialog):
         form.addRow(
             self._form_label("Natural voice"),
             self.natural_voice_mode,
+        )
+
+        self.action_recipient_audience = NoWheelComboBox()
+        self.action_recipient_audience.addItem(
+            "Use application or launcher default",
+            "inherit",
+        )
+        for value, label in RECIPIENT_AUDIENCE_OPTIONS:
+            self.action_recipient_audience.addItem(label, value)
+        self.action_recipient_audience.setAccessibleName(
+            "Writing action default audience"
+        )
+        self.action_recipient_audience.setToolTip(
+            "Used when this action is selected. A choice made in the launcher "
+            "for the current request takes priority."
+        )
+        form.addRow(
+            self._form_label("Default audience"),
+            self.action_recipient_audience,
         )
 
         self.guided_drafting = QCheckBox(
@@ -1661,18 +2536,12 @@ class ActionSettingsDialog(QDialog):
         hotkey_footer.addWidget(hotkey_note, 1)
         hotkey_footer.addWidget(self.check_hotkeys_button)
         hotkeys_layout.addLayout(hotkey_footer)
-        general_page = QScrollArea()
+        general_page = QWidget()
         general_page.setObjectName("settingsPage")
-        general_page.setWidgetResizable(True)
-        general_page.setFrameShape(QFrame.Shape.NoFrame)
-        general_page.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        general_content = QWidget()
-        general_layout = QVBoxLayout(general_content)
+        general_layout = QGridLayout(general_page)
         general_layout.setContentsMargins(22, 18, 22, 18)
-        general_layout.setSpacing(16)
-        general_page.setWidget(general_content)
+        general_layout.setHorizontalSpacing(16)
+        general_layout.setVerticalSpacing(12)
         launcher_group = QGroupBox("Launcher")
         launcher_layout = QVBoxLayout(launcher_group)
         launcher_layout.addLayout(home_row)
@@ -1797,13 +2666,22 @@ class ActionSettingsDialog(QDialog):
         about_layout.addWidget(self.version_label)
         about_layout.addWidget(about_description)
         about_layout.addWidget(self.github_link)
-        general_layout.addWidget(appearance_group)
-        general_layout.addWidget(launcher_group)
-        general_layout.addWidget(projects_group)
-        general_layout.addWidget(startup_group)
-        general_layout.addWidget(updates_group)
-        general_layout.addWidget(about_group)
-        general_layout.addStretch(1)
+        general_left = QVBoxLayout()
+        general_left.setSpacing(12)
+        general_left.addWidget(appearance_group)
+        general_left.addWidget(launcher_group)
+        general_left.addWidget(startup_group)
+        general_left.addStretch(1)
+        general_right = QVBoxLayout()
+        general_right.setSpacing(12)
+        general_right.addWidget(projects_group)
+        general_right.addWidget(updates_group)
+        general_right.addWidget(about_group)
+        general_right.addStretch(1)
+        general_layout.addLayout(general_left, 0, 0)
+        general_layout.addLayout(general_right, 0, 1)
+        general_layout.setColumnStretch(0, 1)
+        general_layout.setColumnStretch(1, 1)
 
         applications_page = QWidget()
         applications_page.setObjectName("settingsPage")
@@ -1907,45 +2785,54 @@ class ActionSettingsDialog(QDialog):
         recovery_layout.setContentsMargins(22, 18, 22, 18)
         recovery_layout.setSpacing(16)
 
-        backup_group = QGroupBox("Configuration backup")
+        backup_group = QGroupBox("Backup and restore")
         backup_layout = QVBoxLayout(backup_group)
         backup_note = QLabel(
             "Create one portable ZIP file containing writing actions, settings, "
             "application profiles, hotkeys, and installed custom icons. Usage "
             "history, logs, update state, selected text, prompts and responses "
-            "are not included. Each file records its creation time, PromptMeld "
-            "version and backup-format version."
+            "are not included. Restore validates a backup and automatically "
+            "saves the current configuration first."
         )
         backup_note.setObjectName("muted")
         backup_note.setWordWrap(True)
-        backup_buttons = QHBoxLayout()
+        self.backup_actions_layout = QHBoxLayout()
         self.create_backup_button = QPushButton("Create backup\u2026")
         self.create_backup_button.setAccessibleName(
             "Create configuration backup file"
         )
-        backup_buttons.addWidget(self.create_backup_button)
-        backup_buttons.addStretch(1)
-        backup_layout.addWidget(backup_note)
-        backup_layout.addLayout(backup_buttons)
-
-        restore_group = QGroupBox("Restore configuration")
-        restore_layout = QVBoxLayout(restore_group)
-        restore_note = QLabel(
-            "Restore actions, settings, application profiles, hotkeys, and "
-            "custom icons from a PromptMeld backup. A safety backup of the "
-            "current saved configuration is created automatically first."
-        )
-        restore_note.setObjectName("muted")
-        restore_note.setWordWrap(True)
-        restore_buttons = QHBoxLayout()
         self.restore_backup_button = QPushButton("Restore backup\u2026")
         self.restore_backup_button.setAccessibleName(
             "Restore configuration from backup file"
         )
-        restore_buttons.addWidget(self.restore_backup_button)
-        restore_buttons.addStretch(1)
-        restore_layout.addWidget(restore_note)
-        restore_layout.addLayout(restore_buttons)
+        self.backup_actions_layout.addWidget(self.create_backup_button)
+        self.backup_actions_layout.addWidget(self.restore_backup_button)
+        self.backup_actions_layout.addStretch(1)
+        backup_layout.addWidget(backup_note)
+        backup_layout.addLayout(self.backup_actions_layout)
+
+        reset_group = QGroupBox("Reset configuration")
+        reset_layout = QVBoxLayout(reset_group)
+        reset_note = QLabel(
+            "Return actions, settings, application profiles, hotkeys, and "
+            "custom icons to the original defaults. PromptMeld creates a "
+            "safety backup, closes, and shows first-use setup on the next "
+            "launch. Usage history and logs are kept."
+        )
+        reset_note.setObjectName("muted")
+        reset_note.setWordWrap(True)
+        reset_buttons = QHBoxLayout()
+        self.reset_configuration_button = QPushButton(
+            "Reset configuration\u2026"
+        )
+        self.reset_configuration_button.setObjectName("dangerButton")
+        self.reset_configuration_button.setAccessibleName(
+            "Reset PromptMeld configuration to defaults"
+        )
+        reset_buttons.addWidget(self.reset_configuration_button)
+        reset_buttons.addStretch(1)
+        reset_layout.addWidget(reset_note)
+        reset_layout.addLayout(reset_buttons)
 
         diagnostics_group = QGroupBox("Diagnostics")
         diagnostics_layout = QVBoxLayout(diagnostics_group)
@@ -1971,7 +2858,7 @@ class ActionSettingsDialog(QDialog):
         diagnostics_layout.addWidget(diagnostics_note)
         diagnostics_layout.addLayout(diagnostics_buttons)
         recovery_layout.addWidget(backup_group)
-        recovery_layout.addWidget(restore_group)
+        recovery_layout.addWidget(reset_group)
         recovery_layout.addWidget(diagnostics_group)
         recovery_layout.addStretch(1)
 
@@ -1980,6 +2867,9 @@ class ActionSettingsDialog(QDialog):
         )
         self.restore_backup_button.clicked.connect(
             self._restore_configuration_backup
+        )
+        self.reset_configuration_button.clicked.connect(
+            self._reset_configuration
         )
 
         self._load_application_profiles(
@@ -2044,6 +2934,7 @@ class ActionSettingsDialog(QDialog):
         root.addLayout(footer)
 
         self.add_button.clicked.connect(self._add_action)
+        self.new_subfolder_button.clicked.connect(self._new_subfolder)
         self.duplicate_button.clicked.connect(self._duplicate_action)
         self.delete_button.clicked.connect(self._delete_action)
         self.up_button.clicked.connect(lambda: self._move_action(-1))
@@ -2071,6 +2962,7 @@ class ActionSettingsDialog(QDialog):
             self.icon_combo.currentTextChanged,
             self.keywords.textChanged,
             self.natural_voice_mode.currentIndexChanged,
+            self.action_recipient_audience.currentIndexChanged,
             self.guided_drafting.toggled,
             self.instruction.textChanged,
             self.most_used_count.valueChanged,
@@ -2079,8 +2971,10 @@ class ActionSettingsDialog(QDialog):
             self.project_naming_mode.currentIndexChanged,
             self.resulting_text_length.currentIndexChanged,
             self.resulting_text_formatting.currentIndexChanged,
+            self.title_subject.currentIndexChanged,
             self.writing_block_default.toggled,
             self.auto_submit_default.toggled,
+            self.privacy_preview_default.toggled,
             self.replace_selected_text_default.toggled,
             self.copy_generated_text_default.toggled,
             self.temporary_chat_default.toggled,
@@ -2098,6 +2992,7 @@ class ActionSettingsDialog(QDialog):
             app.styleHints().colorSchemeChanged.connect(
                 self._system_colour_scheme_changed
             )
+            app.paletteChanged.connect(self._system_appearance_changed)
         self._apply_style()
         self._refresh_list(0 if self.actions else -1)
         self._saved_state = self._configuration_state()
@@ -2172,6 +3067,48 @@ class ActionSettingsDialog(QDialog):
         self._update_button_states()
         if hasattr(self, "hotkey_table"):
             self._refresh_hotkey_rows()
+        self._refresh_starter_pack_actions()
+
+    def _add_starter_pack_menu_action(
+        self,
+        menu: QMenu,
+        pack: ActionPack,
+    ) -> None:
+        action = menu.addAction(pack.name)
+        action.setToolTip(pack.description)
+        action.triggered.connect(
+            lambda _checked=False, selected=pack: (
+                self._add_builtin_action_pack(selected)
+            )
+        )
+        self.starter_pack_actions[pack.pack_id] = action
+
+    def _refresh_starter_pack_actions(self) -> None:
+        if not hasattr(self, "starter_pack_actions"):
+            return
+        existing_ids = {action.id for action in self.actions}
+        any_available = False
+        for pack in self.builtin_action_packs:
+            menu_action = self.starter_pack_actions.get(pack.pack_id)
+            if menu_action is None:
+                continue
+            missing_count = sum(
+                action.id not in existing_ids for action in pack.actions
+            )
+            if missing_count:
+                menu_action.setText(pack.name)
+                menu_action.setEnabled(True)
+                menu_action.setToolTip(
+                    f"{pack.description} Adds {missing_count} action(s)."
+                )
+                any_available = True
+            else:
+                menu_action.setText(f"{pack.name} (added)")
+                menu_action.setEnabled(False)
+                menu_action.setToolTip(
+                    f"{pack.description} This pack is already installed."
+                )
+        self.starter_pack_button.setEnabled(any_available)
 
     def _tab_changed(self, index: int) -> None:
         if self.tabs.tabText(index) != "Hotkeys":
@@ -2305,6 +3242,7 @@ class ActionSettingsDialog(QDialog):
             action_hotkeys,
             self.start_with_windows.isChecked(),
             self,
+            theme=str(self.theme.currentData() or "auto"),
         )
         if wizard.exec() != QDialog.DialogCode.Accepted:
             return
@@ -2462,6 +3400,7 @@ class ActionSettingsDialog(QDialog):
             self.folder_combo,
             self.keywords,
             self.natural_voice_mode,
+            self.action_recipient_audience,
             self.guided_drafting,
             self.instruction,
         ):
@@ -2482,6 +3421,12 @@ class ActionSettingsDialog(QDialog):
                 action.natural_voice
             )
             self.natural_voice_mode.setCurrentIndex(max(voice_index, 0))
+            audience_index = self.action_recipient_audience.findData(
+                action.recipient_audience
+            )
+            self.action_recipient_audience.setCurrentIndex(
+                max(audience_index, 0)
+            )
             self.guided_drafting.setChecked(action.guided_drafting)
             self.instruction.setPlainText(action.instruction)
             self._set_instruction_colour()
@@ -2494,6 +3439,7 @@ class ActionSettingsDialog(QDialog):
             self._set_icon_spec(self.folder_icons.get(self.selected_folder, ""))
             self.keywords.clear()
             self.natural_voice_mode.setCurrentIndex(0)
+            self.action_recipient_audience.setCurrentIndex(0)
             self.guided_drafting.setChecked(False)
             self.instruction.clear()
         else:
@@ -2506,6 +3452,7 @@ class ActionSettingsDialog(QDialog):
             self.icon_combo.clearEditText()
             self.keywords.clear()
             self.natural_voice_mode.setCurrentIndex(0)
+            self.action_recipient_audience.setCurrentIndex(0)
             self.guided_drafting.setChecked(False)
             self.instruction.clear()
         self._loading = False
@@ -2539,6 +3486,9 @@ class ActionSettingsDialog(QDialog):
                 self.natural_voice_mode.currentData() or "inherit"
             ),
             guided_drafting=self.guided_drafting.isChecked(),
+            recipient_audience=str(
+                self.action_recipient_audience.currentData() or "inherit"
+            ),
         )
 
     def _set_icon_spec(self, spec: str) -> None:
@@ -2580,11 +3530,16 @@ class ActionSettingsDialog(QDialog):
         cursor.select(QTextCursor.SelectionType.Document)
         text_format = QTextCharFormat()
         colour = (
-            "#202631"
-            if resolve_theme(str(self.theme.currentData() or "auto")) == "light"
-            else "#ffffff"
+            self.palette().color(QPalette.ColorRole.Text)
+            if system_high_contrast_enabled()
+            else QColor(
+                "#202631"
+                if resolve_theme(str(self.theme.currentData() or "auto"))
+                == "light"
+                else "#ffffff"
+            )
         )
-        text_format.setForeground(QColor(colour))
+        text_format.setForeground(colour)
         self.instruction.blockSignals(True)
         cursor.mergeCharFormat(text_format)
         cursor.clearSelection()
@@ -2648,6 +3603,9 @@ class ActionSettingsDialog(QDialog):
         parts = []
         if profile.return_mode != "default":
             parts.append(result_labels[profile.return_mode])
+        if profile.response_wait != "inherit":
+            wait_labels = dict(APPLICATION_RESPONSE_WAIT_OPTIONS)
+            parts.append("Wait: " + wait_labels[profile.response_wait])
         if profile.recipient_audience != "inherit":
             audience_labels = dict(RECIPIENT_AUDIENCE_OPTIONS)
             parts.append(
@@ -2663,6 +3621,7 @@ class ActionSettingsDialog(QDialog):
                 profile.primary_language,
                 profile.resulting_text_length,
                 profile.resulting_text_formatting,
+                profile.title_subject,
                 profile.editing_strength,
                 profile.preserve_facts,
                 profile.natural_voice,
@@ -2670,6 +3629,7 @@ class ActionSettingsDialog(QDialog):
                 profile.writing_block,
                 profile.auto_submit,
                 profile.temporary_chat,
+                profile.privacy_preview,
                 profile.project_name,
             )
         )
@@ -2791,8 +3751,10 @@ class ActionSettingsDialog(QDialog):
             self.primary_language.currentText().strip(),
             str(self.resulting_text_length.currentData() or "default"),
             str(self.resulting_text_formatting.currentData() or "default"),
+            str(self.title_subject.currentData() or "none"),
             self.writing_block_default.isChecked(),
             self.auto_submit_default.isChecked(),
+            self.privacy_preview_default.isChecked(),
             self.replace_selected_text_default.isChecked(),
             self.copy_generated_text_default.isChecked(),
             self.temporary_chat_default.isChecked(),
@@ -2852,7 +3814,9 @@ class ActionSettingsDialog(QDialog):
 
     def _add_action(self) -> None:
         self._commit_current()
-        folder = self.selected_folder
+        self._add_action_to_folder(self.selected_folder)
+
+    def _add_action_to_folder(self, folder: str) -> None:
         action_id = self._unique_id("new-action")
         source = WritingAction(
             id=action_id,
@@ -2865,9 +3829,60 @@ class ActionSettingsDialog(QDialog):
         wizard = self._action_wizard(source, "create")
         if wizard.exec() != QDialog.DialogCode.Accepted:
             return
-        self.actions.append(wizard.action(action_id))
+        action = wizard.action(action_id)
+        self.actions.append(action)
+        self._ensure_default_folder_icons((action,))
         self._refresh_list(len(self.actions) - 1)
+        self._populate_folder_choices()
         self._mark_unsaved()
+
+    def _new_subfolder(self) -> None:
+        self._commit_current()
+        has_action = 0 <= self.current_row < len(self.actions)
+        selected_parent = (
+            self.actions[self.current_row].folder
+            if has_action
+            else self.selected_folder
+        )
+        dialog = NestedFolderDialog(
+            self._folder_paths(),
+            selected_parent,
+            moving_action=has_action,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        folder = dialog.folder_path()
+        if has_action:
+            self.actions[self.current_row] = replace(
+                self.actions[self.current_row],
+                folder=folder,
+            )
+            self._ensure_default_folder_icons((self.actions[self.current_row],))
+            selected_row = self.current_row
+            self._refresh_list(selected_row)
+            self._populate_folder_choices()
+            self._mark_unsaved()
+            return
+        self._add_action_to_folder(folder)
+
+    def _folder_paths(self) -> tuple[str, ...]:
+        folders: set[str] = set()
+        for folder in (
+            *(action.folder for action in self.actions),
+            *self.folder_icons,
+        ):
+            parts = folder.split("/") if folder else []
+            folders.update(
+                "/".join(parts[:depth])
+                for depth in range(1, len(parts) + 1)
+            )
+        return tuple(
+            sorted(
+                folders,
+                key=lambda folder: (folder.count("/"), folder.casefold()),
+            )
+        )
 
     def _duplicate_action(self) -> None:
         self._commit_current()
@@ -2916,15 +3931,126 @@ class ActionSettingsDialog(QDialog):
             hotkey_availability=self.hotkey_availability,
             mode=mode,
             parent=self,
+            theme=str(self.theme.currentData() or "auto"),
         )
 
     def _delete_action(self) -> None:
-        if not 0 <= self.current_row < len(self.actions):
+        if 0 <= self.current_row < len(self.actions):
+            self.actions.pop(self.current_row)
+            next_row = min(self.current_row, len(self.actions) - 1)
+            self._refresh_list(next_row)
+            self._mark_unsaved()
             return
-        self.actions.pop(self.current_row)
-        next_row = min(self.current_row, len(self.actions) - 1)
+
+        folder = self.selected_folder
+        if not folder:
+            return
+        prefix = f"{folder}/"
+        affected_indexes = [
+            index
+            for index, action in enumerate(self.actions)
+            if action.folder == folder or action.folder.startswith(prefix)
+        ]
+        if not affected_indexes:
+            return
+        nested_folders = self._nested_folder_count(folder, affected_indexes)
+        if not self._confirm_delete_folder(
+            folder,
+            len(affected_indexes),
+            nested_folders,
+        ):
+            return
+
+        first_removed = min(affected_indexes)
+        affected = set(affected_indexes)
+        self.actions = [
+            action
+            for index, action in enumerate(self.actions)
+            if index not in affected
+        ]
+        for icon_folder in tuple(self.folder_icons):
+            if icon_folder == folder or icon_folder.startswith(prefix):
+                self.folder_icons.pop(icon_folder, None)
+        next_row = min(first_removed, len(self.actions) - 1)
         self._refresh_list(next_row)
+        self._populate_folder_choices()
         self._mark_unsaved()
+
+    def _nested_folder_count(
+        self,
+        folder: str,
+        affected_indexes: list[int],
+    ) -> int:
+        """Count visible descendant folders represented by affected actions."""
+
+        base_depth = folder.count("/") + 1
+        descendants: set[str] = set()
+        for index in affected_indexes:
+            action_folder = self.actions[index].folder
+            parts = action_folder.split("/")
+            for depth in range(base_depth + 1, len(parts) + 1):
+                descendants.add("/".join(parts[:depth]))
+        return len(descendants)
+
+    def _confirm_delete_folder(
+        self,
+        folder: str,
+        action_count: int,
+        nested_folder_count: int,
+    ) -> bool:
+        message = self._folder_delete_confirmation_message(
+            folder,
+            action_count,
+            nested_folder_count,
+        )
+        message.exec()
+        return message.clickedButton() is message.delete_folder_button
+
+    def _folder_delete_confirmation_message(
+        self,
+        folder: str,
+        action_count: int,
+        nested_folder_count: int,
+    ) -> QMessageBox:
+        action_word = "action" if action_count == 1 else "actions"
+        nested_note = (
+            f" and {nested_folder_count} nested "
+            f"{'folder' if nested_folder_count == 1 else 'folders'}"
+            if nested_folder_count
+            else ""
+        )
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setWindowTitle("Delete writing action folder?")
+        message.setText(f'Delete the folder "{folder}"?')
+        message.setInformativeText(
+            f"This will remove {action_count} writing {action_word}"
+            f"{nested_note}. The change takes effect when you save "
+            "Configuration."
+        )
+        message.setAccessibleName("Confirm writing action folder deletion")
+        message.setAccessibleDescription(
+            f"Delete {folder}, {action_count} writing {action_word}"
+            f"{nested_note}."
+        )
+        delete_button = message.addButton(
+            "Delete folder and actions",
+            QMessageBox.ButtonRole.DestructiveRole,
+        )
+        delete_button.setObjectName("deleteWritingActionFolderButton")
+        delete_button.setAccessibleName(
+            f"Delete {folder} and all writing actions inside it"
+        )
+        cancel_button = message.addButton(QMessageBox.StandardButton.Cancel)
+        cancel_button.setAccessibleName("Keep folder and actions")
+        message.setDefaultButton(cancel_button)
+        message.setEscapeButton(cancel_button)
+        message.delete_folder_button = delete_button
+        message.setMinimumWidth(540)
+        message.setStyleSheet(
+            message_box_stylesheet(str(self.theme.currentData() or "auto"))
+        )
+        return message
 
     def _move_action(self, offset: int) -> None:
         self._commit_current()
@@ -3083,20 +4209,89 @@ class ActionSettingsDialog(QDialog):
         self.configuration_restored.emit()
         self.accept()
 
+    def _confirm_configuration_reset(self) -> bool:
+        message = self._configuration_reset_message()
+        message.exec()
+        return message.clickedButton() is message.reset_button
+
+    def _configuration_reset_message(self) -> QMessageBox:
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setWindowTitle("Reset PromptMeld configuration?")
+        message.setText(
+            "Reset all PromptMeld configuration to the original defaults?"
+        )
+        unsaved_note = (
+            " Unsaved changes in this window will also be discarded."
+            if self.has_unsaved_changes()
+            else ""
+        )
+        message.setInformativeText(
+            "Writing actions, application profiles, hotkeys, writing defaults, "
+            "and custom icons will be reset. A safety backup will be created "
+            "first. PromptMeld will then close, and the first-use setup guide "
+            f"will appear on the next launch.{unsaved_note}"
+        )
+        reset_button = message.addButton(
+            "Reset configuration",
+            QMessageBox.ButtonRole.DestructiveRole,
+        )
+        reset_button.setObjectName("resetConfigurationButton")
+        cancel_button = message.addButton(
+            QMessageBox.StandardButton.Cancel
+        )
+        cancel_button.setObjectName("cancelConfigurationButton")
+        message.setDefaultButton(cancel_button)
+        message.reset_button = reset_button
+        message.setMinimumWidth(560)
+        message.setStyleSheet(self._reset_message_box_stylesheet())
+        return message
+
+    def _reset_message_box_stylesheet(self) -> str:
+        return message_box_stylesheet(
+            str(self.theme.currentData() or "auto")
+        )
+
+    def _reset_configuration(self) -> None:
+        if not self._confirm_configuration_reset():
+            return
+        try:
+            result = reset_configuration_to_defaults(self.paths)
+        except (ConfigurationBackupError, OSError) as exc:
+            QMessageBox.warning(
+                self,
+                "Configuration could not be reset",
+                str(exc),
+            )
+            return
+
+        QMessageBox.information(
+            self,
+            "Configuration reset",
+            "PromptMeld has been reset to its original defaults and will now "
+            "close. The first-use setup guide will appear the next time it is "
+            "opened.\n\n"
+            f"Safety backup:\n{result.safety_backup}",
+        )
+        self.accept()
+        self.configuration_reset.emit()
+
     def _load_starter_set(self) -> None:
         response = QMessageBox.question(
             self,
-            "Load starter action set",
+            "Restore essential actions",
             "Replace the actions currently shown in this editor with the shipped "
-            "starter set?\n\nNothing is written until you choose Save. Canceling "
-            "the window will keep your existing configuration.",
+            "set of four essential actions?\n\nNothing is written until you "
+            "choose Save. Canceling the window will keep your existing "
+            "configuration.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if response != QMessageBox.StandardButton.Yes:
             return
         self.actions = load_default_actions()
-        self.folder_icons = dict(DEFAULT_FOLDER_ICONS)
+        self.folder_icons = {}
+        self._ensure_default_folder_icons(self.actions)
         self._populate_folder_choices()
         self._refresh_list(0 if self.actions else -1)
         self._mark_unsaved()
@@ -3105,6 +4300,7 @@ class ActionSettingsDialog(QDialog):
         self._commit_current()
         result = merge_action_pack(self.actions, pack)
         self.actions = result.actions
+        self._ensure_default_folder_icons(pack.actions)
         self._populate_folder_choices()
         self._refresh_list(result.first_added_index)
         self._mark_unsaved()
@@ -3130,18 +4326,43 @@ class ActionSettingsDialog(QDialog):
         )
 
     def _add_builtin_action_pack(self, pack: ActionPack) -> None:
+        self._commit_current()
+        existing_ids = {action.id for action in self.actions}
+        missing_actions = tuple(
+            action for action in pack.actions if action.id not in existing_ids
+        )
+        if not missing_actions:
+            QMessageBox.information(
+                self,
+                "Starter pack already added",
+                f"All actions from {pack.name} are already in this library.",
+            )
+            self._refresh_starter_pack_actions()
+            return
+
+        action_list = "\n".join(
+            f"  • {action.name}" for action in missing_actions
+        )
+        skipped_count = len(pack.actions) - len(missing_actions)
+        existing_note = (
+            f"\n\n{skipped_count} action(s) already in the library will not "
+            "be duplicated."
+            if skipped_count
+            else ""
+        )
         response = QMessageBox.question(
             self,
             f"Add {pack.name}?",
             f"{pack.description}\n\n"
-            f"Add these {len(pack.actions)} actions to the current library? "
+            f"Add these {len(missing_actions)} actions?\n\n{action_list}"
+            f"{existing_note}\n\n"
             "Existing actions will remain. Nothing is written until you "
             "choose Save.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes,
         )
         if response == QMessageBox.StandardButton.Yes:
-            self._apply_action_pack(pack)
+            self._apply_action_pack(replace(pack, actions=missing_actions))
 
     def _import_action_pack(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(
@@ -3285,6 +4506,9 @@ class ActionSettingsDialog(QDialog):
                     auto_submit_enabled=(
                         self.auto_submit_default.isChecked()
                     ),
+                    privacy_preview_enabled=(
+                        self.privacy_preview_default.isChecked()
+                    ),
                     replace_selected_text_enabled=(
                         self.replace_selected_text_default.isChecked()
                     ),
@@ -3303,6 +4527,9 @@ class ActionSettingsDialog(QDialog):
                     resulting_text_formatting=str(
                         self.resulting_text_formatting.currentData()
                         or "default"
+                    ),
+                    title_subject=str(
+                        self.title_subject.currentData() or "none"
                     ),
                     writing_block_enabled=(
                         self.writing_block_default.isChecked()
@@ -3407,6 +4634,13 @@ class ActionSettingsDialog(QDialog):
                 raise ValueError(
                     f"'{action.name}' has an invalid natural voice setting."
                 )
+            if action.recipient_audience not in {
+                "inherit",
+                *dict(RECIPIENT_AUDIENCE_OPTIONS),
+            }:
+                raise ValueError(
+                    f"'{action.name}' has an invalid default audience."
+                )
             if action.hotkey:
                 try:
                     parsed = parse_hotkey(action.hotkey)
@@ -3457,6 +4691,18 @@ class ActionSettingsDialog(QDialog):
         self.folder_combo.setCurrentText(current)
         self.folder_combo.blockSignals(False)
 
+    def _ensure_default_folder_icons(
+        self,
+        actions: tuple[WritingAction, ...] | list[WritingAction],
+    ) -> None:
+        for action in actions:
+            parts = action.folder.split("/") if action.folder else []
+            for depth in range(1, len(parts) + 1):
+                folder = "/".join(parts[:depth])
+                icon = DEFAULT_FOLDER_ICONS.get(folder)
+                if icon:
+                    self.folder_icons.setdefault(folder, icon)
+
     def _unique_id(self, preferred: str) -> str:
         slug = re.sub(r"[^a-z0-9]+", "-", preferred.casefold()).strip("-")
         slug = slug or "action"
@@ -3470,8 +4716,47 @@ class ActionSettingsDialog(QDialog):
 
     def _update_button_states(self) -> None:
         has_action = 0 <= self.current_row < len(self.actions)
+        has_folder = bool(self.selected_folder) and not has_action
+        if has_action:
+            self.new_subfolder_button.setToolTip(
+                "Choose a parent folder, create one nested level, and move "
+                "the selected writing action into it."
+            )
+            self.new_subfolder_button.setAccessibleDescription(
+                "Moves the selected writing action into a newly named nested "
+                "folder."
+            )
+        else:
+            self.new_subfolder_button.setToolTip(
+                "Choose a parent folder, name one nested level, then create "
+                "the first writing action in it."
+            )
+            self.new_subfolder_button.setAccessibleDescription(
+                "Creates a writing action in a newly named nested folder."
+            )
         self.duplicate_button.setEnabled(has_action)
-        self.delete_button.setEnabled(has_action)
+        self.delete_button.setEnabled(has_action or has_folder)
+        if has_folder:
+            self.delete_button.setText("Delete folder")
+            self.delete_button.setAccessibleName(
+                f"Delete folder {self.selected_folder} and its writing actions"
+            )
+            self.delete_button.setToolTip(
+                "Delete this folder, its nested folders, and every writing "
+                "action inside them. You will be asked to confirm."
+            )
+        elif has_action:
+            self.delete_button.setText("Delete action")
+            self.delete_button.setAccessibleName("Delete selected writing action")
+            self.delete_button.setToolTip("Delete the selected writing action.")
+        else:
+            self.delete_button.setText("Delete")
+            self.delete_button.setAccessibleName(
+                "Delete selected writing action or folder"
+            )
+            self.delete_button.setToolTip(
+                "Select a writing action or folder to delete it."
+            )
         if not has_action:
             self.up_button.setEnabled(False)
             self.down_button.setEnabled(False)
@@ -3489,6 +4774,9 @@ class ActionSettingsDialog(QDialog):
     def _system_colour_scheme_changed(self, colour_scheme) -> None:
         if str(self.theme.currentData() or "auto") == "auto":
             self._apply_style()
+
+    def _system_appearance_changed(self, *args) -> None:
+        self._apply_style()
 
     def _update_project_naming_example(self, *args) -> None:
         base = self.project_name.text().strip() or "PromptMeld"
@@ -3512,6 +4800,11 @@ class ActionSettingsDialog(QDialog):
         )
 
     def _update_about_link(self, light: bool) -> None:
+        if system_high_contrast_enabled():
+            self.github_link.setText(
+                f'<a href="{REPOSITORY_URL}">View PromptMeld on GitHub</a>'
+            )
+            return
         colour = "#244fae" if light else "#b8c8ff"
         self.github_link.setText(
             f'<a href="{REPOSITORY_URL}" style="color: {colour};">'
@@ -3519,6 +4812,20 @@ class ActionSettingsDialog(QDialog):
         )
 
     def _apply_style(self, *args) -> None:
+        apply_message_box_theme(str(self.theme.currentData() or "auto"))
+        if system_high_contrast_enabled():
+            colour = self.palette().color(QPalette.ColorRole.WindowText).name()
+            self.branch_arrow_style.set_arrow_colour(colour)
+            self.action_list.viewport().update()
+            self.setStyleSheet(
+                high_contrast_stylesheet()
+                + message_box_stylesheet(
+                    str(self.theme.currentData() or "auto")
+                )
+            )
+            self._set_instruction_colour()
+            self._update_about_link(light=True)
+            return
         checkmark = str(
             files("promptmeld").joinpath(
                 "resources",
@@ -3701,6 +5008,13 @@ class ActionSettingsDialog(QDialog):
                 }
                 QPushButton:hover { background: #d7dee7; }
                 QPushButton:disabled { color: #929aa5; background: #edf0f3; }
+                QPushButton#dangerButton {
+                    color: #8a1c1c;
+                    background: #fff0f0;
+                    border-color: #d89a9a;
+                    font-weight: 600;
+                }
+                QPushButton#dangerButton:hover { background: #ffe1e1; }
                 QDialogButtonBox QPushButton {
                     min-width: 82px;
                     color: white;
@@ -3746,6 +5060,9 @@ class ActionSettingsDialog(QDialog):
                     "__CHECKMARK__",
                     checkmark,
                 )
+            )
+            self.setStyleSheet(
+                self.styleSheet() + message_box_stylesheet("light")
             )
             self._set_instruction_colour()
             self._update_about_link(light=True)
@@ -3902,6 +5219,13 @@ class ActionSettingsDialog(QDialog):
             }
             QPushButton:hover { background: #3a3f49; }
             QPushButton:disabled { color: #6f7580; background: #25272d; }
+            QPushButton#dangerButton {
+                color: #ffd1d1;
+                background: #3b2326;
+                border-color: #8a4a50;
+                font-weight: 600;
+            }
+            QPushButton#dangerButton:hover { background: #4a292d; }
             QDialogButtonBox QPushButton {
                 min-width: 82px;
                 background: #315ecb;
@@ -3949,6 +5273,9 @@ class ActionSettingsDialog(QDialog):
                 "__CHECKMARK__",
                 checkmark,
             )
+        )
+        self.setStyleSheet(
+            self.styleSheet() + message_box_stylesheet("dark")
         )
         self._set_instruction_colour()
         self._update_about_link(light=False)

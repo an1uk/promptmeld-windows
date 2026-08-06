@@ -217,6 +217,35 @@ def test_resulting_text_formatting_options_add_prompt_requirements():
     assert "Use restrained Markdown formatting" in formatted
 
 
+def test_title_or_subject_modes_request_a_separate_suggestion():
+    selection = CapturedSelection("A useful and durable product.", 1, "Review")
+    builder = PromptBuilder()
+
+    unchanged = builder.build_custom("Improve this review.", selection)
+    automatic = builder.build_custom(
+        "Improve this review.",
+        selection,
+        title_subject="automatic",
+    )
+    title = builder.build_custom(
+        "Improve this review.",
+        selection,
+        title_subject="title",
+    )
+    subject = builder.build_custom(
+        "Draft an email.",
+        selection,
+        title_subject="subject",
+    )
+
+    assert "Title or subject:" not in unchanged
+    assert "choosing whichever label best fits" in automatic
+    assert "'Title: ...'" in title
+    assert "'Subject: ...'" in subject
+    assert "complete main text" in title
+    assert "complete main text" in subject
+
+
 def test_additional_information_is_separated_from_source_text():
     selection = CapturedSelection(
         "I cannot make the proposed date.",
@@ -312,6 +341,43 @@ def test_recipient_or_audience_adds_prompt_guidance():
     assert "Write to a company or support team." in prompt
 
 
+def test_writing_action_default_audience_is_used_when_not_overridden():
+    action = WritingAction(
+        "youtube-reply",
+        "YouTube reply",
+        (),
+        "Draft a concise reply.",
+        recipient_audience="public_online",
+    )
+
+    prompt = PromptBuilder().build(
+        action,
+        CapturedSelection("Interesting video.", 1, "Browser"),
+    )
+
+    assert "Recipient or audience:" in prompt
+    assert "Write for a public or online audience." in prompt
+
+
+def test_request_audience_overrides_writing_action_default():
+    action = WritingAction(
+        "customer-reply",
+        "Customer reply",
+        (),
+        "Draft a reply.",
+        recipient_audience="customer_client",
+    )
+
+    prompt = PromptBuilder().build(
+        action,
+        CapturedSelection("Can you help?", 1, "Message"),
+        recipient_audience="colleague_peer",
+    )
+
+    assert "Write for a colleague or peer." in prompt
+    assert "Write for a customer or client." not in prompt
+
+
 @pytest.mark.parametrize(
     ("keyword", "value"),
     [
@@ -325,4 +391,27 @@ def test_unknown_writing_guidance_is_rejected(keyword, value):
             "Improve this.",
             CapturedSelection("Draft.", 1, "Editor"),
             **value,
+        )
+
+
+def test_three_alternatives_adds_a_machine_readable_output_contract():
+    prompt = PromptBuilder().build_custom(
+        "Improve this.",
+        CapturedSelection("Draft.", 1, "Editor"),
+        writing_block_enabled=True,
+        alternative_count=3,
+    )
+
+    assert "Produce exactly 3 distinct, complete alternatives" in prompt
+    assert "<<<PROMPTMELD_ALTERNATIVE_1>>>" in prompt
+    assert "<<<END_PROMPTMELD_ALTERNATIVE_3>>>" in prompt
+    assert "single editable writing block" not in prompt
+
+
+def test_invalid_prompt_alternative_count_is_rejected():
+    with pytest.raises(ValueError, match="one, two, or three"):
+        PromptBuilder().build_custom(
+            "Improve this.",
+            CapturedSelection("Draft.", 1, "Editor"),
+            alternative_count=4,
         )

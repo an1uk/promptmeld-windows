@@ -59,6 +59,28 @@ def test_result_return_waits_for_automatic_submission():
     assert "Automatic submission is off" in decision.fallback_reason
 
 
+def test_review_mode_waits_then_notifies_without_copying_or_replacing():
+    settings = AppSettings(
+        auto_submit_enabled=True,
+        application_profiles={
+            "chrome.exe": ApplicationProfile(return_mode="review")
+        },
+    )
+
+    decision = resolve_return_decision(
+        settings,
+        selection(app="chrome.exe"),
+    )
+
+    assert decision.review_result is True
+    assert decision.copy_result is False
+    assert decision.replace_selection is False
+    assert decision.wants_generated_text is True
+    assert decision.summary == (
+        "Notify when the result is ready for Google Chrome"
+    )
+
+
 def test_application_names_are_path_free_and_human_readable():
     assert normalize_application_name(r"C:\Program Files\Word\WINWORD.EXE") == (
         "winword.exe"
@@ -72,6 +94,7 @@ def test_application_profile_resolves_writing_and_delivery_overrides():
         primary_language="English (UK)",
         auto_submit_enabled=False,
         natural_voice_enabled=True,
+        title_subject="automatic",
         application_profiles={
             "outlook.exe": ApplicationProfile(
                 recipient_audience="customer_client",
@@ -80,7 +103,9 @@ def test_application_profile_resolves_writing_and_delivery_overrides():
                 editing_strength="improve",
                 preserve_facts="off",
                 natural_voice="off",
+                title_subject="subject",
                 auto_submit="on",
+                privacy_preview="off",
                 project_name="Email writing",
             )
         },
@@ -97,7 +122,9 @@ def test_application_profile_resolves_writing_and_delivery_overrides():
     assert effective.editing_strength == "improve"
     assert effective.preserve_facts is False
     assert effective.natural_voice_enabled is False
+    assert effective.title_subject == "subject"
     assert effective.auto_submit_enabled is True
+    assert effective.privacy_preview_enabled is False
     assert effective.project_name == "Email writing"
     assert "recipient_audience" in effective.overridden_fields
 
@@ -106,6 +133,7 @@ def test_application_profile_inherits_unspecified_overall_defaults():
     settings = AppSettings(
         primary_language="Preserve source language",
         guided_drafting_enabled=True,
+        title_subject="title",
         application_profiles={
             "notepad.exe": ApplicationProfile(return_mode="replace")
         },
@@ -116,6 +144,30 @@ def test_application_profile_inherits_unspecified_overall_defaults():
         selection(app="notepad.exe"),
     )
 
+    assert effective.title_subject == "title"
+
     assert effective.primary_language == "Preserve source language"
     assert effective.guided_drafting_enabled is True
+    assert effective.privacy_preview_enabled is True
     assert effective.recipient_audience == "unspecified"
+
+
+def test_application_profile_resolves_custom_and_indefinite_waits():
+    settings = AppSettings(
+        application_profiles={
+            "winword.exe": ApplicationProfile(
+                response_wait="indefinite"
+            ),
+            "chrome.exe": ApplicationProfile(response_wait="600"),
+        }
+    )
+
+    word = resolve_application_profile(settings, selection())
+    browser = resolve_application_profile(
+        settings,
+        selection(app="chrome.exe"),
+    )
+
+    assert word.response_timeout_seconds is None
+    assert browser.response_timeout_seconds == 600.0
+    assert "response_wait" in word.overridden_fields

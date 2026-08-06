@@ -85,6 +85,38 @@ def test_action_submission_uses_source_application_profile_defaults():
     assert options["selection"] == selection
 
 
+def test_action_audience_default_overrides_application_fallback():
+    app = object.__new__(PromptMeld)
+    app.settings = AppSettings(
+        application_profiles={
+            "chrome.exe": ApplicationProfile(
+                recipient_audience="customer_client"
+            )
+        }
+    )
+    app.prompt_builder = RecordingPromptBuilder()
+    app.usage = RecordingUsage()
+    app._confirm_automatic_replacement = lambda selection: True
+    app._submit_prompt = lambda prompt, **options: None
+    selection = CapturedSelection(
+        "Selected comment",
+        42,
+        "Browser",
+        source_app="chrome.exe",
+    )
+    action = WritingAction(
+        "reddit-reply",
+        "Reddit reply",
+        (),
+        "Draft a reply.",
+        recipient_audience="public_online",
+    )
+
+    app._submit_action(action, selection)
+
+    assert app.prompt_builder.options["recipient_audience"] == "public_online"
+
+
 def test_action_submission_can_name_project_for_source_application():
     app = object.__new__(PromptMeld)
     app.settings = AppSettings(

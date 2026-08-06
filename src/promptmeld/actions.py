@@ -3,6 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from .models import WritingAction
+from .suggestions import (
+    ActionSuggestion,
+    SuggestionContext,
+    contextual_action_score,
+)
 from .usage import UsageTracker
 
 
@@ -42,7 +47,53 @@ class ActionRegistry:
     def get(self, action_id: str) -> WritingAction | None:
         return self._by_id.get(action_id)
 
-    def search(self, query: str) -> list[WritingAction]:
+    def suggest(
+        self,
+        context: SuggestionContext,
+        limit: int = 4,
+        exclude_ids: set[str] | None = None,
+    ) -> list[ActionSuggestion]:
+        if limit <= 0:
+            return []
+        excluded = exclude_ids or set()
+        now = self._now_provider()
+        ranked: list[tuple[float, int, ActionSuggestion]] = []
+        for order_index, action in enumerate(self._actions):
+            if action.id in excluded:
+                continue
+            contextual_score, contextual_reasons = contextual_action_score(
+                action,
+                context,
+            )
+            usage = self._usage.get(action.id)
+            usage_score = min(usage.count, 20) * 1.5
+            reasons = list(contextual_reasons)
+            if usage.count:
+                reasons.append(
+                    f"used {usage.count} time{'s' if usage.count != 1 else ''}"
+                )
+            recency_score = 0.0
+            if usage.last_used:
+                used = usage.last_used
+                if used.tzinfo is None:
+                    used = used.replace(tzinfo=UTC)
+                age_days = max(0.0, (now - used).total_seconds() / 86_400)
+                recency_score = max(0.0, 20.0 - age_days)
+                if recency_score:
+                    reasons.append("used recently")
+            score = contextual_score + usage_score + recency_score
+            if score <= 0:
+                continue
+            suggestion = ActionSuggestion(action, score, tuple(reasons))
+            ranked.append((score, order_index, suggestion))
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        return [suggestion for _, _, suggestion in ranked[:limit]]
+
+    def search(
+        self,
+        query: str,
+        context: SuggestionContext | None = None,
+    ) -> list[WritingAction]:
         terms = tuple(term.casefold() for term in query.split() if term.strip())
         ranked: list[tuple[tuple[float, ...], int, WritingAction]] = []
         now = self._now_provider()
@@ -90,9 +141,14 @@ class ActionRegistry:
                 age_days = max(0.0, (now - used).total_seconds() / 86_400)
                 recency = max(0.0, 30.0 - age_days)
             usage_score = min(usage.count, 100)
+            context_score = (
+                contextual_action_score(action, context)[0]
+                if context is not None
+                else 0.0
+            )
             ranked.append(
                 (
-                    (text_score, usage_score, recency),
+                    (text_score, context_score, usage_score, recency),
                     order_index,
                     action,
                 )
@@ -103,6 +159,7 @@ class ActionRegistry:
                 -item[0][0],
                 -item[0][1],
                 -item[0][2],
+                -item[0][3],
                 item[1],
             )
         )

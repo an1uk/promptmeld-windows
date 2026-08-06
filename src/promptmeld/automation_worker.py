@@ -5,7 +5,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import asdict
 
-from .chatgpt import ChatGPTDesktop
+from .chatgpt import ChatGPTDesktop, DEFAULT_RESPONSE_TIMEOUT_SECONDS
 
 PER_MONITOR_AWARE_V2 = -4
 
@@ -59,8 +59,17 @@ def _process_payload(
     payload: dict[str, object],
     progress_callback: Callable[[str, str], None] | None = None,
 ) -> dict[str, object]:
+    raw_response_timeout = payload.get(
+        "response_timeout_seconds",
+        DEFAULT_RESPONSE_TIMEOUT_SECONDS,
+    )
     adapter = ChatGPTDesktop(
         timeout_seconds=float(payload.get("timeout_seconds", 8.0)),
+        response_timeout_seconds=(
+            None
+            if raw_response_timeout is None
+            else float(raw_response_timeout)
+        ),
         chatgpt_uri=str(payload.get("chatgpt_uri", "chatgpt:")),
         project_uri=str(payload.get("project_uri", "")),
         progress_callback=progress_callback,
@@ -78,6 +87,8 @@ def _process_payload(
             "source_app",
             "replace_selected_text",
             "copy_generated_text",
+            "capture_generated_text",
+            "redaction_replacements",
         )
     ):
         submit_kwargs.update(
@@ -93,6 +104,15 @@ def _process_payload(
                 payload.get("replace_selected_text", False)
             ),
             copy_generated_text=bool(payload.get("copy_generated_text", False)),
+            capture_generated_text=bool(
+                payload.get("capture_generated_text", False)
+            ),
+            redaction_replacements={
+                str(placeholder): str(original)
+                for placeholder, original in dict(
+                    payload.get("redaction_replacements", {})
+                ).items()
+            },
         )
     result = adapter.submit(
         str(payload["prompt"]),
