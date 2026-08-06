@@ -15,15 +15,19 @@ The action manager lets you:
 
 - Add or duplicate actions through a short guided wizard, then delete, enable,
   and reorder them in the full editor.
+- Select a folder and delete it, its nested folders, and all contained actions
+  after reviewing a count-bearing confirmation.
 - Import and export portable, readable JSON action packs.
-- Add optional starter packs for editing, email, complaints, reports, and
-  social posts without replacing the current library.
+- Add any of nineteen optional four-action starter packs without replacing the
+  current library.
 - Organise actions in folders and nested folders.
 - Edit action names, search keywords, and ChatGPT instructions.
 - Pin actions to the launcher home screen.
 - Choose whether an action follows, always applies, or ignores the
   **Preserve my natural voice** setting.
 - Allow suitable actions to use optional guided drafting.
+- Set a default recipient or audience for an action while retaining a
+  per-request launcher override.
 - Choose bundled Lucide icons, type an emoji or symbol, or import a local image.
 - Configure badged folder icons.
 - Control how many genuinely used actions appear in **Most used**.
@@ -63,7 +67,7 @@ An exported pack has this top-level structure:
       "hotkey": null,
       "enabled": true,
       "icon": "lucide:sparkles",
-      "folder": "Editing",
+      "folder": "Edit & revise/Clarity",
       "show_on_home": false,
       "natural_voice": "inherit",
       "guided_drafting": false
@@ -72,16 +76,25 @@ An exported pack has this top-level structure:
 }
 ```
 
-Use `/` in a folder name to create nesting, for example
-`Replies & arguments/Analysis`. Search covers every folder, while frequently
-and recently used actions rank first within the current scope.
+Choose **New subfolder** to select a parent and name a nested level, or use `/`
+in a folder path directly, for example `Reply/General replies`. The built-in
+packs use shared intent-led roots such as
+**Reply**, **Edit & revise**, **Draft & create**, **Summarise & understand**,
+**Explain & learn**, and **Plan & decide**, rather than creating a separate
+top-level folder for every pack. Search covers every folder, while frequently
+and recently used actions rank first within the current scope. When the
+launcher has a captured selection, it also shows a **Suggested** section and
+ranks search and folder results using the source application, selection-length
+band, and locally detected text type. Pinned **Direct actions** keep their fixed
+position. Pause over a suggested action to see the ranking reasons.
 
 ## General settings
 
 The **General** tab controls:
 
 - Appearance: Auto (the default, following the Windows app colour mode), Light,
-  or Dark.
+  or Dark. Windows High Contrast takes precedence automatically, and disabling
+  Windows animations also disables PromptMeld's progress scrolling animation.
 - Primary writing language: English (UK), English (US), source language, or a
   custom language.
 - The number of most-used actions shown on the launcher home screen.
@@ -122,6 +135,10 @@ advance.
 The **Overall defaults** tab controls choices remembered across launches:
 
 - Automatic submission, which is off by default.
+- **Privacy preview and redaction**, enabled by default. It checks a prompt
+  locally before it is opened in ChatGPT and offers reversible placeholders
+  for possible email addresses, phone numbers, account numbers, and names.
+  Turning it off skips the preview and sends prompts unchanged.
 - Copying generated text to the clipboard after ChatGPT responds. This also
   requires automatic submission.
 - Replacing selected text automatically when the source selection was detected
@@ -135,6 +152,10 @@ The **Overall defaults** tab controls choices remembered across launches:
   **Extra long**. **Default** adds no length instruction to the prompt.
 - Result formatting: use ChatGPT's default behaviour, prevent newly added
   formatting, or request restrained formatting where it improves readability.
+- An optional separate title or subject line. Choose a title, an email-style
+  subject, or let the writing task determine which label is appropriate. The
+  suggestion is placed above the complete main text so it can be copied into a
+  separate field such as an Amazon review title.
 - A best-effort request for ChatGPT to place the finished result in an editable,
   copyable writing block. Availability depends on the current ChatGPT plan,
   device, workspace settings, model, and rollout.
@@ -146,9 +167,9 @@ These settings provide the initial remembered states of the corresponding
 launcher checkboxes. Changing **Preserve my natural voice**, **Guided
 questions** and **Submit automatically** in the launcher updates that remembered
 setting for the next use. The launcher's **Temporary Chat** checkbox is also
-remembered. Less frequently changed length, formatting, and writing-block
-settings are grouped under the launcher's **Remembered output** menu and are
-remembered in the same way.
+remembered. Less frequently changed length, formatting, title or subject, and
+writing-block settings are grouped under the launcher's **Remembered output**
+menu and are remembered in the same way.
 
 Automatic replacement is opt-in and the generated response may still be wrong
 or unsuitable. PromptMeld preserves the original in memory and exposes
@@ -168,26 +189,32 @@ An application profile can override:
 
 - Recipient or audience, including workplace, customer, support, public and
   general-reader choices.
-- Primary language, result length and plain or formatted output.
+- Primary language, result length, plain or formatted output, and whether to
+  generate a separate title or subject line.
 - Editing strength and whether facts and specifics must be preserved.
 - Natural voice, guided drafting and copyable writing blocks.
-- The base ChatGPT Project name, automatic submission and Temporary Chat.
+- The base ChatGPT Project name, automatic submission, Temporary Chat, and
+  whether to show the privacy preview for that application.
+- A response wait of one, three, five, ten, or twenty minutes, or an
+  indefinite wait that remains cancellable.
 - Whether the generated result replaces the verified source selection, is
-  copied to the clipboard, or remains in ChatGPT.
+  copied with a notification, waits for a **Copy result** or **Apply now**
+  choice, or remains in ChatGPT.
 
 Every option can inherit its **Overall defaults** or launcher value, so
 a profile only needs to describe what is genuinely different. A replacement
 profile still safely falls back to copying when the source does not expose an
 editable control.
 
-New configurations include conservative starter profiles. Microsoft Word and
-Notepad replace a verified editable selection. Outlook, New Outlook, Chrome,
-Edge, Firefox, Teams and Slack copy the generated result instead. Outlook and
-Notepad use plain text, while Teams and Slack demonstrate short, plain-text
-wording for a colleague or peer. These profiles remain fully editable or
-removable. Existing configurations receive the starter set only when their
-earlier application settings are still untouched; user changes and deletions
-are preserved.
+New configurations include conservative starter profiles. Microsoft Word
+waits until completion or cancellation and then replaces a verified editable
+selection. Notepad also replaces verified text. Chrome, Edge and Firefox wait
+up to ten minutes, notify, and copy the result. Outlook, New Outlook, Teams and
+Slack copy the generated result. Outlook and Notepad use plain text, while
+Teams and Slack demonstrate short, plain-text wording for a colleague or peer.
+These profiles remain fully editable or removable. Existing configurations
+receive new starter behaviour only when their earlier application settings are
+still untouched; user changes and deletions are preserved.
 
 ## Backup, restore, and diagnostics
 
@@ -205,6 +232,13 @@ before changing anything. PromptMeld automatically creates a single-file
 pre-restore safety backup under `%LOCALAPPDATA%\PromptMeld\backups`, then reloads
 the restored configuration. Unsafe, incomplete, or malformed archives are
 rejected.
+
+**Reset configuration** returns writing actions, application profiles,
+shortcuts, writing defaults, and custom icons to their packaged defaults after
+an explicit confirmation. PromptMeld first creates a recoverable single-file
+pre-reset backup, keeps usage history and logs, disables startup if required by
+the defaults, and then closes. The first-use setup guide appears when PromptMeld
+is next opened.
 
 The same tab can copy privacy-filtered diagnostics or open the local log
 folder. Diagnostics contain versions, operational result flags, the source
@@ -242,18 +276,46 @@ names, availability, and layout can change by account and application version.
 
 ## Starter actions
 
-The starter set contains 26 actions grouped under:
+The packaged library deliberately starts with only four universal essentials.
+All four appear on the launcher home screen and have a default shortcut:
 
-- **Editing**, including **Reviews**.
-- **Replies & arguments**, including **Replies** and **Analysis**.
-- **Tone & polish**.
-- **Technical help**.
-- **Correspondence**, including **Email** and
-  **Customer & marketplace**.
+| Shortcut | Action |
+|---|---|
+| `Ctrl+Alt+1` | **Edit, revise & improve** |
+| `Ctrl+Alt+2` | **Proofread with minimal changes** |
+| `Ctrl+Alt+3` | **Shorten without losing meaning** |
+| `Ctrl+Alt+4` | **Draft a reply** |
 
-Correspondence actions avoid inventing facts, policies, dates, refunds, or
-commitments. The home screen initially pins the most broadly useful editing and
-reply actions; most-used entries appear only after actual use.
+Use **Add starter pack** to expand this core with any of nineteen focused packs.
+The menu starts with the intended use of the selected text: **Reply or
+respond**, **Edit or revise**, **Draft or create**, **Summarise or extract**,
+**Plan or decide**, or **Explain or learn**. Each pack contains four actions
+and is added without replacing the current library:
+
+| Menu group | Pack | Focus |
+|---|---|---|
+| Reply or respond | **Replies to selected text** | Sarcastic, challenging, balanced, and firm replies |
+| Reply or respond | **Social media replies** | Platform-aware replies for YouTube, Reddit, Facebook, and hostile exchanges |
+| Reply or respond | **Customer relations** | Customer queries, clarification, limitations, and resolution follow-ups |
+| Reply or respond | **Email and correspondence** | Drafting, requests, follow-ups, and diplomatic email |
+| Reply or respond | **Complaints and resolution** | Raising, answering, escalating, and resolving complaints |
+| Edit or revise | **Advanced editing** | Restructuring, simplification, clearer formatting, and consistency |
+| Edit or revise | **Tone and voice** | Softer, more direct, warmer, or more formal wording |
+| Edit or revise | **Social media editing** | YouTube, Reddit, Facebook, and cross-platform versions |
+| Edit or revise | **Arguments and evidence** | Stronger reasoning, claim checking, objections, and evidence gaps |
+| Edit or revise | **Reviews and feedback** | Product reviews, comparisons, and constructive feedback |
+| Draft or create | **Draft from selected text** | Complete drafts, FAQs, instructions, and announcements from source material |
+| Draft or create | **Reports and updates** | Structured reports, summaries, progress updates, and executive wording |
+| Draft or create | **Social media writing** | Posts, threads, captions, and announcements from selected material |
+| Draft or create | **Meetings and actions** | Agendas, meeting summaries, action points, and follow-ups |
+| Draft or create | **CVs and applications** | CV wording, cover letters, application answers, and professional profiles |
+| Summarise or extract | **Summaries and extraction** | Concise summaries, facts and figures, open questions, and timelines |
+| Plan or decide | **Decisions and planning** | Option comparisons, prioritisation, action plans, and risk reviews |
+| Explain or learn | **Technical communication** | Explanations, troubleshooting, support requests, and bug reports |
+| Explain or learn | **Study and learning** | Explanations, study notes, revision aids, and knowledge checks |
+
+Packs can be combined, edited, exported, or removed like any other actions.
+Most-used entries appear only after actual use.
 
 ## Local files
 
@@ -279,16 +341,17 @@ Each entry in `actions.json` follows this shape:
 ```json
 {
   "id": "shorten",
-  "name": "Shorten",
+  "name": "Shorten without losing meaning",
   "keywords": ["concise", "brief", "trim"],
   "instruction": "Shorten the text while preserving its meaning and essential details.",
-  "hotkey": "Ctrl+Alt+2",
+  "hotkey": "Ctrl+Alt+3",
   "enabled": true,
   "icon": "lucide:scissors",
-  "folder": "Editing",
+  "folder": "Essentials",
   "show_on_home": true,
   "natural_voice": "inherit",
-  "guided_drafting": false
+  "guided_drafting": false,
+  "recipient_audience": "inherit"
 }
 ```
 
@@ -299,7 +362,11 @@ empty for a root-level action.
 
 Valid `natural_voice` values are `inherit`, `always`, and `never`. Set
 `guided_drafting` to `true` only for actions that may benefit from requesting
-missing context.
+missing context. Valid `recipient_audience` values are `inherit`,
+`unspecified`, `friend_family`, `colleague_peer`, `manager_senior`,
+`customer_client`, `company_support`, `public_online`, `general_reader`, and
+`other`. `inherit` uses the source application's audience default; a launcher
+choice for the current request takes priority.
 
 After manual JSON changes, exit and restart PromptMeld. Changes made through
 the configuration window take effect immediately after saving.
@@ -320,10 +387,12 @@ Home-screen, submission, language, and style settings are stored in
   "copy_generated_text_enabled": false,
   "application_profiles": {
     "winword.exe": {
-      "return_mode": "replace"
+      "return_mode": "replace",
+      "response_wait": "indefinite"
     },
     "outlook.exe": {
       "return_mode": "copy",
+      "response_wait": "600",
       "recipient_audience": "customer_client",
       "resulting_text_formatting": "plain",
       "natural_voice": "on",
@@ -341,21 +410,21 @@ Home-screen, submission, language, and style settings are stored in
 }
 ```
 
+Valid `return_mode` values are `default`, `replace`, `review`, `copy`, and
+`leave`. Valid `response_wait` values are `inherit`, `60`, `180`, `300`, `600`,
+`1200`, and `indefinite`; the numeric values are seconds.
+
 ## Upgrades and migration
 
-When upgrading an untouched original eight-action starter file, PromptMeld
-creates `actions.legacy-v1-backup.json` and installs the current grouped starter
-set.
-
-Existing customised configurations receive the correspondence actions through
-an additive one-time migration. PromptMeld first creates
-`actions.pre-correspondence-v2-backup.json`; existing actions and edits are
-preserved, and actions deleted after migration are not added again.
+Normal upgrades preserve the saved action library. New configurations and
+**Reset configuration** use the current four-action core; optional starter
+packs are added only when selected by the user.
 
 Existing configurations with no application profiles receive the recommended
-starter profiles through a separate one-time migration. The exact earlier
-starter policy set is enriched with the new writing defaults; customised or
-deleted profiles are left unchanged and are not restored on the next launch.
+starter profiles through a separate one-time migration. An exact untouched
+earlier starter set is enriched with current writing, wait, and completion
+defaults; customised or deleted profiles are left unchanged and are not
+restored on the next launch.
 
 When upgrading from Writing Launcher, PromptMeld copies
 `%LOCALAPPDATA%\WritingLauncher` to `%LOCALAPPDATA%\PromptMeld` on first run.

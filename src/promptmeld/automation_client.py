@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .branding import AUTOMATION_EXECUTABLE_NAME
+from .chatgpt import DEFAULT_RESPONSE_TIMEOUT_SECONDS
 from .clipboard import write_clipboard_text
 from .models import AppSettings, SubmissionResult
 
@@ -75,7 +76,7 @@ class _AutomationHelperSession:
     def request(
         self,
         payload: dict[str, object],
-        timeout_seconds: float,
+        timeout_seconds: float | None,
         progress_callback: Callable[[str, str], None] | None = None,
         is_cancelled: Callable[[], bool] | None = None,
     ) -> dict[str, object]:
@@ -85,17 +86,27 @@ class _AutomationHelperSession:
             json.dumps(payload, ensure_ascii=False) + "\n"
         )
         self.process.stdin.flush()
-        deadline = time.monotonic() + timeout_seconds
+        deadline = (
+            None
+            if timeout_seconds is None
+            else time.monotonic() + timeout_seconds
+        )
         while True:
             if is_cancelled is not None and is_cancelled():
                 raise AutomationCancelled("Automation cancelled by the user.")
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            remaining = (
+                None if deadline is None else deadline - time.monotonic()
+            )
+            if remaining is not None and remaining <= 0:
                 raise TimeoutError(
                     "Automation helper did not respond before the timeout."
                 )
             try:
-                response = self.responses.get(timeout=min(0.1, remaining))
+                response = self.responses.get(
+                    timeout=(
+                        0.1 if remaining is None else min(0.1, remaining)
+                    )
+                )
             except queue.Empty:
                 continue
             if response is None:
@@ -189,7 +200,7 @@ def shutdown_automation_helper() -> None:
 
 def _request_from_helper(
     payload: dict[str, object],
-    timeout_seconds: float,
+    timeout_seconds: float | None,
     progress_callback: Callable[[str, str], None] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
 ) -> dict[str, object]:
@@ -234,6 +245,9 @@ def submit_via_worker(
     source_app: str = "",
     replace_selected_text: bool | None = None,
     copy_generated_text: bool | None = None,
+    capture_generated_text: bool = False,
+    response_timeout_seconds: float | None = DEFAULT_RESPONSE_TIMEOUT_SECONDS,
+    redaction_replacements: dict[str, str] | None = None,
     progress_callback: Callable[[str, str], None] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
 ) -> SubmissionResult:
@@ -251,6 +265,7 @@ def submit_via_worker(
         "prompt": prompt,
         "project_name": project_name,
         "timeout_seconds": settings.automation_timeout_seconds,
+        "response_timeout_seconds": response_timeout_seconds,
         "chatgpt_uri": settings.chatgpt_uri,
         "project_uri": settings.project_uri,
         "auto_submit": settings.auto_submit_enabled,
@@ -261,14 +276,27 @@ def submit_via_worker(
         "source_app": source_app,
         "replace_selected_text": effective_replace,
         "copy_generated_text": effective_copy,
+        "capture_generated_text": capture_generated_text,
+        "redaction_replacements": dict(redaction_replacements or {}),
     }
     try:
+        waits_for_generated_text = bool(
+            settings.auto_submit_enabled
+            and (effective_replace or effective_copy or capture_generated_text)
+        )
+        helper_timeout = max(
+            75.0,
+            settings.automation_timeout_seconds + 12.0,
+        )
+        if waits_for_generated_text:
+            helper_timeout = (
+                None
+                if response_timeout_seconds is None
+                else max(helper_timeout, response_timeout_seconds + 60.0)
+            )
         request_args = (
             payload,
-            max(
-                75.0,
-                settings.automation_timeout_seconds + 12.0,
-            ),
+            helper_timeout,
             progress_callback,
         )
         raw = (
@@ -298,6 +326,11 @@ def submit_via_worker(
             output_failed=bool(raw.get("output_failed", False)),
             cancelled=bool(raw.get("cancelled", False)),
             message=str(raw.get("message", "")),
+            generated_text=(
+                str(raw.get("generated_text", ""))
+                if isinstance(raw.get("generated_text", ""), str)
+                else ""
+            ),
         )
     except AutomationCancelled:
         LOGGER.info("ChatGPT automation was cancelled")

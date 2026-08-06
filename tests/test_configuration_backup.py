@@ -6,8 +6,11 @@ from dataclasses import replace
 
 import pytest
 
+from promptmeld import configuration_backup as backup_module
 from promptmeld.config import (
     load_actions,
+    load_default_actions,
+    load_default_settings,
     load_settings,
     save_actions,
     save_settings,
@@ -16,6 +19,7 @@ from promptmeld.configuration_backup import (
     ConfigurationBackupError,
     create_configuration_backup,
     inspect_configuration_backup,
+    reset_configuration_to_defaults,
     restore_configuration_backup,
 )
 from promptmeld.models import AppSettings, ApplicationProfile, WritingAction
@@ -144,3 +148,49 @@ def test_invalid_configuration_is_rejected_before_restore(tmp_path):
 
     assert paths.actions_file.read_bytes() == original_actions
     assert paths.settings_file.read_bytes() == original_settings
+
+
+def test_reset_restores_packaged_defaults_and_creates_safety_backup(tmp_path):
+    paths = configured_paths(tmp_path)
+    paths.usage_file.write_text('{"reply": 4}', encoding="utf-8")
+    paths.log_file.write_text("diagnostic log", encoding="utf-8")
+
+    result = reset_configuration_to_defaults(paths)
+
+    assert load_actions(paths.actions_file) == load_default_actions()
+    reset_settings = load_settings(paths.settings_file)
+    assert reset_settings == load_default_settings()
+    assert reset_settings.first_run_setup_completed is False
+    assert not (paths.data_dir / "icons").exists()
+    assert result.removed_icon_count == 1
+    assert result.safety_backup.is_file()
+    safety = inspect_configuration_backup(result.safety_backup)
+    assert safety.action_count == 1
+    assert safety.icon_count == 1
+    assert paths.usage_file.read_text(encoding="utf-8") == '{"reply": 4}'
+    assert paths.log_file.read_text(encoding="utf-8") == "diagnostic log"
+
+
+def test_failed_reset_puts_actions_settings_and_icons_back(
+    tmp_path,
+    monkeypatch,
+):
+    paths = configured_paths(tmp_path)
+    original_actions = paths.actions_file.read_bytes()
+    original_settings = paths.settings_file.read_bytes()
+    original_icon = (paths.data_dir / "icons" / "reply.png").read_bytes()
+
+    def fail_to_save(*_args, **_kwargs):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(backup_module, "save_settings", fail_to_save)
+
+    with pytest.raises(ConfigurationBackupError, match="previous configuration"):
+        reset_configuration_to_defaults(paths)
+
+    assert paths.actions_file.read_bytes() == original_actions
+    assert paths.settings_file.read_bytes() == original_settings
+    assert (
+        paths.data_dir / "icons" / "reply.png"
+    ).read_bytes() == original_icon
+    assert not list(paths.data_dir.glob(".icons-pre-reset-*"))

@@ -34,20 +34,19 @@ Repeat the same process for the actions you want directly on the ring:
 | Smart Action name | Keystroke | Suggested label |
 |---|---|---|
 | PromptMeld – Edit | `Ctrl+Alt+1` | Edit |
-| PromptMeld – Shorten | `Ctrl+Alt+2` | Shorten |
-| PromptMeld – Strengthen | `Ctrl+Alt+3` | Strengthen |
+| PromptMeld – Proofread | `Ctrl+Alt+2` | Proofread |
+| PromptMeld – Shorten | `Ctrl+Alt+3` | Shorten |
 | PromptMeld – Reply | `Ctrl+Alt+4` | Reply |
-| PromptMeld – Sarcastic | `Ctrl+Alt+5` | Sarcastic |
-| PromptMeld – Firm reply | `Ctrl+Alt+6` | Firm reply |
 
 Direct actions capture the current selection and submit immediately. They do not open the launcher popup.
 
 ## Recommended layout
 
-Use six direct actions, one `More…` action, and leave the final ring position
-for another frequently used system action. The popup supports folders and
-nested subfolders, and search covers every folder. Actions inside a folder are
-ranked from usage; Smart Action positions remain fixed in V1.
+Use the four essential direct actions, one `More…` action, and keep the other
+ring positions for actions from any optional pack or frequently used system
+actions. The popup supports folders and nested subfolders, and search covers
+every folder. Actions inside a folder are ranked from usage; Smart Action
+positions remain fixed.
 
 ## Troubleshooting
 

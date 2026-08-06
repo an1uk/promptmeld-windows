@@ -16,8 +16,12 @@ from promptmeld.actions import ActionRegistry
 from promptmeld.automation_progress import AutomationProgressWindow
 from promptmeld.config import ensure_user_configuration, load_actions, load_settings
 from promptmeld.icons import ActionIconProvider
-from promptmeld.models import ApplicationProfile
+from promptmeld.models import ApplicationProfile, SubmissionResult
 from promptmeld.paths import AppPaths
+from promptmeld.privacy import detect_sensitive_text
+from promptmeld.privacy_preview import PrivacyPreviewDialog
+from promptmeld.returning import ReturnDecision
+from promptmeld.result_review import ResultReviewDialog
 from promptmeld.settings_ui import ActionSettingsDialog, ApplicationProfileDialog
 from promptmeld.ui import LauncherPopup
 from promptmeld.usage import UsageTracker
@@ -64,6 +68,15 @@ def main() -> int:
             settings.writing_block_enabled,
             settings.resulting_text_formatting,
         )
+        popup.set_source_context(
+            "outlook.exe",
+            ReturnDecision(copy_result=True),
+            selected_text=(
+                "From: Taylor Morgan\nSubject: Friday meeting\n"
+                "Could you confirm whether Friday afternoon still works?"
+            ),
+        )
+        popup.refresh()
         popup.show()
         app.processEvents()
         popup_image = popup.grab().toImage()
@@ -88,7 +101,49 @@ def main() -> int:
             progress.update_stage(stage, message)
         QTest.qWait(750)
         progress_image = progress.grab().toImage()
+        progress.finish(
+            SubmissionResult(
+                submitted=True,
+                generated_text="Generated response retained in memory",
+            ),
+            can_apply=True,
+        )
+        app.processEvents()
+        progress.grab().toImage().save(
+            str(docs / "completion-notification.png")
+        )
         progress.close()
+
+        review = ResultReviewDialog("dark")
+        review.set_results(
+            [
+                "Thank you for your message. I can confirm that Friday works.",
+                "Thanks for getting in touch. Friday would suit me well.",
+                "I appreciate the message. I am available on Friday.",
+            ],
+            requested_count=3,
+            can_apply=True,
+        )
+        review.show()
+        app.processEvents()
+        review.grab().toImage().save(
+            str(docs / "alternative-review.png")
+        )
+        review.close()
+
+        privacy_text = (
+            "Please reply to Jane Smith at jane@example.com or call "
+            "+44 7700 900123. Account number: 1234-5678-9012."
+        )
+        privacy = PrivacyPreviewDialog(
+            privacy_text,
+            detect_sensitive_text(privacy_text),
+            theme="dark",
+        )
+        privacy.show()
+        app.processEvents()
+        privacy.grab().save(str(docs / "privacy-preview.png"))
+        privacy.close()
 
         gap = 32
         overview = QImage(
@@ -128,6 +183,7 @@ def main() -> int:
                 return_mode="copy",
                 recipient_audience="colleague_peer",
                 resulting_text_formatting="plain",
+                title_subject="subject",
                 natural_voice="on",
                 project_name="Client correspondence",
             ),

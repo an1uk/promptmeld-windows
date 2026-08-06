@@ -13,6 +13,7 @@ from promptmeld.action_packs import (
     merge_action_pack,
     save_action_pack,
 )
+from promptmeld.config import DEFAULT_FOLDER_ICONS, load_default_actions
 from promptmeld.models import WritingAction
 
 
@@ -115,15 +116,92 @@ def test_merge_adapts_duplicate_ids_and_clashing_shortcuts():
     assert result.first_added_index == 1
 
 
-def test_builtin_catalog_contains_five_personal_library_starter_packs():
+def test_builtin_catalog_contains_nineteen_intent_focused_starter_packs():
     packs = load_builtin_action_packs()
 
+    assert len(packs) == 19
     assert {pack.pack_id for pack in packs} == {
         "editing",
+        "customer-relations",
         "email",
         "complaints",
         "reports",
         "social-posts",
+        "social-replies",
+        "social-editing",
+        "reviews-feedback",
+        "meetings",
+        "technical-communication",
+        "learning",
+        "career-writing",
+        "tone-voice",
+        "replies-arguments",
+        "argument-editing",
+        "summaries-extraction",
+        "draft-from-selection",
+        "decisions-planning",
     }
-    assert all(len(pack.actions) >= 4 for pack in packs)
-    assert all(action.hotkey is None for pack in packs for action in pack.actions)
+    assert all(len(pack.actions) == 4 for pack in packs)
+
+    pack_actions = [action for pack in packs for action in pack.actions]
+    pack_action_ids = [action.id for action in pack_actions]
+    core_action_ids = {action.id for action in load_default_actions()}
+
+    assert all(action.enabled for action in pack_actions)
+    assert all(action.hotkey is None for action in pack_actions)
+    assert all(action.show_on_home is False for action in pack_actions)
+    assert all(
+        action.recipient_audience
+        in {
+            "inherit",
+            "unspecified",
+            "friend_family",
+            "colleague_peer",
+            "manager_senior",
+            "customer_client",
+            "company_support",
+            "public_online",
+            "general_reader",
+            "other",
+        }
+        for action in pack_actions
+    )
+    assert len(pack_action_ids) == len(set(pack_action_ids))
+    assert set(pack_action_ids).isdisjoint(core_action_ids)
+    represented_folders = {
+        "/".join(action.folder.split("/")[:depth])
+        for action in pack_actions
+        for depth in range(1, len(action.folder.split("/")) + 1)
+    }
+    assert represented_folders <= set(DEFAULT_FOLDER_ICONS)
+    replies = next(pack for pack in packs if pack.pack_id == "replies-arguments")
+    assert replies.name == "Replies to selected text"
+    assert {action.id for action in replies.actions} == {
+        "reply-sarcastic",
+        "reply-challenge-claim",
+        "reply-polite-firm",
+        "reply-steelman",
+    }
+    arguments = next(
+        pack for pack in packs if pack.pack_id == "argument-editing"
+    )
+    assert arguments.name == "Arguments and evidence"
+    assert {action.id for action in arguments.actions} == {
+        "argument-strengthen",
+        "argument-fact-check-response",
+        "argument-test-reasoning",
+        "argument-balanced-rewrite",
+    }
+    customer = next(
+        pack for pack in packs if pack.pack_id == "customer-relations"
+    )
+    assert all(
+        action.recipient_audience == "customer_client"
+        for action in customer.actions
+    )
+    for pack_id in ("social-posts", "social-replies", "social-editing"):
+        social = next(pack for pack in packs if pack.pack_id == pack_id)
+        assert all(
+            action.recipient_audience == "public_online"
+            for action in social.actions
+        )

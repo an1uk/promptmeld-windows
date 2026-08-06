@@ -46,6 +46,15 @@ RESULTING_TEXT_FORMATTING_OPTIONS = (
 RESULTING_TEXT_FORMATTING_VALUES = tuple(
     value for value, _label in RESULTING_TEXT_FORMATTING_OPTIONS
 )
+TITLE_SUBJECT_OPTIONS = (
+    ("none", "Do not add one"),
+    ("automatic", "Choose title or subject automatically"),
+    ("title", "Generate a title"),
+    ("subject", "Generate a subject line"),
+)
+TITLE_SUBJECT_VALUES = tuple(
+    value for value, _label in TITLE_SUBJECT_OPTIONS
+)
 EDITING_STRENGTH_OPTIONS = (
     ("default", "Default"),
     ("proofread", "Proofread"),
@@ -84,6 +93,7 @@ class WritingAction:
     show_on_home: bool = False
     natural_voice: str = "inherit"
     guided_drafting: bool = False
+    recipient_audience: str = "inherit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +121,7 @@ class SubmissionResult:
     output_failed: bool = False
     cancelled: bool = False
     message: str = ""
+    generated_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +133,7 @@ class ApplicationProfile:
     primary_language: str = ""
     resulting_text_length: str = "inherit"
     resulting_text_formatting: str = "inherit"
+    title_subject: str = "inherit"
     editing_strength: str = "inherit"
     preserve_facts: str = "inherit"
     natural_voice: str = "inherit"
@@ -129,6 +141,8 @@ class ApplicationProfile:
     writing_block: str = "inherit"
     auto_submit: str = "inherit"
     temporary_chat: str = "inherit"
+    privacy_preview: str = "inherit"
+    response_wait: str = "inherit"
     project_name: str = ""
 
 
@@ -151,6 +165,7 @@ class AppSettings:
     natural_voice_enabled: bool = False
     natural_voice_instruction: str = DEFAULT_NATURAL_VOICE_INSTRUCTION
     auto_submit_enabled: bool = False
+    privacy_preview_enabled: bool = True
     replace_selected_text_enabled: bool = False
     copy_generated_text_enabled: bool = False
     application_return_policies: dict[str, str] = field(default_factory=dict)
@@ -163,6 +178,7 @@ class AppSettings:
     resulting_text_length: str = "default"
     writing_block_enabled: bool = False
     resulting_text_formatting: str = "default"
-    starter_action_version: int = 2
+    title_subject: str = "none"
+    starter_action_version: int = 3
     starter_application_policy_version: int = 0
     extra: dict[str, object] = field(default_factory=dict)

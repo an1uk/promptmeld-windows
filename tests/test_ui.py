@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import replace
 from types import SimpleNamespace
 
+from promptmeld import automation_progress as automation_progress_module
+from promptmeld import result_review as result_review_module
 from promptmeld import settings_ui as settings_ui_module
+from promptmeld import ui as ui_module
 from promptmeld.action_packs import (
     ActionPack,
     load_action_pack,
@@ -27,6 +30,7 @@ from promptmeld.returning import (
     ReturnDecision,
     resolve_application_profile,
 )
+from promptmeld.result_review import ResultReviewDialog
 from promptmeld.settings_ui import (
     ActionCreationWizard,
     ActionSettingsDialog,
@@ -34,20 +38,23 @@ from promptmeld.settings_ui import (
     BranchArrowStyle,
     FirstRunSetupWizard,
     HotkeyCaptureEdit,
+    NestedFolderDialog,
     NoWheelComboBox,
 )
 from promptmeld.ui import LauncherPopup
 from promptmeld.usage import UsageTracker
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QMouseEvent, QPalette
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QHeaderView,
     QLabel,
     QMessageBox,
+    QScrollArea,
     QSystemTrayIcon,
 )
 
@@ -56,7 +63,15 @@ def test_promptmeld_application_icon_is_available(qtbot):
     assert not make_tray_icon().isNull()
 
 
-def test_automation_progress_appends_and_centres_operations(qtbot):
+def test_automation_progress_appends_and_centres_operations(
+    qtbot,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        automation_progress_module,
+        "system_reduced_motion_enabled",
+        lambda: False,
+    )
     window = AutomationProgressWindow("light")
     qtbot.addWidget(window)
 
@@ -90,6 +105,149 @@ def test_automation_progress_appends_and_centres_operations(qtbot):
     assert abs(current_centre - viewport_centre) <= 20
 
 
+def test_automation_stages_emit_screen_reader_announcements(qtbot):
+    window = AutomationProgressWindow("light")
+    qtbot.addWidget(window)
+    announcements = QSignalSpy(window.stage_announced)
+
+    window.begin("PromptMeld")
+    qtbot.wait(1)
+    window.update_stage("opening-project", "Opening the Editing project")
+    qtbot.wait(1)
+
+    assert [
+        announcements.at(index)[0]
+        for index in range(announcements.count())
+    ] == [
+        "Automation status: Preparing the writing request",
+        "Automation status: Opening the Editing project",
+    ]
+    assert window.current_operation.accessibleName() == (
+        "Current automation stage: Opening the Editing project"
+    )
+    assert window.accessibleDescription() == (
+        "Automation status: Opening the Editing project"
+    )
+
+
+def test_automation_stage_announcements_do_not_use_audible_alerts(
+    qtbot,
+    monkeypatch,
+):
+    accessibility_events: list[str] = []
+
+    class QuietAccessible:
+        class Event:
+            NameChanged = "name-changed"
+
+        @staticmethod
+        def updateAccessibility(event):
+            accessibility_events.append(event)
+
+    monkeypatch.setattr(
+        automation_progress_module,
+        "QAccessible",
+        QuietAccessible,
+    )
+    monkeypatch.setattr(
+        automation_progress_module,
+        "QAccessibleEvent",
+        lambda _label, event: event,
+    )
+    window = AutomationProgressWindow("light")
+    qtbot.addWidget(window)
+
+    window.begin("PromptMeld")
+    window.update_stage("opening-project", "Opening the Editing project")
+    qtbot.wait(1)
+
+    assert accessibility_events == ["name-changed", "name-changed"]
+
+
+def test_automation_progress_skips_scroll_animation_for_reduced_motion(
+    qtbot,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        automation_progress_module,
+        "system_reduced_motion_enabled",
+        lambda: True,
+    )
+    window = AutomationProgressWindow("dark")
+    qtbot.addWidget(window)
+
+    window.begin("PromptMeld")
+    for index in range(8):
+        window.update_stage(f"stage-{index}", f"Operation {index}")
+    qtbot.wait(1)
+
+    assert window.reduced_motion is True
+    assert window.scroll_animation is None
+
+
+def test_windows_high_contrast_uses_system_palette_across_main_windows(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        automation_progress_module,
+        "system_high_contrast_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        result_review_module,
+        "system_high_contrast_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        settings_ui_module,
+        "system_high_contrast_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        ui_module,
+        "system_high_contrast_enabled",
+        lambda: True,
+    )
+    registry = ActionRegistry(
+        [WritingAction("edit", "Edit", (), "Improve this.")],
+        UsageTracker(tmp_path / "usage.json"),
+    )
+    windows = [
+        AutomationProgressWindow("dark"),
+        ResultReviewDialog("dark"),
+        LauncherPopup(registry, theme="dark"),
+        FirstRunSetupWizard(
+            "Ctrl+Alt+Space",
+            lambda _hotkey: True,
+            theme="dark",
+        ),
+        ApplicationProfileDialog(
+            "winword.exe",
+            ApplicationProfile(),
+            AppSettings(theme="dark"),
+        ),
+        ActionSettingsDialog(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            AppPaths.discover(tmp_path),
+            ActionIconProvider(tmp_path),
+            "Ctrl+Alt+Space",
+            AppSettings(theme="dark"),
+        ),
+    ]
+    for window in windows:
+        qtbot.addWidget(window)
+
+    assert all(
+        "palette(window-text)" in window.styleSheet()
+        for window in windows
+    )
+    assert windows[2].testAttribute(
+        Qt.WidgetAttribute.WA_TranslucentBackground
+    ) is False
+
+
 def test_automation_progress_keeps_final_result_in_history(qtbot):
     window = AutomationProgressWindow("dark")
     qtbot.addWidget(window)
@@ -108,6 +266,49 @@ def test_automation_progress_keeps_final_result_in_history(qtbot):
     assert window.operation_labels[-1].property("state") == "success"
     assert "ready for your review" in window.operation_labels[-1].text()
     assert window.close_button.isVisible()
+
+
+def test_completion_notification_offers_copy_and_apply_actions(qtbot):
+    window = AutomationProgressWindow("dark")
+    qtbot.addWidget(window)
+    copied = QSignalSpy(window.copy_result_requested)
+    applied = QSignalSpy(window.apply_result_requested)
+    window.begin("PromptMeld")
+
+    window.finish(
+        SubmissionResult(
+            submitted=True,
+            generated_text="Generated answer",
+        ),
+        can_apply=True,
+    )
+
+    assert window.title.text() == "Response ready"
+    assert window.copy_result_button.isVisible()
+    assert window.apply_result_button.isVisible()
+    assert window.close_button.isVisible()
+    assert window.hide_timer.isActive() is False
+    qtbot.mouseClick(window.copy_result_button, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window.apply_result_button, Qt.MouseButton.LeftButton)
+    assert copied.count() == 1
+    assert applied.count() == 1
+
+
+def test_completion_notification_hides_apply_after_automatic_replacement(qtbot):
+    window = AutomationProgressWindow("light")
+    qtbot.addWidget(window)
+    window.begin("PromptMeld")
+
+    window.finish(
+        SubmissionResult(
+            submitted=True,
+            selection_replaced=True,
+            generated_text="Generated answer",
+        )
+    )
+
+    assert window.copy_result_button.isVisible()
+    assert not window.apply_result_button.isVisible()
 
 
 def test_automation_progress_identifies_temporary_chat(qtbot):
@@ -260,6 +461,43 @@ def test_launcher_exposes_keyboard_search_and_accessible_action_list(
     assert popup.search.selectedText() == "edit"
     assert popup.search.accessibleName() == "Search writing actions"
     assert popup.list.accessibleName() == "Writing actions"
+
+
+def test_launcher_prioritises_action_space_until_options_are_requested(
+    qtbot,
+    tmp_path,
+):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [
+                WritingAction(
+                    f"action-{index}",
+                    f"Action {index}",
+                    (),
+                    f"Instruction {index}.",
+                )
+                for index in range(8)
+            ],
+            UsageTracker(tmp_path / "usage.json"),
+        )
+    )
+    qtbot.addWidget(popup)
+    popup.show()
+    qtbot.wait(1)
+    collapsed_height = popup.list.height()
+
+    assert popup.options_panel.isHidden()
+    assert popup.options_panel.isAncestorOf(popup.additional_information)
+    assert popup.options_toggle.accessibleName().startswith("Show")
+
+    popup.options_toggle.setChecked(True)
+    qtbot.wait(1)
+    expanded_height = popup.list.height()
+
+    assert popup.options_panel.isVisible()
+    assert popup.options_toggle.text() == "Hide request options"
+    assert popup.options_toggle.accessibleName().startswith("Hide")
+    assert collapsed_height > expanded_height
 
 
 def test_popup_filters_actions(qtbot, tmp_path):
@@ -415,6 +653,54 @@ def test_launcher_applies_application_guidance_defaults(qtbot, tmp_path):
     assert popup.output_button.isEnabled() is False
 
 
+def test_launcher_applies_action_audience_until_user_overrides_it(
+    qtbot,
+    tmp_path,
+):
+    actions = [
+        WritingAction(
+            "public-reply",
+            "Public reply",
+            (),
+            "Draft a public reply.",
+            show_on_home=True,
+            recipient_audience="public_online",
+        ),
+        WritingAction(
+            "general-edit",
+            "General edit",
+            (),
+            "Edit this.",
+            show_on_home=True,
+        ),
+    ]
+    popup = LauncherPopup(
+        ActionRegistry(actions, UsageTracker(tmp_path / "usage.json"))
+    )
+    qtbot.addWidget(popup)
+    popup.application_audience_default = "customer_client"
+    popup.audience_explicitly_selected = False
+    popup.refresh()
+
+    def action_item(action_id):
+        return next(
+            popup.list.item(row)
+            for row in range(popup.list.count())
+            if popup.list.item(row).data(Qt.ItemDataRole.UserRole)
+            == action_id
+        )
+
+    popup.list.setCurrentItem(action_item("public-reply"))
+    assert popup.recipient_audience_value == "public_online"
+
+    popup.list.setCurrentItem(action_item("general-edit"))
+    assert popup.recipient_audience_value == "customer_client"
+
+    popup._recipient_audience_selected("friend_family")
+    popup.list.setCurrentItem(action_item("public-reply"))
+    assert popup.recipient_audience_value == "friend_family"
+
+
 def test_launcher_paste_result_back_toggle_is_saved(qtbot, tmp_path):
     paths = AppPaths.discover(tmp_path)
     paths.ensure()
@@ -427,6 +713,29 @@ def test_launcher_paste_result_back_toggle_is_saved(qtbot, tmp_path):
     app.set_replace_selected_text_enabled(True)
 
     assert load_settings(paths.settings_file).replace_selected_text_enabled is True
+
+
+def test_configuration_reset_applies_startup_default_and_quits(tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    settings_ui_module.save_settings(
+        paths.settings_file,
+        AppSettings(
+            startup_enabled=False,
+            first_run_setup_completed=False,
+        ),
+    )
+    events: list[object] = []
+    app = object.__new__(PromptMeld)
+    app.paths = paths
+    app.startup = SimpleNamespace(
+        set_enabled=lambda enabled: events.append(("startup", enabled))
+    )
+    app.quit = lambda: events.append("quit")
+
+    app._close_after_configuration_reset()
+
+    assert events == [("startup", False), "quit"]
 
 
 def test_open_configuration_hides_tool_windows_and_reuses_dialog(qtbot):
@@ -758,6 +1067,39 @@ def test_launcher_resulting_text_formatting_is_saved(qtbot, tmp_path):
     )
 
 
+def test_launcher_title_or_subject_option_is_remembered(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        ),
+        title_subject="automatic",
+    )
+    qtbot.addWidget(popup)
+
+    assert "Automatic title/subject" in popup.output_summary.text()
+    with qtbot.waitSignal(popup.title_subject_changed) as signal:
+        popup.title_subject_actions["title"].trigger()
+
+    assert signal.args == ["title"]
+    assert popup.title_subject_value == "title"
+    assert "Include title" in popup.output_summary.text()
+
+
+def test_launcher_title_or_subject_setting_is_saved(qtbot, tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    app = object.__new__(PromptMeld)
+    app.settings = AppSettings(title_subject="none")
+    app.paths = paths
+    app.popup = None
+    app.notify = lambda *args: None
+
+    app.set_title_subject("subject")
+
+    assert load_settings(paths.settings_file).title_subject == "subject"
+
+
 def test_closed_dropdown_ignores_mouse_wheel(qtbot):
     combo = NoWheelComboBox()
     combo.addItems(["First", "Second"])
@@ -867,7 +1209,33 @@ def test_popup_single_clicks_folders_but_not_actions(qtbot, tmp_path):
         "proofread",
         False,
         "company_support",
+        1,
     ]
+
+
+def test_popup_selected_action_has_an_explicit_send_button(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        )
+    )
+    qtbot.addWidget(popup)
+    requested = QSignalSpy(popup.action_requested)
+
+    assert popup.list.currentItem().data(
+        popup.ITEM_KIND_ROLE
+    ) == "action"
+    assert popup.send_selected_action.isEnabled() is True
+    assert popup.send_selected_action.text() == "Send selected action"
+
+    qtbot.mouseClick(
+        popup.send_selected_action,
+        Qt.MouseButton.LeftButton,
+    )
+
+    assert requested.count() == 1
+    assert requested.at(0)[0] == "edit"
 
 
 def test_popup_adds_information_to_a_one_off_instruction(qtbot, tmp_path):
@@ -879,7 +1247,10 @@ def test_popup_adds_information_to_a_one_off_instruction(qtbot, tmp_path):
     )
     qtbot.addWidget(popup)
     requested = QSignalSpy(popup.custom_requested)
+    assert popup.custom_send.text() == "Use instruction"
+    assert popup.custom_send.isEnabled() is False
     popup.custom.setText("Draft a reply")
+    assert popup.custom_send.isEnabled() is True
     popup.additional_information.setPlainText(
         "Make clear that I cannot agree to the fee."
     )
@@ -895,7 +1266,66 @@ def test_popup_adds_information_to_a_one_off_instruction(qtbot, tmp_path):
         "rewrite",
         True,
         "customer_client",
+        1,
     ]
+
+
+def test_popup_requests_three_alternatives_for_this_request(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        )
+    )
+    qtbot.addWidget(popup)
+    requested = QSignalSpy(popup.action_requested)
+
+    popup.alternative_actions[3].trigger()
+    popup.send_selected_action.click()
+
+    assert popup.alternative_count_value == 3
+    assert "Three alternatives" in popup.guidance_summary.text()
+    assert requested.at(0)[-1] == 3
+
+
+def test_alternative_review_switches_copy_and_apply_choice(qtbot):
+    dialog = ResultReviewDialog("dark")
+    qtbot.addWidget(dialog)
+    selected = QSignalSpy(dialog.selected_result_changed)
+    copied = QSignalSpy(dialog.copy_result_requested)
+    applied = QSignalSpy(dialog.apply_result_requested)
+
+    dialog.set_results(
+        ["First version", "Second version", "Third version"],
+        requested_count=3,
+        can_apply=True,
+    )
+    dialog.show()
+    dialog.options.setCurrentRow(1)
+
+    assert dialog.preview.toPlainText() == "Second version"
+    assert selected.at(selected.count() - 1)[0] == "Second version"
+    assert not dialog.parse_note.isVisible()
+    qtbot.mouseClick(dialog.copy_button, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(dialog.apply_button, Qt.MouseButton.LeftButton)
+    assert copied.count() == 1
+    assert applied.count() == 1
+
+
+def test_alternative_review_explains_an_unseparated_response(qtbot):
+    dialog = ResultReviewDialog("light")
+    qtbot.addWidget(dialog)
+
+    dialog.set_results(
+        ["Combined response"],
+        requested_count=3,
+        can_apply=False,
+    )
+    dialog.show()
+
+    assert dialog.parse_note.isVisible()
+    assert "could not separate" in dialog.parse_note.text()
+    assert not dialog.apply_button.isVisible()
 
 
 def test_popup_writing_guidance_menu_shows_current_choices(qtbot, tmp_path):
@@ -994,6 +1424,48 @@ def test_popup_shows_direct_and_real_most_used_actions(qtbot, tmp_path):
     ]
 
 
+def test_popup_shows_local_contextual_action_suggestions(qtbot, tmp_path):
+    actions = [
+        WritingAction(
+            "technical",
+            "Explain technical issue",
+            (),
+            "Explain the technical issue.",
+        ),
+        WritingAction(
+            "email",
+            "Reply to email",
+            ("email", "reply"),
+            "Write a useful email reply.",
+        ),
+    ]
+    popup = LauncherPopup(
+        ActionRegistry(actions, UsageTracker(tmp_path / "usage.json")),
+        ActionIconProvider(tmp_path),
+    )
+    qtbot.addWidget(popup)
+
+    selected_text = (
+        "From: Pat\nSubject: Delivery\nCan you confirm the delivery date?"
+    )
+    popup.set_source_context(
+        "outlook.exe",
+        ReturnDecision(copy_result=True),
+        selected_text=selected_text,
+    )
+    popup.refresh()
+
+    assert [popup.list.item(row).text() for row in range(2)] == [
+        "SUGGESTED",
+        "Reply to email",
+    ]
+    assert popup.list.currentRow() == 1
+    assert "Microsoft Outlook" in popup.suggestion_context_label.text()
+    assert "looks like email" in popup.list.item(1).toolTip()
+    assert selected_text not in repr(popup.suggestion_context)
+    assert not hasattr(popup.suggestion_context, "text")
+
+
 def test_settings_tree_displays_nested_folders(qtbot, tmp_path):
     action = WritingAction(
         "review",
@@ -1017,6 +1489,73 @@ def test_settings_tree_displays_nested_folders(qtbot, tmp_path):
     assert editing.text(0) == "Editing"
     assert reviews.text(0) == "Reviews"
     assert review.text(0) == "Review"
+
+
+def test_nested_folder_dialog_builds_a_child_path(qtbot):
+    dialog = NestedFolderDialog(
+        ("Reply", "Reply/Customer"),
+        "Reply",
+        moving_action=True,
+    )
+    qtbot.addWidget(dialog)
+    dialog.folder_name.setText("Firm replies")
+
+    assert dialog.create_button.isEnabled() is True
+    assert dialog.folder_path() == "Reply/Firm replies"
+
+
+def test_action_settings_guides_moving_an_action_to_a_new_subfolder(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
+    action = WritingAction(
+        "reply",
+        "Reply",
+        (),
+        "Write a reply.",
+        folder="Reply",
+    )
+    dialog = ActionSettingsDialog(
+        [action],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+    dialog._refresh_list(0)
+
+    class AcceptedFolderDialog:
+        def __init__(
+            self,
+            folders,
+            selected_parent,
+            *,
+            moving_action,
+            parent,
+        ):
+            assert "Reply" in folders
+            assert selected_parent == "Reply"
+            assert moving_action is True
+            assert parent is dialog
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def folder_path(self):
+            return "Reply/Customer"
+
+    monkeypatch.setattr(
+        settings_ui_module,
+        "NestedFolderDialog",
+        AcceptedFolderDialog,
+    )
+
+    dialog._new_subfolder()
+
+    assert dialog.actions[0].folder == "Reply/Customer"
+    assert dialog.folder_help.isHidden() is False
+    assert dialog.has_unsaved_changes() is True
 
 
 def test_action_settings_edits_and_saves_an_action(qtbot, tmp_path):
@@ -1181,7 +1720,8 @@ def test_general_preferences_are_separate_from_writing_defaults(
         "Backup && recovery",
     ]
     general_page = dialog.tabs.widget(0)
-    defaults_page = dialog.tabs.widget(3)
+    defaults_page = dialog.tabs.widget(4)
+    assert not isinstance(general_page, QScrollArea)
     for control in (
         dialog.theme,
         dialog.most_used_count,
@@ -1402,6 +1942,9 @@ def test_action_settings_saves_natural_voice_configuration(qtbot, tmp_path):
     dialog.natural_voice_mode.setCurrentIndex(
         dialog.natural_voice_mode.findData("never")
     )
+    dialog.action_recipient_audience.setCurrentIndex(
+        dialog.action_recipient_audience.findData("customer_client")
+    )
     dialog.guided_drafting_default.setChecked(True)
     dialog.guided_drafting.setChecked(True)
     dialog.resulting_text_length.setCurrentIndex(
@@ -1410,6 +1953,9 @@ def test_action_settings_saves_natural_voice_configuration(qtbot, tmp_path):
     dialog.writing_block_default.setChecked(True)
     dialog.resulting_text_formatting.setCurrentIndex(
         dialog.resulting_text_formatting.findData("formatted")
+    )
+    dialog.title_subject.setCurrentIndex(
+        dialog.title_subject.findData("automatic")
     )
     dialog._save()
 
@@ -1426,8 +1972,13 @@ def test_action_settings_saves_natural_voice_configuration(qtbot, tmp_path):
     assert saved_settings.resulting_text_length == "extra_long"
     assert saved_settings.writing_block_enabled is True
     assert saved_settings.resulting_text_formatting == "formatted"
+    assert saved_settings.title_subject == "automatic"
     assert load_actions(paths.actions_file)[0].natural_voice == "never"
     assert load_actions(paths.actions_file)[0].guided_drafting is True
+    assert (
+        load_actions(paths.actions_file)[0].recipient_audience
+        == "customer_client"
+    )
 
 
 def test_action_settings_restores_recommended_voice_wording(
@@ -1566,6 +2117,7 @@ def test_defaults_style_uses_compact_help_icons_for_explanations(
     for help_button in (
         dialog.resulting_text_length_help,
         dialog.resulting_text_formatting_help,
+        dialog.title_subject_help,
         dialog.writing_block_help,
         dialog.natural_voice_help,
         dialog.guided_drafting_help,
@@ -1677,6 +2229,27 @@ def test_first_run_setup_tests_launcher_shortcut_and_explains_scope(qtbot):
     assert "Summarise" in wizard.hotkey_status.text()
 
 
+def test_first_run_setup_has_explicit_readable_dark_appearance(qtbot):
+    wizard = FirstRunSetupWizard(
+        "Ctrl+Alt+Space",
+        lambda _hotkey: True,
+        theme="dark",
+    )
+    qtbot.addWidget(wizard)
+    wizard.show()
+    qtbot.wait(1)
+
+    style = wizard.styleSheet()
+    assert wizard.resolved_theme == "dark"
+    assert "QWizard, QWizardPage" in style
+    assert "background: #17191e" in style
+    assert "QWizard QLabel { color: #f4f5f7; }" in style
+    assert "QLabel#setupSteps" in style
+    assert "color: #d9e2ff" in style
+    assert "QPushButton:default" in style
+    assert "background-color: #17191e" in wizard.native_header_style
+
+
 def test_first_run_setup_is_saved_and_reloads_hotkeys(tmp_path, monkeypatch):
     paths = AppPaths.discover(tmp_path)
     paths.ensure()
@@ -1685,7 +2258,7 @@ def test_first_run_setup_is_saved_and_reloads_hotkeys(tmp_path, monkeypatch):
     events: list[str] = []
 
     class FakeWizard:
-        def __init__(self, *args):
+        def __init__(self, *args, **kwargs):
             self.start_with_windows = SimpleNamespace(
                 isChecked=lambda: True
             )
@@ -1758,7 +2331,7 @@ def test_configuration_can_reopen_the_first_use_setup_guide(
     qtbot.addWidget(dialog)
 
     class FakeWizard:
-        def __init__(self, *args):
+        def __init__(self, *args, **kwargs):
             self.start_with_windows = SimpleNamespace(
                 isChecked=lambda: True
             )
@@ -1808,6 +2381,9 @@ def test_action_creation_wizard_builds_and_validates_an_action(qtbot, tmp_path):
     wizard.natural_voice.setCurrentIndex(
         wizard.natural_voice.findData("always")
     )
+    wizard.recipient_audience.setCurrentIndex(
+        wizard.recipient_audience.findData("public_online")
+    )
 
     action = wizard.action("make-diplomatic")
 
@@ -1818,6 +2394,7 @@ def test_action_creation_wizard_builds_and_validates_an_action(qtbot, tmp_path):
     assert action.show_on_home is True
     assert action.guided_drafting is True
     assert action.natural_voice == "always"
+    assert action.recipient_audience == "public_online"
 
     wizard.sample_text.setPlainText("This example is difficult to read.")
     wizard._preview_action()
@@ -1839,6 +2416,75 @@ def test_action_creation_wizard_builds_and_validates_an_action(qtbot, tmp_path):
     wizard.hotkey.clear_hotkey()
     assert wizard.hotkey_is_available is True
     assert "No shortcut assigned" in wizard.hotkey_status.text()
+
+
+def test_action_creation_wizard_is_readable_and_accessible_in_both_themes(
+    qtbot,
+    tmp_path,
+):
+    source = WritingAction(
+        "reply",
+        "Draft reply",
+        ("reply",),
+        "Write a useful reply to the selected text.",
+    )
+
+    for theme, background, foreground, field_background, subtitle in (
+        ("light", "#f5f7fa", "#202631", "#ffffff", "#4b5563"),
+        ("dark", "#17191e", "#f4f5f7", "#22252c", "#d2d7e0"),
+    ):
+        wizard = ActionCreationWizard(
+            source,
+            ActionIconProvider(tmp_path),
+            mode="duplicate",
+            theme=theme,
+        )
+        qtbot.addWidget(wizard)
+        wizard.show()
+        qtbot.wait(1)
+
+        style = wizard.styleSheet()
+        assert wizard.resolved_theme == theme
+        assert "QWizard, QWizardPage" in style
+        assert f"background: {background}" in style
+        assert f"QWizard QLabel {{ color: {foreground}; }}" in style
+        assert f"background: {field_background}" in style
+        assert f"QLabel#qt_wizard_subtitle {{ color: {subtitle}; }}" in style
+        assert wizard.palette().color(
+            QPalette.ColorRole.WindowText
+        ).name() == foreground
+        assert wizard.accessibleName() == "Duplicate writing action"
+        assert "Current step: Name the copy" in wizard.accessibleDescription()
+        assert wizard.currentPage().accessibleName() == "Name the copy"
+        assert wizard.folder.accessibleName() == "Writing action folder"
+        assert wizard.instruction.accessibleName() == (
+            "Writing action instruction"
+        )
+        assert f"background-color: {background}" in (
+            wizard.native_header_style
+        )
+        wizard.close()
+
+
+def test_action_creation_wizard_uses_windows_palette_in_high_contrast(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        settings_ui_module,
+        "system_high_contrast_enabled",
+        lambda: True,
+    )
+    wizard = ActionCreationWizard(
+        WritingAction("edit", "Edit", (), "Improve the selected text."),
+        ActionIconProvider(tmp_path),
+        theme="dark",
+    )
+    qtbot.addWidget(wizard)
+
+    assert "color: palette(window-text)" in wizard.styleSheet()
+    assert "background-color: palette(window)" in wizard.styleSheet()
 
 
 def test_action_settings_add_and_duplicate_use_the_guided_wizard(
@@ -1892,6 +2538,163 @@ def test_action_settings_add_and_duplicate_use_the_guided_wizard(
     assert dialog.actions[1].name == "Edit copy"
     assert dialog.actions[1].hotkey is None
     assert calls[1] == ("duplicate", "edit-copy")
+
+
+def test_action_settings_passes_selected_theme_to_action_wizard(
+    qtbot,
+    tmp_path,
+):
+    dialog = ActionSettingsDialog(
+        [WritingAction("edit", "Edit", (), "Improve this.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+        AppSettings(theme="dark"),
+    )
+    qtbot.addWidget(dialog)
+
+    wizard = dialog._action_wizard(dialog.actions[0], "duplicate")
+    qtbot.addWidget(wizard)
+
+    assert wizard.theme == "dark"
+    assert wizard.resolved_theme == "dark"
+
+
+def test_action_settings_folder_delete_requires_confirmation_and_is_recursive(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
+    actions = [
+        WritingAction(
+            "reply",
+            "Reply",
+            (),
+            "Write a reply.",
+            folder="Replies",
+        ),
+        WritingAction(
+            "customer-reply",
+            "Customer reply",
+            (),
+            "Reply to the customer.",
+            folder="Replies/Customer",
+        ),
+        WritingAction(
+            "vip-reply",
+            "VIP reply",
+            (),
+            "Reply to the VIP customer.",
+            folder="Replies/Customer/VIP",
+        ),
+        WritingAction(
+            "report",
+            "Report",
+            (),
+            "Write a report.",
+            folder="Reports",
+        ),
+    ]
+    settings = AppSettings(
+        folder_icons={
+            "Replies": "lucide:messages-square",
+            "Replies/Customer": "lucide:message-circle-reply",
+            "Replies/Customer/VIP": "lucide:star",
+            "Reports": "lucide:file-pen-line",
+        }
+    )
+    dialog = ActionSettingsDialog(
+        actions,
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+        settings,
+    )
+    qtbot.addWidget(dialog)
+    replies_folder = dialog.action_list.topLevelItem(0)
+    assert replies_folder.data(0, dialog.ITEM_KIND_ROLE) == "folder"
+    assert replies_folder.data(0, Qt.ItemDataRole.UserRole) == "Replies"
+    dialog.action_list.setCurrentItem(replies_folder)
+
+    assert dialog.delete_button.isEnabled() is True
+    assert dialog.delete_button.text() == "Delete folder"
+    assert "its writing actions" in dialog.delete_button.accessibleName()
+    confirmations: list[tuple[str, int, int]] = []
+    monkeypatch.setattr(
+        dialog,
+        "_confirm_delete_folder",
+        lambda folder, action_count, nested_count: (
+            confirmations.append((folder, action_count, nested_count))
+            or False
+        ),
+    )
+
+    dialog._delete_action()
+
+    assert confirmations == [("Replies", 3, 2)]
+    assert dialog.actions == actions
+    assert dialog.folder_icons == settings.folder_icons
+    assert dialog.has_unsaved_changes() is False
+
+    monkeypatch.setattr(
+        dialog,
+        "_confirm_delete_folder",
+        lambda *_args: True,
+    )
+    dialog._delete_action()
+
+    assert [action.id for action in dialog.actions] == ["report"]
+    assert dialog.folder_icons == {
+        "Reports": "lucide:file-pen-line",
+    }
+    assert dialog.selected_folder == "Reports"
+    assert dialog.has_unsaved_changes() is True
+    assert [
+        dialog.folder_combo.itemText(index)
+        for index in range(dialog.folder_combo.count())
+    ] == ["", "Reports"]
+
+
+def test_folder_delete_confirmation_reports_counts_and_is_accessible(
+    qtbot,
+    tmp_path,
+):
+    dialog = ActionSettingsDialog(
+        [
+            WritingAction(
+                "reply",
+                "Reply",
+                (),
+                "Write a reply.",
+                folder="Replies",
+            )
+        ],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+        AppSettings(theme="light"),
+    )
+    qtbot.addWidget(dialog)
+
+    message = dialog._folder_delete_confirmation_message(
+        "Replies",
+        3,
+        2,
+    )
+    qtbot.addWidget(message)
+
+    assert message.windowTitle() == "Delete writing action folder?"
+    assert '"Replies"' in message.text()
+    assert "3 writing actions" in message.informativeText()
+    assert "2 nested folders" in message.informativeText()
+    assert message.accessibleName() == (
+        "Confirm writing action folder deletion"
+    )
+    assert message.delete_folder_button.text() == (
+        "Delete folder and actions"
+    )
+    assert message.defaultButton().text() == "Cancel"
+    assert "#ffffff" in message.styleSheet()
 
 
 def test_hotkeys_tab_edits_clears_and_reports_clashes(qtbot, tmp_path):
@@ -2057,11 +2860,17 @@ def test_action_settings_can_load_shipped_starter_set(
 
     dialog._load_starter_set()
 
-    assert len(dialog.actions) == 26
-    assert dialog.actions[0].id == "edit-improve"
+    assert [action.id for action in dialog.actions] == [
+        "edit-improve",
+        "proofread",
+        "shorten",
+        "draft-reply",
+    ]
+    assert all(action.folder == "Essentials" for action in dialog.actions)
+    assert dialog.actions[-1].guided_drafting is True
 
 
-def test_action_settings_offers_and_adds_five_builtin_starter_packs(
+def test_action_settings_offers_and_adds_builtin_starter_packs_once(
     qtbot,
     tmp_path,
     monkeypatch,
@@ -2082,10 +2891,34 @@ def test_action_settings_offers_and_adds_five_builtin_starter_packs(
 
     assert [pack.pack_id for pack in dialog.builtin_action_packs] == [
         "editing",
+        "customer-relations",
         "email",
+        "tone-voice",
         "complaints",
         "reports",
         "social-posts",
+        "social-replies",
+        "social-editing",
+        "reviews-feedback",
+        "meetings",
+        "technical-communication",
+        "learning",
+        "career-writing",
+        "replies-arguments",
+        "argument-editing",
+        "summaries-extraction",
+        "draft-from-selection",
+        "decisions-planning",
+    ]
+    assert [
+        action.text() for action in dialog.starter_pack_menu.actions()
+    ] == [
+        "Reply or respond",
+        "Edit or revise",
+        "Draft or create",
+        "Summarise or extract",
+        "Plan or decide",
+        "Explain or learn",
     ]
     reports = next(
         pack for pack in dialog.builtin_action_packs if pack.pack_id == "reports"
@@ -2095,8 +2928,18 @@ def test_action_settings_offers_and_adds_five_builtin_starter_packs(
 
     assert len(dialog.actions) == 5
     assert dialog.actions[1].id == "report-from-notes"
-    assert dialog.actions[1].folder == "Reports"
+    assert dialog.actions[1].folder == "Draft & create/Reports"
+    assert dialog.folder_icons["Draft & create"] == "lucide:file-pen-line"
+    assert dialog.folder_icons["Draft & create/Reports"] == (
+        "lucide:list-checks"
+    )
     assert dialog.has_unsaved_changes() is True
+    assert dialog.starter_pack_actions["reports"].isEnabled() is False
+    assert dialog.starter_pack_actions["reports"].text().endswith("(added)")
+
+    dialog._add_builtin_action_pack(reports)
+
+    assert len(dialog.actions) == 5
 
 
 def test_action_settings_imports_and_exports_readable_action_packs(
@@ -2202,15 +3045,53 @@ def test_application_profile_dialog_edits_useful_writing_defaults(
         editor.audience.findData("customer_client")
     )
     editor.length.setCurrentIndex(editor.length.findData("short"))
+    editor.title_subject.setCurrentIndex(
+        editor.title_subject.findData("subject")
+    )
     editor.auto_submit.setCurrentIndex(editor.auto_submit.findData("on"))
+    editor.privacy_preview.setCurrentIndex(
+        editor.privacy_preview.findData("off")
+    )
+    editor.return_mode.setCurrentIndex(
+        editor.return_mode.findData("review")
+    )
+    editor.response_wait.setCurrentIndex(
+        editor.response_wait.findData("indefinite")
+    )
     editor.project_name.setText("Email writing")
 
     profile = editor.profile()
 
     assert profile.recipient_audience == "customer_client"
     assert profile.resulting_text_length == "short"
+    assert profile.title_subject == "subject"
     assert profile.auto_submit == "on"
+    assert profile.privacy_preview == "off"
+    assert profile.return_mode == "review"
+    assert profile.response_wait == "indefinite"
     assert profile.project_name == "Email writing"
+    assert "ChatGPT may take seconds or several minutes" in (
+        editor.response_wait_help.accessibleDescription()
+    )
+    assert "width='340'" in editor.response_wait_help.toolTip()
+
+
+def test_configuration_saves_privacy_preview_default(qtbot, tmp_path):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        paths,
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+        AppSettings(privacy_preview_enabled=True),
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.privacy_preview_default.setChecked(False)
+
+    assert dialog._save() is True
+    assert load_settings(paths.settings_file).privacy_preview_enabled is False
 
 
 def test_double_clicking_application_opens_its_profile_editor(
@@ -2326,6 +3207,26 @@ def test_configuration_creates_one_backup_file(qtbot, tmp_path, monkeypatch):
     assert created == [(paths, tmp_path / "portable-backup.zip")]
 
 
+def test_backup_and_restore_buttons_are_together(qtbot, tmp_path):
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.create_backup_button.parent() is (
+        dialog.restore_backup_button.parent()
+    )
+    assert dialog.backup_actions_layout.indexOf(
+        dialog.create_backup_button
+    ) == 0
+    assert dialog.backup_actions_layout.indexOf(
+        dialog.restore_backup_button
+    ) == 1
+
+
 def test_configuration_restore_confirms_reloads_and_closes(
     qtbot,
     tmp_path,
@@ -2382,3 +3283,172 @@ def test_configuration_restore_confirms_reloads_and_closes(
     assert restored == [(paths, archive)]
     assert restore_signal.count() == 1
     assert dialog.result() == QDialog.DialogCode.Accepted
+
+
+def test_configuration_reset_confirms_resets_and_closes(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
+    paths = AppPaths.discover(tmp_path)
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        paths,
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+    safety = tmp_path / "PromptMeld-pre-reset.zip"
+    resets = []
+    monkeypatch.setattr(
+        dialog,
+        "_confirm_configuration_reset",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        settings_ui_module,
+        "reset_configuration_to_defaults",
+        lambda supplied_paths: (
+            resets.append(supplied_paths)
+            or SimpleNamespace(safety_backup=safety)
+        ),
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
+    reset_signal = QSignalSpy(dialog.configuration_reset)
+
+    qtbot.mouseClick(
+        dialog.reset_configuration_button,
+        Qt.MouseButton.LeftButton,
+    )
+
+    assert resets == [paths]
+    assert reset_signal.count() == 1
+    assert dialog.result() == QDialog.DialogCode.Accepted
+
+
+def test_configuration_reset_confirmation_is_readable_in_both_themes(
+    qtbot,
+    tmp_path,
+):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    paths.settings_file.write_text("{}", encoding="utf-8")
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        paths,
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+        AppSettings(theme="light"),
+    )
+    qtbot.addWidget(dialog)
+
+    for theme, expected_body, expected_reset in (
+        ("light", "#344052", "#a32626"),
+        ("dark", "#e1e5ee", "#a32626"),
+    ):
+        dialog.theme.setCurrentIndex(dialog.theme.findData(theme))
+        message = dialog._configuration_reset_message()
+        qtbot.addWidget(message)
+        stylesheet = message.styleSheet()
+        assert expected_body in stylesheet
+        assert expected_reset in stylesheet
+        assert message.minimumWidth() >= 560
+        assert message.reset_button.objectName() == "resetConfigurationButton"
+        message.close()
+
+
+def test_all_message_box_types_are_readable_in_both_themes(
+    qtbot,
+    tmp_path,
+):
+    dialog = ActionSettingsDialog(
+        [WritingAction("one", "One", (), "First.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+        AppSettings(theme="light"),
+    )
+    qtbot.addWidget(dialog)
+    app = QApplication.instance()
+    original_stylesheet = app.styleSheet()
+    try:
+        for theme, expected_background, expected_text, expected_detail in (
+            ("light", "#ffffff", "#111827", "#344052"),
+            ("dark", "#17191e", "#ffffff", "#e1e5ee"),
+        ):
+            dialog.theme.setCurrentIndex(dialog.theme.findData(theme))
+            for icon in (
+                QMessageBox.Icon.Information,
+                QMessageBox.Icon.Warning,
+                QMessageBox.Icon.Critical,
+                QMessageBox.Icon.Question,
+            ):
+                message = QMessageBox(dialog)
+                qtbot.addWidget(message)
+                message.setIcon(icon)
+                message.setText("Add the Reports starter pack?")
+                message.setInformativeText(
+                    "The pack description and confirmation must remain readable."
+                )
+                message.setStandardButtons(
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No
+                )
+                message.show()
+                qtbot.wait(1)
+
+                body = message.findChild(QLabel, "qt_msgbox_label")
+                detail = message.findChild(
+                    QLabel,
+                    "qt_msgbox_informativelabel",
+                )
+                assert message.palette().color(
+                    message.backgroundRole()
+                ).name() == expected_background
+                assert body.palette().color(
+                    body.foregroundRole()
+                ).name() == expected_text
+                assert detail.palette().color(
+                    detail.foregroundRole()
+                ).name() == expected_detail
+                assert all(
+                    button.palette().color(button.foregroundRole()).name()
+                    == "#ffffff"
+                    for button in message.buttons()
+                )
+                message.close()
+    finally:
+        app.setStyleSheet(original_stylesheet)
+
+
+def test_launcher_owned_confirmations_keep_readable_dialog_colours(
+    qtbot,
+    tmp_path,
+):
+    registry = ActionRegistry(
+        [WritingAction("one", "One", (), "First.")],
+        UsageTracker(tmp_path / "usage.json"),
+    )
+    for theme, background, foreground in (
+        ("light", "#ffffff", "#111827"),
+        ("dark", "#17191e", "#ffffff"),
+    ):
+        popup = LauncherPopup(registry, theme=theme)
+        qtbot.addWidget(popup)
+        message = QMessageBox(popup)
+        qtbot.addWidget(message)
+        message.setIcon(QMessageBox.Icon.Question)
+        message.setText("Submit this request?")
+        message.setStandardButtons(
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.Cancel
+        )
+        message.show()
+        qtbot.wait(1)
+
+        body = message.findChild(QLabel, "qt_msgbox_label")
+        assert message.palette().color(
+            message.backgroundRole()
+        ).name() == background
+        assert body.palette().color(body.foregroundRole()).name() == foreground
+        message.close()

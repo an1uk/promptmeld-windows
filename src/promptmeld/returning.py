@@ -7,8 +7,9 @@ from .models import AppSettings, ApplicationProfile, CapturedSelection
 
 APPLICATION_RETURN_MODE_OPTIONS = (
     ("default", "Use overall defaults"),
-    ("replace", "Replace the original selection"),
-    ("copy", "Copy the result only"),
+    ("replace", "Apply automatically when safe"),
+    ("review", "Notify and let me choose"),
+    ("copy", "Notify and copy to the clipboard"),
     ("leave", "Leave the result in ChatGPT"),
 )
 APPLICATION_RETURN_MODE_VALUES = tuple(
@@ -21,6 +22,18 @@ APPLICATION_TOGGLE_OPTIONS = (
 )
 APPLICATION_TOGGLE_VALUES = tuple(
     value for value, _label in APPLICATION_TOGGLE_OPTIONS
+)
+APPLICATION_RESPONSE_WAIT_OPTIONS = (
+    ("inherit", "Use overall default (5 minutes)"),
+    ("60", "1 minute"),
+    ("180", "3 minutes"),
+    ("300", "5 minutes"),
+    ("600", "10 minutes"),
+    ("1200", "20 minutes"),
+    ("indefinite", "Wait indefinitely (until cancelled)"),
+)
+APPLICATION_RESPONSE_WAIT_VALUES = tuple(
+    value for value, _label in APPLICATION_RESPONSE_WAIT_OPTIONS
 )
 COMMON_APPLICATIONS = (
     ("Microsoft Word", "winword.exe"),
@@ -37,7 +50,7 @@ COMMON_APPLICATIONS = (
     ("Discord", "discord.exe"),
     ("Mozilla Thunderbird", "thunderbird.exe"),
 )
-RECOMMENDED_APPLICATION_PROFILES = {
+LEGACY_RECOMMENDED_APPLICATION_PROFILES_V2 = {
     # Native editors with dependable selection and paste behaviour.
     "winword.exe": ApplicationProfile(return_mode="replace"),
     "notepad.exe": ApplicationProfile(
@@ -73,6 +86,25 @@ RECOMMENDED_APPLICATION_PROFILES = {
     "msedge.exe": ApplicationProfile(return_mode="copy"),
     "firefox.exe": ApplicationProfile(return_mode="copy"),
 }
+RECOMMENDED_APPLICATION_PROFILES = {
+    **LEGACY_RECOMMENDED_APPLICATION_PROFILES_V2,
+    "winword.exe": ApplicationProfile(
+        return_mode="replace",
+        response_wait="indefinite",
+    ),
+    "chrome.exe": ApplicationProfile(
+        return_mode="copy",
+        response_wait="600",
+    ),
+    "msedge.exe": ApplicationProfile(
+        return_mode="copy",
+        response_wait="600",
+    ),
+    "firefox.exe": ApplicationProfile(
+        return_mode="copy",
+        response_wait="600",
+    ),
+}
 RECOMMENDED_APPLICATION_RETURN_POLICIES = {
     application: profile.return_mode
     for application, profile in RECOMMENDED_APPLICATION_PROFILES.items()
@@ -100,6 +132,7 @@ def application_display_name(executable: str) -> str:
 class ReturnDecision:
     replace_selection: bool = False
     copy_result: bool = False
+    review_result: bool = False
     requested_mode: str = "default"
     application: str = ""
     overridden: bool = False
@@ -107,7 +140,7 @@ class ReturnDecision:
 
     @property
     def wants_generated_text(self) -> bool:
-        return self.replace_selection or self.copy_result
+        return self.replace_selection or self.copy_result or self.review_result
 
     @property
     def summary(self) -> str:
@@ -118,6 +151,8 @@ class ReturnDecision:
             return f"Replace the selection in {target}"
         if self.copy_result:
             return f"Copy the result for {target}"
+        if self.review_result:
+            return f"Notify when the result is ready for {target}"
         return "Leave the result in ChatGPT"
 
 
@@ -129,15 +164,18 @@ class EffectiveApplicationProfile:
     auto_submit_enabled: bool
     temporary_chat_enabled: bool
     natural_voice_enabled: bool
+    privacy_preview_enabled: bool
     guided_drafting_enabled: bool
     writing_block_enabled: bool
     primary_language: str
     resulting_text_length: str
     resulting_text_formatting: str
+    title_subject: str
     editing_strength: str
     preserve_facts: bool
     recipient_audience: str
     project_name: str
+    response_timeout_seconds: float | None
 
 
 def _profile_for_application(
@@ -181,6 +219,7 @@ def resolve_application_profile(
             ("primary_language", profile.primary_language),
             ("resulting_text_length", profile.resulting_text_length),
             ("resulting_text_formatting", profile.resulting_text_formatting),
+            ("title_subject", profile.title_subject),
             ("editing_strength", profile.editing_strength),
             ("preserve_facts", profile.preserve_facts),
             ("natural_voice", profile.natural_voice),
@@ -188,6 +227,8 @@ def resolve_application_profile(
             ("writing_block", profile.writing_block),
             ("auto_submit", profile.auto_submit),
             ("temporary_chat", profile.temporary_chat),
+            ("privacy_preview", profile.privacy_preview),
+            ("response_wait", profile.response_wait),
             ("project_name", profile.project_name),
         )
         if value not in {"", "default", "inherit"}
@@ -207,6 +248,10 @@ def resolve_application_profile(
         natural_voice_enabled=_toggle_value(
             profile.natural_voice,
             settings.natural_voice_enabled,
+        ),
+        privacy_preview_enabled=_toggle_value(
+            profile.privacy_preview,
+            settings.privacy_preview_enabled,
         ),
         guided_drafting_enabled=_toggle_value(
             profile.guided_drafting,
@@ -229,6 +274,11 @@ def resolve_application_profile(
             if profile.resulting_text_formatting == "inherit"
             else profile.resulting_text_formatting
         ),
+        title_subject=(
+            settings.title_subject
+            if profile.title_subject == "inherit"
+            else profile.title_subject
+        ),
         editing_strength=(
             "default"
             if profile.editing_strength == "inherit"
@@ -241,6 +291,15 @@ def resolve_application_profile(
             else profile.recipient_audience
         ),
         project_name=profile.project_name or settings.project_name,
+        response_timeout_seconds=(
+            None
+            if profile.response_wait == "indefinite"
+            else float(
+                300
+                if profile.response_wait == "inherit"
+                else profile.response_wait
+            )
+        ),
     )
 
 
@@ -264,20 +323,31 @@ def resolve_return_decision(
     if requested_mode == "replace":
         replace_selection = True
         copy_result = False
+        review_result = False
+    elif requested_mode == "review":
+        replace_selection = False
+        copy_result = False
+        review_result = True
     elif requested_mode == "copy":
         replace_selection = False
         copy_result = True
+        review_result = False
     elif requested_mode == "leave":
         replace_selection = False
         copy_result = False
+        review_result = False
     else:
         replace_selection = settings.replace_selected_text_enabled
         copy_result = settings.copy_generated_text_enabled
+        review_result = False
 
     fallback_reason = ""
-    if (replace_selection or copy_result) and not settings.auto_submit_enabled:
+    if (
+        replace_selection or copy_result or review_result
+    ) and not settings.auto_submit_enabled:
         replace_selection = False
         copy_result = False
+        review_result = False
         fallback_reason = (
             "Automatic submission is off, so PromptMeld will leave the prompt "
             "ready in ChatGPT. Result return begins only after PromptMeld "
@@ -296,6 +366,7 @@ def resolve_return_decision(
     return ReturnDecision(
         replace_selection=replace_selection,
         copy_result=copy_result,
+        review_result=review_result,
         requested_mode=requested_mode,
         application=application,
         overridden=overridden,

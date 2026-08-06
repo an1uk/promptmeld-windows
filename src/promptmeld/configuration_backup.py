@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import shutil
 import tempfile
 import zipfile
 from dataclasses import dataclass
@@ -9,7 +11,14 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from . import display_version
-from .config import load_actions, load_settings
+from .config import (
+    load_actions,
+    load_default_actions,
+    load_default_settings,
+    load_settings,
+    save_actions,
+    save_settings,
+)
 from .paths import AppPaths
 
 BACKUP_FORMAT = "promptmeld-configuration-backup"
@@ -17,6 +26,7 @@ BACKUP_FORMAT_VERSION = 1
 MANIFEST_NAME = "promptmeld-backup.json"
 MAX_BACKUP_FILES = 512
 MAX_BACKUP_BYTES = 50 * 1024 * 1024
+LOGGER = logging.getLogger(__name__)
 
 
 class ConfigurationBackupError(ValueError):
@@ -36,6 +46,12 @@ class ConfigurationBackupSummary:
 class ConfigurationRestoreResult:
     summary: ConfigurationBackupSummary
     safety_backup: Path
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigurationResetResult:
+    safety_backup: Path
+    removed_icon_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,3 +326,73 @@ def restore_configuration_backup(
             "The restore failed. The previous actions and settings were put back."
         ) from exc
     return ConfigurationRestoreResult(contents.summary, safety_backup)
+
+
+def reset_configuration_to_defaults(
+    paths: AppPaths,
+) -> ConfigurationResetResult:
+    """Restore packaged defaults after creating a recoverable safety backup."""
+
+    try:
+        default_actions = load_default_actions()
+        default_settings = load_default_settings()
+    except (OSError, ValueError) as exc:
+        raise ConfigurationBackupError(
+            f"The packaged default configuration cannot be loaded: {exc}"
+        ) from exc
+    if default_settings.first_run_setup_completed:
+        raise ConfigurationBackupError(
+            "The packaged settings do not enable first-use setup after reset."
+        )
+
+    paths.ensure()
+    backups_dir = paths.data_dir / "backups"
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    safety_backup = backups_dir / f"PromptMeld-pre-reset-{stamp}.zip"
+    create_configuration_backup(paths, safety_backup)
+
+    original_actions = paths.actions_file.read_bytes()
+    original_settings = paths.settings_file.read_bytes()
+    icons_dir = paths.data_dir / "icons"
+    staged_icons = paths.data_dir / f".icons-pre-reset-{stamp}"
+    removed_icon_count = (
+        sum(
+            1
+            for item in icons_dir.rglob("*")
+            if item.is_file() and not item.is_symlink()
+        )
+        if icons_dir.is_dir()
+        else 0
+    )
+
+    try:
+        if icons_dir.exists():
+            os.replace(icons_dir, staged_icons)
+        save_actions(paths.actions_file, default_actions)
+        save_settings(paths.settings_file, default_settings)
+        load_actions(paths.actions_file)
+        reset_settings = load_settings(paths.settings_file)
+        if reset_settings.first_run_setup_completed:
+            raise ConfigurationBackupError(
+                "The reset settings did not enable first-use setup."
+            )
+    except Exception as exc:
+        _write_replacement(paths.actions_file, original_actions)
+        _write_replacement(paths.settings_file, original_settings)
+        if staged_icons.exists():
+            if icons_dir.exists():
+                shutil.rmtree(icons_dir)
+            os.replace(staged_icons, icons_dir)
+        raise ConfigurationBackupError(
+            "The reset failed. The previous configuration was put back."
+        ) from exc
+
+    if staged_icons.exists():
+        try:
+            shutil.rmtree(staged_icons)
+        except OSError:
+            LOGGER.warning(
+                "Inactive custom icons could not be removed after reset",
+                exc_info=True,
+            )
+    return ConfigurationResetResult(safety_backup, removed_icon_count)

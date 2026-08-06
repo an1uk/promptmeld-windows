@@ -30,14 +30,21 @@ from .models import (
     RECIPIENT_AUDIENCE_OPTIONS,
     RESULTING_TEXT_FORMATTING_OPTIONS,
     RESULTING_TEXT_LENGTH_OPTIONS,
+    TITLE_SUBJECT_OPTIONS,
 )
 from .returning import EffectiveApplicationProfile, ReturnDecision
-from .theme import resolve_theme
+from .suggestions import SuggestionContext, classify_suggestion_context
+from .theme import (
+    high_contrast_stylesheet,
+    message_box_stylesheet,
+    resolve_theme,
+    system_high_contrast_enabled,
+)
 
 
 class LauncherPopup(QWidget):
-    action_requested = Signal(str, str, str, bool, str)
-    custom_requested = Signal(str, str, str, bool, str)
+    action_requested = Signal(str, str, str, bool, str, int)
+    custom_requested = Signal(str, str, str, bool, str, int)
     natural_voice_changed = Signal(bool)
     auto_submit_changed = Signal(bool)
     replace_selected_text_changed = Signal(bool)
@@ -46,6 +53,7 @@ class LauncherPopup(QWidget):
     resulting_text_length_changed = Signal(str)
     writing_block_changed = Signal(bool)
     resulting_text_formatting_changed = Signal(str)
+    title_subject_changed = Signal(str)
     ITEM_KIND_ROLE = Qt.ItemDataRole.UserRole + 1
 
     def __init__(
@@ -63,6 +71,7 @@ class LauncherPopup(QWidget):
         writing_block_enabled: bool = False,
         resulting_text_formatting: str = "default",
         replace_selected_text_enabled: bool = False,
+        title_subject: str = "none",
     ):
         super().__init__()
         self.registry = registry
@@ -79,13 +88,18 @@ class LauncherPopup(QWidget):
         self.resulting_text_length_value = resulting_text_length
         self.writing_block_enabled = writing_block_enabled
         self.resulting_text_formatting_value = resulting_text_formatting
+        self.title_subject_value = title_subject
         self.editing_strength_value = "default"
         self.preserve_facts_enabled = True
         self.recipient_audience_value = "unspecified"
+        self.audience_explicitly_selected = False
+        self.alternative_count_value = 1
         self.application_editing_strength_default = "default"
         self.application_preserve_facts_default = True
         self.application_audience_default = "unspecified"
         self.application_overridden_fields: frozenset[str] = frozenset()
+        self.suggestion_context: SuggestionContext | None = None
+        self.suggestion_reasons: dict[str, tuple[str, ...]] = {}
         self.theme = theme
         self.current_folder = ""
         self._dragging = False
@@ -163,6 +177,15 @@ class LauncherPopup(QWidget):
         self.source_context.hide()
         layout.addWidget(self.source_context)
 
+        self.suggestion_context_label = QLabel()
+        self.suggestion_context_label.setObjectName("hint")
+        self.suggestion_context_label.setWordWrap(True)
+        self.suggestion_context_label.setAccessibleName(
+            "Local action suggestion context"
+        )
+        self.suggestion_context_label.hide()
+        layout.addWidget(self.suggestion_context_label)
+
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search writing actions…")
         self.search.setClearButtonEnabled(True)
@@ -192,13 +215,49 @@ class LauncherPopup(QWidget):
             "Use arrow keys to choose an action and Enter to run it."
         )
         layout.addWidget(self.list, 1)
+        selected_action_row = QHBoxLayout()
+        selected_action_hint = QLabel(
+            "Select an action, then send it or press Enter."
+        )
+        selected_action_hint.setObjectName("hint")
+        self.send_selected_action = QPushButton("Send selected action")
+        self.send_selected_action.setAccessibleName(
+            "Send selected writing action"
+        )
+        self.send_selected_action.setToolTip(
+            "Start the request using the selected writing action."
+        )
+        self.send_selected_action.setEnabled(False)
+        selected_action_row.addWidget(selected_action_hint)
+        selected_action_row.addStretch(1)
+        selected_action_row.addWidget(self.send_selected_action)
+        layout.addLayout(selected_action_row)
+
+        self.options_toggle = QPushButton("Request options and custom instruction")
+        self.options_toggle.setCheckable(True)
+        self.options_toggle.setChecked(False)
+        self.options_toggle.setAccessibleName(
+            "Show request options and custom instruction"
+        )
+        self.options_toggle.setToolTip(
+            "Show remembered choices, output and guidance controls, additional "
+            "context, and the one-off instruction field."
+        )
+        layout.addWidget(self.options_toggle)
+        self.options_panel = QFrame()
+        self.options_panel.setObjectName("launcherOptionsPanel")
+        options_layout = QVBoxLayout(self.options_panel)
+        options_layout.setContentsMargins(0, 0, 0, 0)
+        options_layout.setSpacing(10)
+        self.options_panel.hide()
+        layout.addWidget(self.options_panel)
 
         self.remembered_options_label = QLabel(
             "Remembered choices (unless an application profile overrides them)"
         )
         self.remembered_options_label.setObjectName("hint")
         self.remembered_options_label.setWordWrap(True)
-        layout.addWidget(self.remembered_options_label)
+        options_layout.addWidget(self.remembered_options_label)
 
         self.natural_voice = QCheckBox("Preserve my natural voice")
         self.natural_voice.setChecked(self.natural_voice_enabled)
@@ -252,14 +311,16 @@ class LauncherPopup(QWidget):
         option_row.addWidget(self.guided_drafting)
         option_row.addStretch(1)
         option_row.addWidget(self.auto_submit)
-        layout.addLayout(option_row)
+        options_layout.addLayout(option_row)
         temporary_row = QHBoxLayout()
         temporary_row.addWidget(self.temporary_chat)
         temporary_row.addStretch(1)
         temporary_row.addWidget(self.replace_selected_text)
-        layout.addLayout(temporary_row)
+        options_layout.addLayout(temporary_row)
         self.setTabOrder(self.search, self.list)
-        self.setTabOrder(self.list, self.natural_voice)
+        self.setTabOrder(self.list, self.send_selected_action)
+        self.setTabOrder(self.send_selected_action, self.options_toggle)
+        self.setTabOrder(self.options_toggle, self.natural_voice)
         self.setTabOrder(self.natural_voice, self.guided_drafting)
         self.setTabOrder(self.guided_drafting, self.auto_submit)
         self.setTabOrder(self.auto_submit, self.temporary_chat)
@@ -297,6 +358,20 @@ class LauncherPopup(QWidget):
             )
             self.formatting_actions[value] = action
 
+        title_subject_menu = self.output_menu.addMenu("Title or subject")
+        self.title_subject_menu_action = title_subject_menu.menuAction()
+        self.title_subject_action_labels = dict(TITLE_SUBJECT_OPTIONS)
+        self.title_subject_actions = {}
+        for value, label in TITLE_SUBJECT_OPTIONS:
+            action = title_subject_menu.addAction(label)
+            action.setData(value)
+            action.triggered.connect(
+                lambda _checked=False, selected=value: (
+                    self._title_subject_selected(selected)
+                )
+            )
+            self.title_subject_actions[value] = action
+
         writing_block_menu = self.output_menu.addMenu(
             "Copyable writing block"
         )
@@ -320,18 +395,20 @@ class LauncherPopup(QWidget):
         self.output_button = QPushButton("Remembered output")
         self.output_button.setMenu(self.output_menu)
         self.output_button.setToolTip(
-            "Configure resulting text length, formatting, and writing blocks."
+            "Configure resulting text length, formatting, an optional title "
+            "or subject line, and writing blocks."
         )
         self.set_resulting_text_length(self.resulting_text_length_value)
         self.set_resulting_text_formatting(
             self.resulting_text_formatting_value
         )
         self.set_writing_block_enabled(self.writing_block_enabled)
+        self.set_title_subject(self.title_subject_value)
         output_row = QHBoxLayout()
         output_row.addWidget(self.output_summary)
         output_row.addStretch(1)
         output_row.addWidget(self.output_button)
-        layout.addLayout(output_row)
+        options_layout.addLayout(output_row)
 
         self.guidance_menu = QMenu(self)
         editing_menu = self.guidance_menu.addMenu("Editing strength")
@@ -381,28 +458,49 @@ class LauncherPopup(QWidget):
             )
             self.audience_actions[value] = action
 
+        alternatives_menu = self.guidance_menu.addMenu(
+            "Number of alternatives"
+        )
+        self.alternatives_menu_action = alternatives_menu.menuAction()
+        self.alternative_action_labels = {
+            1: "One result",
+            2: "Two alternatives",
+            3: "Three alternatives",
+        }
+        self.alternative_actions = {}
+        for count, label in self.alternative_action_labels.items():
+            action = alternatives_menu.addAction(label)
+            action.setData(count)
+            action.triggered.connect(
+                lambda _checked=False, selected=count: (
+                    self._alternative_count_selected(selected)
+                )
+            )
+            self.alternative_actions[count] = action
+
         self.guidance_summary = QLabel()
         self.guidance_summary.setObjectName("hint")
         self.guidance_button = QPushButton("Change this request")
         self.guidance_button.setMenu(self.guidance_menu)
         self.guidance_button.setToolTip(
             "Choose editing strength, factual protection, and the intended "
-            "recipient or audience for this request."
+            "recipient or audience, or request two or three alternatives."
         )
         self.set_editing_strength(self.editing_strength_value)
         self.set_preserve_facts_enabled(self.preserve_facts_enabled)
         self.set_recipient_audience(self.recipient_audience_value)
+        self.set_alternative_count(self.alternative_count_value)
         guidance_row = QHBoxLayout()
         guidance_row.addWidget(self.guidance_summary)
         guidance_row.addStretch(1)
         guidance_row.addWidget(self.guidance_button)
-        layout.addLayout(guidance_row)
+        options_layout.addLayout(guidance_row)
 
         additional_label = QLabel(
             "This request: intent or additional context (optional)"
         )
         additional_label.setObjectName("hint")
-        layout.addWidget(additional_label)
+        options_layout.addWidget(additional_label)
         self.additional_information = QPlainTextEdit()
         self.additional_information.setPlaceholderText(
             "e.g. Make clear that I can collect on Friday"
@@ -414,28 +512,38 @@ class LauncherPopup(QWidget):
         )
         self.additional_information.setMinimumHeight(50)
         self.additional_information.setMaximumHeight(62)
-        layout.addWidget(self.additional_information)
+        options_layout.addWidget(self.additional_information)
 
         custom_label = QLabel("Or use a one-off instruction")
         custom_label.setObjectName("hint")
-        layout.addWidget(custom_label)
+        options_layout.addWidget(custom_label)
 
         custom_row = QHBoxLayout()
         self.custom = QLineEdit()
         self.custom.setPlaceholderText("e.g. Make this more diplomatic")
-        self.custom_send = QPushButton("Send")
+        self.custom_send = QPushButton("Use instruction")
         self.custom_send.setDefault(False)
+        self.custom_send.setEnabled(False)
+        self.custom_send.setToolTip(
+            "Start the request using the one-off instruction entered here."
+        )
         custom_row.addWidget(self.custom, 1)
         custom_row.addWidget(self.custom_send)
-        layout.addLayout(custom_row)
+        options_layout.addLayout(custom_row)
 
         self.search.textChanged.connect(self.refresh)
         self.search.returnPressed.connect(self._run_current)
         self.custom.returnPressed.connect(self._run_custom)
         self.custom_send.clicked.connect(self._run_custom)
+        self.custom.textChanged.connect(self._custom_text_changed)
         self.close_button.clicked.connect(self.hide)
         self.list.itemClicked.connect(self._open_folder_item)
         self.list.itemDoubleClicked.connect(self._run_action_item)
+        self.list.currentItemChanged.connect(
+            self._selected_action_changed
+        )
+        self.send_selected_action.clicked.connect(self._run_current)
+        self.options_toggle.toggled.connect(self._set_options_expanded)
         self.natural_voice.toggled.connect(self._natural_voice_toggled)
         self.auto_submit.toggled.connect(self._auto_submit_toggled)
         self.replace_selected_text.toggled.connect(
@@ -443,6 +551,9 @@ class LauncherPopup(QWidget):
         )
         self.temporary_chat.toggled.connect(self._temporary_chat_toggled)
         self.guided_drafting.toggled.connect(self._guided_drafting_toggled)
+        self.setTabOrder(self.replace_selected_text, self.custom)
+        self.setTabOrder(self.custom, self.custom_send)
+        self.setTabOrder(self.custom_send, self.close_button)
         for drag_handle in self._drag_handles:
             drag_handle.installEventFilter(self)
             drag_handle.setCursor(Qt.CursorShape.OpenHandCursor)
@@ -451,8 +562,10 @@ class LauncherPopup(QWidget):
             app.styleHints().colorSchemeChanged.connect(
                 self._system_colour_scheme_changed
             )
+            app.paletteChanged.connect(self._system_appearance_changed)
         self._apply_style()
         self._update_replace_selected_text_availability()
+        self._set_options_expanded(False)
         self.refresh()
 
     def set_registry(
@@ -468,6 +581,7 @@ class LauncherPopup(QWidget):
         writing_block_enabled: bool | None = None,
         resulting_text_formatting: str | None = None,
         replace_selected_text_enabled: bool | None = None,
+        title_subject: str | None = None,
     ) -> None:
         self.registry = registry
         if home_most_used_count is not None:
@@ -492,6 +606,8 @@ class LauncherPopup(QWidget):
             self.set_replace_selected_text_enabled(
                 replace_selected_text_enabled
             )
+        if title_subject is not None:
+            self.set_title_subject(title_subject)
         self.refresh()
 
     def set_natural_voice_enabled(self, enabled: bool) -> None:
@@ -526,7 +642,23 @@ class LauncherPopup(QWidget):
         source_app: str,
         decision: ReturnDecision,
         effective: EffectiveApplicationProfile | None = None,
+        selected_text: str = "",
     ) -> None:
+        # A new capture should open at its best suggestion rather than retain
+        # the row selected for the previous capture (or initial empty state).
+        self.list.setCurrentRow(-1)
+        self.suggestion_context = classify_suggestion_context(
+            selected_text,
+            source_app,
+        )
+        self.suggestion_context_label.setText(
+            "Local suggestions use: " + self.suggestion_context.summary
+        )
+        self.suggestion_context_label.setAccessibleDescription(
+            "Only the application, text type, and word-count band are kept "
+            "for ranking. Selected text is not stored or transmitted."
+        )
+        self.suggestion_context_label.show()
         self.application_policy_override = decision.overridden
         self.application_overridden_fields = (
             effective.overridden_fields if effective is not None else frozenset()
@@ -577,6 +709,7 @@ class LauncherPopup(QWidget):
             self.set_resulting_text_formatting(
                 effective.resulting_text_formatting
             )
+            self.set_title_subject(effective.title_subject)
             self.set_writing_block_enabled(effective.writing_block_enabled)
             self.application_editing_strength_default = (
                 effective.editing_strength
@@ -600,6 +733,7 @@ class LauncherPopup(QWidget):
                     {
                         "resulting_text_length",
                         "resulting_text_formatting",
+                        "title_subject",
                         "writing_block",
                     }
                 )
@@ -668,6 +802,20 @@ class LauncherPopup(QWidget):
         )
         self._update_output_summary()
 
+    def set_title_subject(self, value: str) -> None:
+        selected = value if value in self.title_subject_actions else "none"
+        self.title_subject_value = selected
+        self._mark_selected_output_action(
+            self.title_subject_actions,
+            self.title_subject_action_labels,
+            selected,
+        )
+        self.title_subject_menu_action.setText(
+            "Title or subject: "
+            f"{self.title_subject_action_labels[selected]}"
+        )
+        self._update_output_summary()
+
     def set_editing_strength(self, value: str) -> None:
         selected = value if value in self.editing_actions else "default"
         self.editing_strength_value = selected
@@ -709,6 +857,20 @@ class LauncherPopup(QWidget):
         )
         self._update_guidance_summary()
 
+    def set_alternative_count(self, value: int) -> None:
+        selected = value if value in self.alternative_actions else 1
+        self.alternative_count_value = selected
+        self._mark_selected_output_action(
+            self.alternative_actions,
+            self.alternative_action_labels,
+            selected,
+        )
+        self.alternatives_menu_action.setText(
+            "Number of alternatives: "
+            f"{self.alternative_action_labels[selected]}"
+        )
+        self._update_guidance_summary()
+
     @staticmethod
     def _mark_selected_output_action(
         actions: dict,
@@ -733,6 +895,35 @@ class LauncherPopup(QWidget):
     def _system_colour_scheme_changed(self, colour_scheme) -> None:
         if self.theme == "auto":
             self._apply_style()
+
+    def _system_appearance_changed(self, *args) -> None:
+        self._apply_style()
+
+    def _set_options_expanded(self, expanded: bool) -> None:
+        """Give the action chooser priority until extra controls are needed."""
+
+        self.options_panel.setVisible(expanded)
+        if expanded:
+            self.options_toggle.setText("Hide request options")
+            self.options_toggle.setAccessibleName(
+                "Hide request options and custom instruction"
+            )
+            self.options_toggle.setToolTip(
+                "Hide the secondary request controls to give the writing "
+                "action list more space."
+            )
+        else:
+            self.options_toggle.setText(
+                "Request options and custom instruction"
+            )
+            self.options_toggle.setAccessibleName(
+                "Show request options and custom instruction"
+            )
+            self.options_toggle.setToolTip(
+                "Show remembered choices, output and guidance controls, "
+                "additional context, and the one-off instruction field."
+            )
+        self.updateGeometry()
 
     def _auto_submit_toggled(self, enabled: bool) -> None:
         self.auto_submit_enabled = enabled
@@ -763,6 +954,10 @@ class LauncherPopup(QWidget):
         self.set_resulting_text_formatting(value)
         self.resulting_text_formatting_changed.emit(value)
 
+    def _title_subject_selected(self, value: str) -> None:
+        self.set_title_subject(value)
+        self.title_subject_changed.emit(value)
+
     def _editing_strength_selected(self, value: str) -> None:
         self.set_editing_strength(value)
 
@@ -770,7 +965,18 @@ class LauncherPopup(QWidget):
         self.set_preserve_facts_enabled(enabled)
 
     def _recipient_audience_selected(self, value: str) -> None:
+        self.audience_explicitly_selected = True
         self.set_recipient_audience(value)
+
+    def _custom_text_changed(self, text: str) -> None:
+        self.custom_send.setEnabled(bool(text.strip()))
+        if text.strip() and not self.audience_explicitly_selected:
+            self.set_recipient_audience(
+                self.application_audience_default
+            )
+
+    def _alternative_count_selected(self, value: int) -> None:
+        self.set_alternative_count(value)
 
     def _update_output_summary(self) -> None:
         parts: list[str] = []
@@ -791,6 +997,14 @@ class LauncherPopup(QWidget):
             parts.append(formatting)
         if self.writing_block_enabled:
             parts.append("Writing block")
+        title_subject_labels = {
+            "automatic": "Automatic title/subject",
+            "title": "Include title",
+            "subject": "Include subject",
+        }
+        title_subject = title_subject_labels.get(self.title_subject_value)
+        if title_subject:
+            parts.append(title_subject)
         summary = " · ".join(parts) if parts else "ChatGPT defaults"
         self.output_summary.setText(f"Remembered output: {summary}")
 
@@ -810,6 +1024,10 @@ class LauncherPopup(QWidget):
                 self.recipient_audience_value
             ]
         )
+        if self.alternative_count_value > 1:
+            parts.append(
+                self.alternative_action_labels[self.alternative_count_value]
+            )
         self.guidance_summary.setText(
             "This request: " + " · ".join(parts)
         )
@@ -819,11 +1037,14 @@ class LauncherPopup(QWidget):
         self.search.clear()
         self.custom.clear()
         self.additional_information.clear()
+        self.options_toggle.setChecked(False)
         self.set_editing_strength(self.application_editing_strength_default)
         self.set_preserve_facts_enabled(
             self.application_preserve_facts_default
         )
+        self.audience_explicitly_selected = False
         self.set_recipient_audience(self.application_audience_default)
+        self.set_alternative_count(1)
         self.refresh()
         cursor = QCursor.pos()
         screen = self.screen()
@@ -855,7 +1076,10 @@ class LauncherPopup(QWidget):
         if query:
             self.location.setText("Search results from all folders")
             self.location.show()
-            for action in self.registry.search(query):
+            for action in self.registry.search(
+                query,
+                context=self.suggestion_context,
+            ):
                 label = self._action_label(action, show_folder=True)
                 item = self._action_item(action, label)
                 self.list.addItem(item)
@@ -894,9 +1118,24 @@ class LauncherPopup(QWidget):
         configured = self.registry.configured()
         direct = [action for action in configured if action.show_on_home]
         direct_ids = {action.id for action in direct}
+        suggestions = (
+            self.registry.suggest(
+                self.suggestion_context,
+                limit=4,
+                exclude_ids=direct_ids,
+            )
+            if self.suggestion_context is not None
+            else []
+        )
+        self.suggestion_reasons = {
+            suggestion.action.id: suggestion.reasons
+            for suggestion in suggestions
+        }
+        suggested_actions = [suggestion.action for suggestion in suggestions]
+        suggested_ids = {action.id for action in suggested_actions}
         most_used = self.registry.most_used(
             self.home_most_used_count,
-            exclude_ids=direct_ids,
+            exclude_ids=direct_ids | suggested_ids,
         )
         most_used_ids = {action.id for action in most_used}
         folders = self._child_folders()
@@ -905,9 +1144,11 @@ class LauncherPopup(QWidget):
             for action in self.registry.search("")
             if not action.folder
             and action.id not in direct_ids
+            and action.id not in suggested_ids
             and action.id not in most_used_ids
         ]
 
+        self._add_action_section("Suggested", suggested_actions)
         self._add_action_section("Direct actions", direct)
         self._add_action_section("Most used", most_used)
         if folders:
@@ -942,7 +1183,10 @@ class LauncherPopup(QWidget):
     def _actions_in_current_folder(self):
         return [
             action
-            for action in self.registry.search("")
+            for action in self.registry.search(
+                "",
+                context=self.suggestion_context,
+            )
             if action.folder == self.current_folder
         ]
 
@@ -1000,7 +1244,15 @@ class LauncherPopup(QWidget):
         item.setSizeHint(QSize(0, 48))
         item.setData(Qt.ItemDataRole.UserRole, action.id)
         item.setData(self.ITEM_KIND_ROLE, "action")
-        item.setToolTip(action.instruction)
+        reasons = self.suggestion_reasons.get(action.id, ())
+        tooltip = action.instruction
+        if reasons:
+            tooltip += "\n\nSuggested because: " + "; ".join(reasons) + "."
+            item.setData(
+                Qt.ItemDataRole.AccessibleDescriptionRole,
+                "Suggested because " + ", ".join(reasons),
+            )
+        item.setToolTip(tooltip)
         return item
 
     @staticmethod
@@ -1107,6 +1359,45 @@ class LauncherPopup(QWidget):
         if item:
             self._run_item(item)
 
+    def _update_selected_action_button(
+        self,
+        current: QListWidgetItem | None,
+        _previous: QListWidgetItem | None = None,
+    ) -> None:
+        is_action = bool(
+            current is not None
+            and current.data(self.ITEM_KIND_ROLE) == "action"
+            and current.data(Qt.ItemDataRole.UserRole)
+        )
+        self.send_selected_action.setEnabled(is_action)
+        if not is_action:
+            self.send_selected_action.setText("Send selected action")
+            return
+        self.send_selected_action.setText("Send selected action")
+
+    def _selected_action_changed(
+        self,
+        current: QListWidgetItem | None,
+        previous: QListWidgetItem | None = None,
+    ) -> None:
+        self._update_selected_action_button(current, previous)
+        if self.audience_explicitly_selected or current is None:
+            return
+        if current.data(self.ITEM_KIND_ROLE) != "action":
+            return
+        action_id = str(
+            current.data(Qt.ItemDataRole.UserRole) or ""
+        )
+        action = self.registry.get(action_id) if action_id else None
+        if action is None:
+            return
+        audience = (
+            action.recipient_audience
+            if action.recipient_audience not in {"", "inherit"}
+            else self.application_audience_default
+        )
+        self.set_recipient_audience(audience)
+
     def _run_item(self, item: QListWidgetItem) -> None:
         kind = item.data(self.ITEM_KIND_ROLE)
         value = item.data(Qt.ItemDataRole.UserRole)
@@ -1126,6 +1417,7 @@ class LauncherPopup(QWidget):
                 self.editing_strength_value,
                 self.preserve_facts_enabled,
                 self.recipient_audience_value,
+                self.alternative_count_value,
             )
 
     def _open_folder_item(self, item: QListWidgetItem) -> None:
@@ -1149,9 +1441,21 @@ class LauncherPopup(QWidget):
                 self.editing_strength_value,
                 self.preserve_facts_enabled,
                 self.recipient_audience_value,
+                self.alternative_count_value,
             )
 
     def _apply_style(self) -> None:
+        high_contrast = system_high_contrast_enabled()
+        self.setAttribute(
+            Qt.WidgetAttribute.WA_TranslucentBackground,
+            not high_contrast,
+        )
+        if high_contrast:
+            self.setStyleSheet(
+                high_contrast_stylesheet()
+                + message_box_stylesheet(self.theme)
+            )
+            return
         if resolve_theme(self.theme) == "light":
             checkmark = str(
                 files("promptmeld").joinpath(
@@ -1228,6 +1532,10 @@ class LauncherPopup(QWidget):
                     font-weight: 600;
                 }
                 QPushButton:hover { background: #244fae; }
+                QPushButton:disabled {
+                    color: #7a8491;
+                    background: #e5e9ef;
+                }
                 QPushButton#launcherCloseButton {
                     color: #4f5968;
                     background: transparent;
@@ -1271,6 +1579,9 @@ class LauncherPopup(QWidget):
                     background: #e7eaee;
                 }
                 """.replace("__CHECKMARK__", checkmark)
+            )
+            self.setStyleSheet(
+                self.styleSheet() + message_box_stylesheet("light")
             )
             return
         checkmark = str(
@@ -1348,6 +1659,10 @@ class LauncherPopup(QWidget):
                 font-weight: 600;
             }
             QPushButton:hover { background: #3d6ede; }
+            QPushButton:disabled {
+                color: #858c98;
+                background: #292d34;
+            }
             QPushButton#launcherCloseButton {
                 color: #b5bbc6;
                 background: transparent;
@@ -1395,4 +1710,7 @@ class LauncherPopup(QWidget):
             }
             """
             .replace("__CHECKMARK__", checkmark)
+        )
+        self.setStyleSheet(
+            self.styleSheet() + message_box_stylesheet("dark")
         )

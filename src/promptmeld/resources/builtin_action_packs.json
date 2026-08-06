@@ -6,60 +6,112 @@
       "format": "promptmeld-action-pack",
       "format_version": 1,
       "id": "editing",
-      "name": "Editing essentials",
-      "description": "Everyday proofreading, clarity, shortening and restructuring tools.",
+      "name": "Advanced editing",
+      "description": "Restructure, simplify, reformat and make longer drafts consistent.",
       "actions": [
         {
-          "id": "editing-proofread",
-          "name": "Proofread with minimal changes",
-          "keywords": ["proofread", "grammar", "spelling", "minimal"],
-          "instruction": "Correct spelling, grammar, punctuation, and clear usage errors in the selected text. Preserve the wording, structure, tone, and meaning wherever a change is not necessary.",
-          "hotkey": null,
-          "enabled": true,
-          "icon": "lucide:spell-check-2",
-          "folder": "Editing",
-          "show_on_home": false,
-          "natural_voice": "inherit",
-          "guided_drafting": false
-        },
-        {
-          "id": "editing-clarity",
-          "name": "Improve clarity and flow",
-          "keywords": ["clarity", "flow", "readability", "improve"],
-          "instruction": "Improve the clarity, flow, and readability of the selected text while preserving its intended meaning and concrete details. Keep the result natural and avoid unnecessary rewriting.",
-          "hotkey": null,
-          "enabled": true,
-          "icon": "lucide:sparkles",
-          "folder": "Editing",
-          "show_on_home": false,
-          "natural_voice": "inherit",
-          "guided_drafting": false
-        },
-        {
-          "id": "editing-shorten",
-          "name": "Shorten without losing substance",
-          "keywords": ["shorten", "concise", "trim", "substance"],
-          "instruction": "Shorten the selected text by removing repetition and unnecessary wording. Preserve its important reasoning, facts, qualifications, and requested actions.",
-          "hotkey": null,
-          "enabled": true,
-          "icon": "lucide:scissors",
-          "folder": "Editing",
-          "show_on_home": false,
-          "natural_voice": "inherit",
-          "guided_drafting": false
-        },
-        {
-          "id": "editing-structure",
+          "id": "editing-restructure",
           "name": "Restructure a difficult draft",
-          "keywords": ["restructure", "organise", "draft", "logical"],
+          "keywords": ["edit", "restructure", "organise", "draft", "logical"],
           "instruction": "Restructure the selected draft into a clear, logical order. Preserve all relevant content, improve transitions, and use headings or lists only where they genuinely help the reader.",
           "hotkey": null,
           "enabled": true,
           "icon": "lucide:file-pen-line",
-          "folder": "Editing",
+          "folder": "Edit & revise/Advanced editing",
+          "show_on_home": false
+        },
+        {
+          "id": "editing-simplify",
+          "name": "Simplify complex writing",
+          "keywords": ["edit", "simplify", "plain language", "jargon", "readability"],
+          "instruction": "Rewrite the selected text so a general reader can understand it more easily. Preserve the facts, necessary technical terms, qualifications, and intended meaning, and explain unavoidable jargon briefly.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:search-check",
+          "folder": "Edit & revise/Advanced editing",
+          "show_on_home": false
+        },
+        {
+          "id": "editing-change-format",
+          "name": "Choose a clearer format",
+          "keywords": ["edit", "format", "headings", "bullets", "paragraphs"],
+          "instruction": "Reformat the selected text using paragraphs, headings, or bullet points according to what makes the content easiest to follow. Preserve the information and do not add new claims.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:list-checks",
+          "folder": "Edit & revise/Advanced editing",
+          "show_on_home": false
+        },
+        {
+          "id": "editing-consistency",
+          "name": "Improve consistency",
+          "keywords": ["edit", "consistency", "terminology", "tense", "formatting"],
+          "instruction": "Revise the selected text for consistent terminology, tense, point of view, tone, capitalisation, and formatting. Preserve intentional differences and do not silently resolve factual contradictions.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:spell-check-2",
+          "folder": "Edit & revise/Advanced editing",
+          "show_on_home": false
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "customer-relations",
+      "name": "Customer relations",
+      "description": "Reply to selected customer queries, request missing details, explain limits and confirm resolutions.",
+      "actions": [
+        {
+          "id": "customer-query-reply",
+          "name": "Reply to the selected customer query",
+          "keywords": ["customer", "query", "reply", "service", "support"],
+          "instruction": "Treat the selected text as a query from a customer and draft a helpful, professional reply. Answer the points supported by the supplied information, make any next step clear, and do not invent policy, stock, timings, compensation, or commitments.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:message-square-text",
+          "folder": "Reply/Customer relations",
           "show_on_home": false,
-          "natural_voice": "inherit",
-          "guided_drafting": false
+          "guided_drafting": true,
+          "recipient_audience": "customer_client"
+        },
+        {
+          "id": "customer-clarify-details",
+          "name": "Ask the customer for missing information",
+          "keywords": ["customer", "clarify", "details", "information", "question"],
+          "instruction": "Treat the selected text as a customer query that cannot yet be resolved. Draft a concise reply acknowledging the request and asking only for the missing information genuinely needed to help. Explain why a detail is needed when that is not obvious, and do not repeat questions already answered.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:text-cursor-input",
+          "folder": "Reply/Customer relations",
+          "show_on_home": false,
+          "recipient_audience": "customer_client"
+        },
+        {
+          "id": "customer-explain-limit",
+          "name": "Explain a limitation or declined request",
+          "keywords": ["customer", "decline", "limitation", "policy", "alternative"],
+          "instruction": "Use the selected customer message and supplied context to draft a clear, respectful reply explaining why a request cannot be fulfilled or must be limited. Acknowledge the practical impact, state the decision without evasive wording, and offer alternatives only when they are supported by the supplied information.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:landmark",
+          "folder": "Reply/Customer relations",
+          "show_on_home": false,
+          "guided_drafting": true,
+          "recipient_audience": "customer_client"
+        },
+        {
+          "id": "customer-resolution-follow-up",
+          "name": "Confirm the resolution and next steps",
+          "keywords": ["customer", "resolution", "follow up", "next steps", "confirm"],
+          "instruction": "Turn the selected customer correspondence or case notes into a concise follow-up reply. Confirm what has been resolved, clearly identify any remaining action and who should take it, and preserve supplied dates or reference details without inventing commitments.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:send",
+          "folder": "Reply/Customer relations",
+          "show_on_home": false,
+          "guided_drafting": true,
+          "recipient_audience": "customer_client"
         }
       ]
     },
@@ -67,8 +119,8 @@
       "format": "promptmeld-action-pack",
       "format_version": 1,
       "id": "email",
-      "name": "Email essentials",
-      "description": "Draft, reply, follow up and turn notes into natural emails.",
+      "name": "Email and correspondence",
+      "description": "Turn notes into emails, follow up, make wording diplomatic and write clear requests.",
       "actions": [
         {
           "id": "email-draft",
@@ -78,22 +130,8 @@
           "hotkey": null,
           "enabled": true,
           "icon": "lucide:send",
-          "folder": "Correspondence/Email",
+          "folder": "Draft & create/Email",
           "show_on_home": false,
-          "natural_voice": "inherit",
-          "guided_drafting": true
-        },
-        {
-          "id": "email-reply",
-          "name": "Reply to an email",
-          "keywords": ["email", "reply", "respond", "inbox"],
-          "instruction": "Treat the selected text as an email I received and draft my reply. Address the important points, keep it appropriately concise and natural, and do not invent facts, commitments, dates, or attachments.",
-          "hotkey": null,
-          "enabled": true,
-          "icon": "lucide:message-square-text",
-          "folder": "Correspondence/Email",
-          "show_on_home": false,
-          "natural_voice": "inherit",
           "guided_drafting": true
         },
         {
@@ -104,9 +142,8 @@
           "hotkey": null,
           "enabled": true,
           "icon": "lucide:rotate-ccw",
-          "folder": "Correspondence/Email",
+          "folder": "Draft & create/Email",
           "show_on_home": false,
-          "natural_voice": "inherit",
           "guided_drafting": true
         },
         {
@@ -117,10 +154,73 @@
           "hotkey": null,
           "enabled": true,
           "icon": "lucide:heart",
-          "folder": "Correspondence/Email",
+          "folder": "Edit & revise/Email",
+          "show_on_home": false
+        },
+        {
+          "id": "email-request",
+          "name": "Turn selected notes into a request email",
+          "keywords": ["email", "request", "ask", "deadline", "action"],
+          "instruction": "Turn the selected notes into a concise request email. Explain the context needed by the recipient, state the requested action clearly, and include a deadline or preferred response only when one is supplied. Do not invent names, dates, commitments, or attachments.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:send",
+          "folder": "Draft & create/Email",
           "show_on_home": false,
-          "natural_voice": "inherit",
-          "guided_drafting": false
+          "guided_drafting": true
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "tone-voice",
+      "name": "Tone and voice",
+      "description": "Make writing softer, more direct, warmer or more formal without changing its meaning.",
+      "actions": [
+        {
+          "id": "tone-diplomatic",
+          "name": "Make softer and more diplomatic",
+          "keywords": ["tone", "softer", "diplomatic", "calm", "tactful"],
+          "instruction": "Rewrite the selected text so it is calmer, more diplomatic, and easier to receive while keeping the substantive point, boundaries, and requested action clear. Do not make it vague or insincere.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:heart",
+          "folder": "Edit & revise/Tone & voice",
+          "show_on_home": false
+        },
+        {
+          "id": "tone-direct",
+          "name": "Make more direct",
+          "keywords": ["tone", "direct", "clear", "firm", "concise"],
+          "instruction": "Rewrite the selected text to be more direct and decisive. Preserve its meaning and necessary context, remove hedging and filler, and keep it civil rather than abrasive.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:send",
+          "folder": "Edit & revise/Tone & voice",
+          "show_on_home": false
+        },
+        {
+          "id": "tone-warm",
+          "name": "Make warmer and friendlier",
+          "keywords": ["tone", "warm", "friendly", "approachable", "kind"],
+          "instruction": "Rewrite the selected text in a warm, friendly, and approachable voice. Preserve the facts and purpose, and avoid fake enthusiasm, excessive familiarity, or generic pleasantries.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:smile",
+          "folder": "Edit & revise/Tone & voice",
+          "show_on_home": false
+        },
+        {
+          "id": "tone-formal",
+          "name": "Make formal and professional",
+          "keywords": ["tone", "formal", "professional", "business", "official"],
+          "instruction": "Rewrite the selected text in a clear, professional, and appropriately formal register. Preserve its meaning and individual voice, and avoid stiff phrasing, jargon, or invented details.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:briefcase-business",
+          "folder": "Edit & revise/Tone & voice",
+          "show_on_home": false
         }
       ]
     },
@@ -133,55 +233,55 @@
       "actions": [
         {
           "id": "complaint-write",
-          "name": "Write a clear complaint",
+          "name": "Turn selected notes into a clear complaint",
           "keywords": ["complaint", "problem", "company", "resolution"],
           "instruction": "Turn the selected facts and notes into a firm, constructive complaint. Explain what happened, the practical impact, and the desired resolution clearly. Do not invent evidence, dates, policies, or legal claims.",
           "hotkey": null,
           "enabled": true,
           "icon": "lucide:landmark",
-          "folder": "Complaints",
+          "folder": "Draft & create/Complaints",
           "show_on_home": false,
-          "natural_voice": "inherit",
-          "guided_drafting": true
+          "guided_drafting": true,
+          "recipient_audience": "company_support"
         },
         {
           "id": "complaint-respond",
-          "name": "Respond to a complaint",
+          "name": "Reply to the selected complaint",
           "keywords": ["complaint", "respond", "customer", "service"],
           "instruction": "Treat the selected text as a complaint I received and draft a calm professional response. Acknowledge the concern without automatically admitting fault, address the key issue, and propose a reasonable next step without inventing policy, compensation, or commitments.",
           "hotkey": null,
           "enabled": true,
           "icon": "lucide:heart",
-          "folder": "Complaints",
+          "folder": "Reply/Complaints",
           "show_on_home": false,
-          "natural_voice": "inherit",
-          "guided_drafting": true
+          "guided_drafting": true,
+          "recipient_audience": "customer_client"
         },
         {
           "id": "complaint-summary",
-          "name": "Summarise a complaint case",
+          "name": "Summarise the selected complaint history",
           "keywords": ["complaint", "case", "summary", "timeline"],
           "instruction": "Summarise the selected complaint correspondence into a neutral case note. Separate the issue, relevant timeline, evidence or claims, actions already taken, unresolved points, and requested outcome. Clearly distinguish facts from allegations or uncertainty.",
           "hotkey": null,
           "enabled": true,
           "icon": "lucide:list-checks",
-          "folder": "Complaints",
+          "folder": "Summarise & understand/Complaints",
           "show_on_home": false,
           "natural_voice": "never",
-          "guided_drafting": false
+          "recipient_audience": "general_reader"
         },
         {
           "id": "complaint-escalate",
-          "name": "Escalate an unresolved complaint",
-          "keywords": ["complaint", "escalate", "unresolved", "follow up"],
+          "name": "Turn selected complaint history into an escalation",
+          "keywords": ["complaint", "escalate", "unresolved", "manager"],
           "instruction": "Draft a concise escalation based on the selected complaint history. State what remains unresolved, refer accurately to prior contact, explain the desired remedy or next step, and remain firm and professional without making unsupported threats.",
           "hotkey": null,
           "enabled": true,
-          "icon": "lucide:expand",
-          "folder": "Complaints",
+          "icon": "lucide:send",
+          "folder": "Draft & create/Complaints",
           "show_on_home": false,
-          "natural_voice": "inherit",
-          "guided_drafting": true
+          "guided_drafting": true,
+          "recipient_audience": "company_support"
         }
       ]
     },
@@ -195,54 +295,51 @@
         {
           "id": "report-from-notes",
           "name": "Turn notes into a report",
-          "keywords": ["report", "notes", "structure", "findings"],
+          "keywords": ["report", "notes", "findings", "recommendations"],
           "instruction": "Turn the selected notes into a clear structured report. Organise the material into purpose, relevant context, findings, and next steps or recommendations where supported. Preserve uncertainties and do not invent evidence.",
           "hotkey": null,
           "enabled": true,
           "icon": "lucide:file-pen-line",
-          "folder": "Reports",
+          "folder": "Draft & create/Reports",
           "show_on_home": false,
-          "natural_voice": "never",
-          "guided_drafting": true
+          "guided_drafting": true,
+          "recipient_audience": "general_reader"
         },
         {
           "id": "report-executive-summary",
-          "name": "Create an executive summary",
-          "keywords": ["report", "executive", "summary", "decision"],
+          "name": "Summarise the selected report for executives",
+          "keywords": ["report", "executive", "summary", "decisions"],
           "instruction": "Create a concise executive summary of the selected report. Prioritise the purpose, most important findings, material risks or limitations, decisions required, and recommended next steps. Do not add claims that are not supported by the source.",
           "hotkey": null,
           "enabled": true,
-          "icon": "lucide:briefcase-business",
-          "folder": "Reports",
+          "icon": "lucide:search-check",
+          "folder": "Summarise & understand/Reports",
           "show_on_home": false,
-          "natural_voice": "never",
-          "guided_drafting": false
+          "recipient_audience": "manager_senior"
         },
         {
           "id": "report-status-update",
-          "name": "Create a project status update",
-          "keywords": ["report", "status", "project", "progress"],
+          "name": "Turn selected project notes into a status update",
+          "keywords": ["report", "status", "project", "blockers", "progress"],
           "instruction": "Turn the selected project notes into a concise status update. Separate completed work, current work, blockers or risks, decisions needed, and next steps. Preserve owners and dates exactly when provided and do not invent progress.",
           "hotkey": null,
           "enabled": true,
           "icon": "lucide:list-checks",
-          "folder": "Reports",
+          "folder": "Draft & create/Reports",
           "show_on_home": false,
-          "natural_voice": "never",
-          "guided_drafting": false
+          "recipient_audience": "manager_senior"
         },
         {
           "id": "report-findings-actions",
-          "name": "Extract findings and actions",
-          "keywords": ["report", "findings", "actions", "recommendations"],
+          "name": "Extract findings and actions from selected text",
+          "keywords": ["report", "findings", "actions", "risks", "evidence"],
           "instruction": "Extract the key findings, supporting evidence, risks or limitations, and concrete actions from the selected text. Keep each action tied to the finding that justifies it and retain named owners or deadlines only when supplied.",
           "hotkey": null,
           "enabled": true,
-          "icon": "lucide:search-check",
-          "folder": "Reports",
+          "icon": "lucide:list-checks",
+          "folder": "Summarise & understand/Reports",
           "show_on_home": false,
-          "natural_voice": "never",
-          "guided_drafting": false
+          "recipient_audience": "general_reader"
         }
       ]
     },
@@ -250,60 +347,751 @@
       "format": "promptmeld-action-pack",
       "format_version": 1,
       "id": "social-posts",
-      "name": "Social posts",
-      "description": "Create concise posts, threads, captions and constructive replies.",
+      "name": "Social media writing",
+      "description": "Turn selected notes, arguments and updates into posts, threads, captions and announcements.",
       "actions": [
         {
           "id": "social-post-from-notes",
           "name": "Turn notes into a social post",
-          "keywords": ["social", "post", "notes", "linkedin", "facebook"],
+          "keywords": ["social", "post", "notes", "caption"],
           "instruction": "Turn the selected notes into a concise social post for a general online audience. Lead with the main point, keep the voice natural, and avoid manufactured enthusiasm, engagement bait, excessive hashtags, or invented personal details.",
           "hotkey": null,
           "enabled": true,
           "icon": "lucide:send",
-          "folder": "Social posts",
+          "folder": "Draft & create/Social media",
           "show_on_home": false,
-          "natural_voice": "always",
-          "guided_drafting": true
-        },
-        {
-          "id": "social-shorten",
-          "name": "Shorten a social post",
-          "keywords": ["social", "shorten", "concise", "post"],
-          "instruction": "Shorten the selected social post while preserving its main point, useful context, and individual voice. Remove repetition, filler, unnecessary scene-setting, and generic calls for engagement.",
-          "hotkey": null,
-          "enabled": true,
-          "icon": "lucide:shrink",
-          "folder": "Social posts",
-          "show_on_home": false,
-          "natural_voice": "always",
-          "guided_drafting": false
+          "guided_drafting": true,
+          "recipient_audience": "public_online"
         },
         {
           "id": "social-thread",
           "name": "Turn an argument into a short thread",
-          "keywords": ["social", "thread", "argument", "sequence"],
+          "keywords": ["social", "thread", "argument", "posts"],
           "instruction": "Turn the selected argument into a short, coherent social-media thread. Give each post one clear purpose, preserve the reasoning and important qualifications, and avoid clickbait, fake quotations, or unsupported certainty.",
           "hotkey": null,
           "enabled": true,
-          "icon": "lucide:message-square-text",
-          "folder": "Social posts",
+          "icon": "lucide:file-pen-line",
+          "folder": "Draft & create/Social media",
           "show_on_home": false,
-          "natural_voice": "always",
-          "guided_drafting": false
+          "recipient_audience": "public_online"
         },
         {
-          "id": "social-constructive-reply",
-          "name": "Write a constructive public reply",
-          "keywords": ["social", "reply", "public", "constructive"],
-          "instruction": "Treat the selected text as a public post or comment and draft a concise constructive reply. Address the substance directly, make disagreement clear where needed, and avoid insults, pile-on language, or claims not supported by the source.",
+          "id": "social-caption-from-source",
+          "name": "Turn selected text into a concise caption",
+          "keywords": ["social", "caption", "short", "image", "video"],
+          "instruction": "Turn the selected text into a concise social-media caption. Preserve the central point and relevant concrete detail, make it understandable alongside an image or video, and avoid clickbait, excessive hashtags, or invented personal experience.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:shrink",
+          "folder": "Draft & create/Social media",
+          "show_on_home": false,
+          "recipient_audience": "public_online"
+        },
+        {
+          "id": "social-announcement-from-update",
+          "name": "Turn the selected update into an announcement post",
+          "keywords": ["social", "announcement", "update", "news", "post"],
+          "instruction": "Turn the selected update into a clear social-media announcement. Lead with what is new, retain the details readers need and any supplied date or action, and keep the post easy to scan without inventing reasons, commitments, or promotional claims.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:send",
+          "folder": "Draft & create/Social media",
+          "show_on_home": false,
+          "guided_drafting": true,
+          "recipient_audience": "public_online"
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "social-replies",
+      "name": "Social media replies",
+      "description": "Reply to selected YouTube, Reddit and Facebook text using platform-appropriate style and length.",
+      "actions": [
+        {
+          "id": "social-reply-youtube",
+          "name": "Reply to the selected YouTube comment",
+          "keywords": ["social", "YouTube", "comment", "reply", "video"],
+          "instruction": "Treat the selected text as a YouTube comment and draft a concise public reply. Address its main point directly in a conversational tone that works below a video. Keep it to one short paragraph unless clarification genuinely requires more, and avoid hashtags, creator-style hype, insults, or invented facts.",
           "hotkey": null,
           "enabled": true,
           "icon": "lucide:message-square-text",
-          "folder": "Social posts",
+          "folder": "Reply/Social media",
           "show_on_home": false,
-          "natural_voice": "inherit",
-          "guided_drafting": false
+          "recipient_audience": "public_online"
+        },
+        {
+          "id": "social-reply-reddit",
+          "name": "Reply to the selected Reddit post or comment",
+          "keywords": ["social", "Reddit", "post", "comment", "reply"],
+          "instruction": "Treat the selected text as a Reddit post or comment and draft a useful reply. Be direct and substantive, include enough reasoning to stand on its own in a threaded discussion, and use short paragraphs where helpful. Avoid corporate language, unnecessary hashtags, fake quotations, and claims not supported by the source.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:message-square-text",
+          "folder": "Reply/Social media",
+          "show_on_home": false,
+          "recipient_audience": "public_online"
+        },
+        {
+          "id": "social-reply-facebook",
+          "name": "Reply to the selected Facebook post or comment",
+          "keywords": ["social", "Facebook", "post", "comment", "reply"],
+          "instruction": "Treat the selected text as a Facebook post or comment and draft a friendly, accessible public reply. Address the important point in a moderately brief conversational style, preserve necessary context for mixed audiences, and avoid jargon, excessive hashtags, or invented familiarity.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:message-square-text",
+          "folder": "Reply/Social media",
+          "show_on_home": false,
+          "recipient_audience": "public_online"
+        },
+        {
+          "id": "social-reply-deescalate",
+          "name": "De-escalate the selected hostile exchange",
+          "keywords": ["social", "reply", "de-escalate", "hostile", "argument"],
+          "instruction": "Treat the selected text as part of a hostile public social-media exchange and draft a calm, concise reply. Correct the central point or restate the boundary without mirroring insults, escalating the tone, inviting a pile-on, or claiming facts not supplied. Make disengagement clear when further argument would not be productive.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:heart",
+          "folder": "Reply/Social media",
+          "show_on_home": false,
+          "recipient_audience": "public_online"
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "social-editing",
+      "name": "Social media editing",
+      "description": "Edit selected text for YouTube, Reddit and Facebook conventions or create versions for all three.",
+      "actions": [
+        {
+          "id": "social-edit-youtube",
+          "name": "Edit the selected text for YouTube",
+          "keywords": ["social", "YouTube", "edit", "comment", "community post"],
+          "instruction": "Edit the selected text for use on YouTube, inferring whether it is a comment, community post, or video description from its content. Use a clear opening and compact, conversational wording; keep comments especially brief. Preserve facts and individual voice, and avoid clickbait, filler, and unnecessary hashtags.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:pencil",
+          "folder": "Edit & revise/Social media",
+          "show_on_home": false,
+          "recipient_audience": "public_online"
+        },
+        {
+          "id": "social-edit-reddit",
+          "name": "Edit the selected text for Reddit",
+          "keywords": ["social", "Reddit", "edit", "post", "comment"],
+          "instruction": "Edit the selected text for a Reddit post or comment. Make the point clear early, retain useful context and reasoning, and use short paragraphs or restrained Markdown when it improves scanning. Keep the voice natural and non-promotional, and do not add hashtags, fake quotations, or unsupported certainty.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:pencil",
+          "folder": "Edit & revise/Social media",
+          "show_on_home": false,
+          "recipient_audience": "public_online"
+        },
+        {
+          "id": "social-edit-facebook",
+          "name": "Edit the selected text for Facebook",
+          "keywords": ["social", "Facebook", "edit", "post", "comment"],
+          "instruction": "Edit the selected text for Facebook. Use warm, accessible language and a clear first sentence, keep the length moderate, and split longer material into readable short paragraphs. Preserve the writer's meaning and facts, and avoid engagement bait, excessive hashtags, or generic promotional wording.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:pencil",
+          "folder": "Edit & revise/Social media",
+          "show_on_home": false,
+          "recipient_audience": "public_online"
+        },
+        {
+          "id": "social-edit-platform-versions",
+          "name": "Adapt selected text for YouTube, Reddit and Facebook",
+          "keywords": ["social", "adapt", "YouTube", "Reddit", "Facebook"],
+          "instruction": "Create three clearly labelled versions of the selected text: YouTube, Reddit, and Facebook. Preserve the central meaning and facts while adapting length, structure, tone, and platform conventions: concise and conversational for YouTube, substantive and discussion-friendly for Reddit, and warm and accessible for Facebook. Do not invent details or add engagement bait.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:expand",
+          "folder": "Edit & revise/Social media",
+          "show_on_home": false,
+          "recipient_audience": "public_online"
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "reviews-feedback",
+      "name": "Reviews and feedback",
+      "description": "Write balanced reviews, compare products and give useful feedback.",
+      "actions": [
+        {
+          "id": "reviews-product-polish",
+          "name": "Polish a product review",
+          "keywords": ["review", "product", "Amazon", "marketplace", "polish"],
+          "instruction": "Edit the selected product review so it is clear, honest, useful, and balanced. Preserve the writer's actual experience and concrete product details, improve readability, and avoid exaggeration or marketing language.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:pencil",
+          "folder": "Edit & revise/Reviews",
+          "show_on_home": false,
+          "recipient_audience": "public_online"
+        },
+        {
+          "id": "reviews-product-from-notes",
+          "name": "Write a product review from notes",
+          "keywords": ["review", "product", "notes", "Amazon", "marketplace"],
+          "instruction": "Turn the selected notes into a complete product review. Explain the relevant experience, useful strengths and weaknesses, and overall assessment without inventing features, results, dates, or usage details.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:file-pen-line",
+          "folder": "Draft & create/Reviews",
+          "show_on_home": false,
+          "guided_drafting": true,
+          "recipient_audience": "public_online"
+        },
+        {
+          "id": "reviews-constructive-feedback",
+          "name": "Turn observations into constructive feedback",
+          "keywords": ["review", "feedback", "constructive", "observations", "improve"],
+          "instruction": "Turn the selected observations into clear, constructive feedback. Separate what worked, what could improve, and practical suggestions, while remaining specific, fair, and respectful.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:heart",
+          "folder": "Draft & create/Reviews",
+          "show_on_home": false
+        },
+        {
+          "id": "reviews-compare-items",
+          "name": "Turn selected notes into a comparison review",
+          "keywords": ["review", "compare", "products", "options", "trade-offs"],
+          "instruction": "Turn the selected notes into a balanced comparison of the products or options mentioned. Compare them on the supplied criteria, explain the trade-offs, and state which type of user each suits without inventing specifications or test results.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:search-check",
+          "folder": "Draft & create/Reviews",
+          "show_on_home": false,
+          "guided_drafting": true,
+          "recipient_audience": "public_online"
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "meetings",
+      "name": "Meetings and actions",
+      "description": "Prepare agendas, turn notes into minutes, extract actions and draft follow-ups.",
+      "actions": [
+        {
+          "id": "meetings-agenda",
+          "name": "Turn selected notes into a meeting agenda",
+          "keywords": ["meeting", "agenda", "notes", "decisions"],
+          "instruction": "Turn the selected notes into a practical meeting agenda. State the purpose, organise the discussion topics logically, identify decisions needed, and retain times or owners only when supplied.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:list-checks",
+          "folder": "Draft & create/Meetings",
+          "show_on_home": false,
+          "guided_drafting": true,
+          "recipient_audience": "colleague_peer"
+        },
+        {
+          "id": "meetings-minutes",
+          "name": "Turn notes into meeting minutes",
+          "keywords": ["meeting", "minutes", "notes", "decisions", "attendees"],
+          "instruction": "Turn the selected meeting notes into concise minutes. Separate attendees when supplied, discussion points, decisions, unresolved questions, and next steps. Preserve uncertainty and do not invent agreement or attendance.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:file-pen-line",
+          "folder": "Summarise & understand/Meetings",
+          "show_on_home": false,
+          "recipient_audience": "colleague_peer"
+        },
+        {
+          "id": "meetings-actions",
+          "name": "Extract decisions and action items",
+          "keywords": ["meeting", "actions", "decisions", "owners", "deadlines"],
+          "instruction": "Extract decisions and action items from the selected meeting text. For each action, retain its owner and deadline only when explicitly supplied, and list unresolved questions separately.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:list-checks",
+          "folder": "Summarise & understand/Meetings",
+          "show_on_home": false,
+          "recipient_audience": "colleague_peer"
+        },
+        {
+          "id": "meetings-follow-up",
+          "name": "Turn selected meeting notes into a follow-up",
+          "keywords": ["meeting", "follow up", "summary", "next steps"],
+          "instruction": "Draft a concise follow-up message from the selected meeting notes. Summarise the agreed outcome, list next steps, and make any requested response clear without inventing agreement, owners, or deadlines.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:send",
+          "folder": "Draft & create/Meetings",
+          "show_on_home": false,
+          "guided_drafting": true,
+          "recipient_audience": "colleague_peer"
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "technical-communication",
+      "name": "Technical communication",
+      "description": "Explain issues, write bug reports and support requests, and plan safe troubleshooting.",
+      "actions": [
+        {
+          "id": "technical-bug-report",
+          "name": "Turn notes into a bug report",
+          "keywords": ["technical", "bug", "report", "reproduce", "error"],
+          "instruction": "Turn the selected notes into a reproducible bug report. Separate the environment, steps, expected behaviour, actual behaviour, frequency, and relevant evidence. Mark missing information clearly and do not invent technical details.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:file-pen-line",
+          "folder": "Draft & create/Technical",
+          "show_on_home": false,
+          "guided_drafting": true,
+          "recipient_audience": "company_support"
+        },
+        {
+          "id": "technical-support-request",
+          "name": "Turn selected notes into a support request",
+          "keywords": ["technical", "support", "request", "problem", "help"],
+          "instruction": "Turn the selected notes into a concise support request. Explain the problem, impact, relevant setup, troubleshooting already attempted, and the help required without inventing error messages, versions, or results.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:send",
+          "folder": "Draft & create/Technical",
+          "show_on_home": false,
+          "guided_drafting": true,
+          "recipient_audience": "company_support"
+        },
+        {
+          "id": "technical-explain-nontechnical",
+          "name": "Explain technical text simply",
+          "keywords": ["technical", "explain", "simple", "plain language", "jargon"],
+          "instruction": "Explain the selected technical text for a non-specialist reader. Preserve its important meaning, define necessary terminology in plain language, and distinguish established facts from assumptions or uncertainty.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:text-cursor-input",
+          "folder": "Explain & learn/Technical",
+          "show_on_home": false,
+          "recipient_audience": "general_reader"
+        },
+        {
+          "id": "technical-troubleshooting-plan",
+          "name": "Turn the selected problem into a troubleshooting plan",
+          "keywords": ["technical", "troubleshoot", "plan", "diagnose", "checks"],
+          "instruction": "Create a practical troubleshooting plan for the selected problem. Start with the quickest and lowest-risk checks, explain what each check would establish, and avoid destructive steps or unsupported certainty.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:list-checks",
+          "folder": "Plan & decide/Technical",
+          "show_on_home": false,
+          "recipient_audience": "general_reader"
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "learning",
+      "name": "Study and learning",
+      "description": "Turn source text into explanations, notes, flashcards and self-test questions.",
+      "actions": [
+        {
+          "id": "learning-study-notes",
+          "name": "Turn selected text into structured study notes",
+          "keywords": ["study", "learning", "notes", "concepts", "definitions"],
+          "instruction": "Turn the selected text into concise structured study notes. Preserve key concepts, definitions, relationships, examples, and important qualifications without adding unsupported facts.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:book-open-check",
+          "folder": "Explain & learn/Study",
+          "show_on_home": false,
+          "recipient_audience": "general_reader"
+        },
+        {
+          "id": "learning-explain",
+          "name": "Explain a difficult concept",
+          "keywords": ["study", "learning", "explain", "concept", "beginner"],
+          "instruction": "Explain the main concept in the selected text in clear stages for a learner who is new to the topic. Use a simple example where the source supports one, and identify any important prerequisite knowledge.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:text-cursor-input",
+          "folder": "Explain & learn/Study",
+          "show_on_home": false,
+          "recipient_audience": "general_reader"
+        },
+        {
+          "id": "learning-flashcards",
+          "name": "Create flashcards from selected text",
+          "keywords": ["study", "learning", "flashcards", "questions", "answers"],
+          "instruction": "Create a compact set of question-and-answer flashcards from the selected text. Cover the most important concepts and distinctions, keep each answer focused, and do not introduce material absent from the source.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:file-pen-line",
+          "folder": "Explain & learn/Study",
+          "show_on_home": false,
+          "recipient_audience": "general_reader"
+        },
+        {
+          "id": "learning-quiz",
+          "name": "Create a self-test quiz from selected text",
+          "keywords": ["study", "learning", "quiz", "test", "questions"],
+          "instruction": "Create a short self-test quiz from the selected text using a useful mix of recall and application questions. Put the answer key after the questions and base every answer on the source.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:list-checks",
+          "folder": "Explain & learn/Study",
+          "show_on_home": false,
+          "recipient_audience": "general_reader"
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "career-writing",
+      "name": "CVs and applications",
+      "description": "Improve CV evidence, draft cover letters, tailor profiles and shape interview answers.",
+      "actions": [
+        {
+          "id": "career-cv-bullets",
+          "name": "Turn notes into CV bullet points",
+          "keywords": ["career", "CV", "resume", "bullets", "experience"],
+          "instruction": "Turn the selected work notes into concise CV bullet points. Emphasise responsibilities, actions, and demonstrated outcomes, but do not invent metrics, achievements, job titles, tools, or dates.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:list-checks",
+          "folder": "Draft & create/Career",
+          "show_on_home": false,
+          "guided_drafting": true,
+          "recipient_audience": "manager_senior"
+        },
+        {
+          "id": "career-cover-letter",
+          "name": "Draft a cover letter from notes",
+          "keywords": ["career", "cover letter", "application", "job", "role"],
+          "instruction": "Turn the selected notes into a focused cover letter. Connect the supplied experience to the role requirements, keep the voice natural and specific, and do not invent qualifications, employers, achievements, or enthusiasm.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:file-pen-line",
+          "folder": "Draft & create/Career",
+          "show_on_home": false,
+          "guided_drafting": true,
+          "recipient_audience": "manager_senior"
+        },
+        {
+          "id": "career-profile",
+          "name": "Improve a professional profile",
+          "keywords": ["career", "profile", "professional", "LinkedIn", "summary"],
+          "instruction": "Rewrite the selected professional profile so it is concise, credible, and specific about the person's supplied experience and strengths. Avoid generic claims, buzzwords, and invented accomplishments.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:briefcase-business",
+          "folder": "Draft & create/Career",
+          "show_on_home": false,
+          "recipient_audience": "manager_senior"
+        },
+        {
+          "id": "career-interview-answer",
+          "name": "Shape an interview answer",
+          "keywords": ["career", "interview", "answer", "experience", "result"],
+          "instruction": "Turn the selected notes into a clear interview answer with useful context, the person's actions, and the result. Preserve the supplied facts and voice, and do not invent achievements, figures, or lessons learned.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:message-square-text",
+          "folder": "Draft & create/Career",
+          "show_on_home": false,
+          "guided_drafting": true,
+          "recipient_audience": "manager_senior"
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "replies-arguments",
+      "name": "Replies to selected text",
+      "description": "Write sarcastic, challenging, firm or balanced replies to selected text.",
+      "actions": [
+        {
+          "id": "reply-sarcastic",
+          "name": "Sarcastic reply",
+          "keywords": ["reply", "sarcastic", "witty", "pointed", "comment"],
+          "instruction": "Treat the selected text as a message, post, or comment and write a concise sarcastic reply. Make it witty and pointed, target the claim or conduct rather than protected traits or irrelevant personal characteristics, and avoid threats, slurs, or invented facts.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:smile",
+          "folder": "Reply/General replies",
+          "show_on_home": false,
+          "recipient_audience": "public_online"
+        },
+        {
+          "id": "reply-challenge-claim",
+          "name": "Challenge the selected text",
+          "keywords": ["reply", "challenge", "claim", "assumptions", "context"],
+          "instruction": "Treat the selected text as a claim or argument and write a reasoned reply that challenges it. Identify its weakest assumption, misleading framing, or missing context, explain the disagreement clearly, and do not invent evidence or certainty.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:search-check",
+          "folder": "Reply/General replies",
+          "show_on_home": false,
+          "recipient_audience": "public_online"
+        },
+        {
+          "id": "reply-polite-firm",
+          "name": "Write a polite but firm reply",
+          "keywords": ["reply", "polite", "firm", "boundaries", "disagree"],
+          "instruction": "Treat the selected text as something another person wrote and draft a polite but firm reply. Address the important points directly, make my position or boundary clear, and avoid unnecessary hostility, vague wording, or invented facts and commitments.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:send",
+          "folder": "Reply/General replies",
+          "show_on_home": false,
+          "guided_drafting": true,
+          "recipient_audience": "public_online"
+        },
+        {
+          "id": "reply-steelman",
+          "name": "Acknowledge the strongest point and reply",
+          "keywords": ["reply", "steelman", "balanced", "counterargument", "disagree"],
+          "instruction": "Draft a reply to the selected text that addresses its strongest reasonable interpretation rather than an easy caricature. Briefly acknowledge valid points or uncertainty, then explain the disagreement clearly using only facts supplied in the source or additional context.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:search-check",
+          "folder": "Reply/General replies",
+          "show_on_home": false,
+          "guided_drafting": true,
+          "recipient_audience": "public_online"
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "argument-editing",
+      "name": "Arguments and evidence",
+      "description": "Strengthen, check, challenge and balance arguments without turning them into replies.",
+      "actions": [
+        {
+          "id": "argument-strengthen",
+          "name": "Strengthen my argument",
+          "keywords": ["argument", "strengthen", "reasoning", "persuasive", "support"],
+          "instruction": "Strengthen the selected argument by making its reasoning clearer, addressing the most likely objection, and improving its structure. Preserve the writer's position and voice, distinguish assumptions from facts, and do not invent evidence, quotations, or statistics.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:expand",
+          "folder": "Edit & revise/Arguments & evidence",
+          "show_on_home": false,
+          "recipient_audience": "general_reader"
+        },
+        {
+          "id": "argument-fact-check-response",
+          "name": "Fact-check and draft a correction",
+          "keywords": ["argument", "fact check", "verify", "correction", "sources"],
+          "instruction": "Fact-check the important claims in the selected text and draft a concise correction. Separate what is supported, misleading, uncertain, or false. Use web search when current or reliable verification is needed, cite the most relevant sources, and do not overstate what the evidence establishes.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:book-open-check",
+          "folder": "Edit & revise/Arguments & evidence",
+          "show_on_home": false,
+          "recipient_audience": "general_reader"
+        },
+        {
+          "id": "argument-test-reasoning",
+          "name": "Find weak points in an argument",
+          "keywords": ["argument", "reasoning", "weaknesses", "assumptions", "counterarguments"],
+          "instruction": "Analyse the selected argument and identify its weakest reasoning, unsupported assumptions, missing evidence, and strongest plausible counterarguments. Distinguish fixable presentation problems from substantive gaps, and do not invent facts or sources.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:search-check",
+          "folder": "Edit & revise/Arguments & evidence",
+          "show_on_home": false,
+          "recipient_audience": "general_reader"
+        },
+        {
+          "id": "argument-balanced-rewrite",
+          "name": "Rewrite as a balanced argument",
+          "keywords": ["argument", "balanced", "rewrite", "qualifications", "evidence"],
+          "instruction": "Rewrite the selected text as a clear, balanced argument. Preserve its central position, represent meaningful counterarguments fairly, retain important qualifications and uncertainty, and avoid claiming more than the supplied evidence supports.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:file-pen-line",
+          "folder": "Edit & revise/Arguments & evidence",
+          "show_on_home": false,
+          "recipient_audience": "general_reader"
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "summaries-extraction",
+      "name": "Summaries and extraction",
+      "description": "Turn selected source text into summaries, extracted facts, open questions and timelines.",
+      "actions": [
+        {
+          "id": "selection-concise-summary",
+          "name": "Summarise the selected text",
+          "keywords": ["summary", "summarise", "condense", "overview", "source"],
+          "instruction": "Summarise the selected text concisely for a reader who has not seen the original. Preserve its main conclusion, important facts, qualifications, and disagreements, and do not add interpretation that the source does not support.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:shrink",
+          "folder": "Summarise & understand/General",
+          "show_on_home": false,
+          "recipient_audience": "general_reader"
+        },
+        {
+          "id": "selection-facts-figures",
+          "name": "Extract facts and figures",
+          "keywords": ["summary", "extract", "facts", "figures", "evidence"],
+          "instruction": "Extract the concrete facts, figures, dates, named parties, and stated outcomes from the selected text. Keep their surrounding qualifications and attribution, distinguish reported claims from established facts, and do not infer missing values.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:list-checks",
+          "folder": "Summarise & understand/General",
+          "show_on_home": false,
+          "recipient_audience": "general_reader"
+        },
+        {
+          "id": "selection-open-questions",
+          "name": "List answered and open questions",
+          "keywords": ["extract", "questions", "answers", "unknowns", "gaps"],
+          "instruction": "Identify the important questions addressed by the selected text. Separate those it answers from those it leaves partly answered or unresolved, give each supported answer concisely, and do not fill gaps with assumptions.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:list-checks",
+          "folder": "Summarise & understand/General",
+          "show_on_home": false,
+          "recipient_audience": "general_reader"
+        },
+        {
+          "id": "selection-timeline",
+          "name": "Create a factual timeline",
+          "keywords": ["extract", "timeline", "dates", "events", "chronology"],
+          "instruction": "Turn the selected text into a factual chronological timeline. Retain dates and event descriptions exactly where supplied, mark ambiguous or conflicting chronology, and do not invent dates, causes, or an order the source does not establish.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:message-square-text",
+          "folder": "Summarise & understand/General",
+          "show_on_home": false,
+          "recipient_audience": "general_reader"
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "draft-from-selection",
+      "name": "Draft from selected text",
+      "description": "Develop rough notes or source material into a complete draft, FAQ, instructions or announcement.",
+      "actions": [
+        {
+          "id": "selection-notes-to-draft",
+          "name": "Turn rough notes into a complete draft",
+          "keywords": ["draft", "notes", "rough", "develop", "write"],
+          "instruction": "Turn the selected rough notes into a coherent, ready-to-use draft. Preserve every supplied fact and constraint, infer a sensible structure and purpose from the notes, and do not invent names, evidence, dates, commitments, or personal experience.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:file-pen-line",
+          "folder": "Draft & create/General",
+          "show_on_home": false,
+          "guided_drafting": true
+        },
+        {
+          "id": "selection-faq",
+          "name": "Turn the text into an FAQ",
+          "keywords": ["draft", "FAQ", "questions", "answers", "explain"],
+          "instruction": "Turn the selected source text into a concise reader-facing FAQ. Use the questions a reader is most likely to ask, answer each only from the supplied material, preserve uncertainty or limitations, and do not invent policy or facts.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:message-square-text",
+          "folder": "Draft & create/General",
+          "show_on_home": false,
+          "recipient_audience": "general_reader"
+        },
+        {
+          "id": "selection-to-instructions",
+          "name": "Turn the text into instructions",
+          "keywords": ["draft", "instructions", "steps", "procedure", "guide"],
+          "instruction": "Turn the selected material into clear step-by-step instructions. Put prerequisites and warnings before the relevant steps, keep terminology consistent, identify gaps rather than guessing, and do not introduce unsafe or unsupported procedures.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:list-checks",
+          "folder": "Draft & create/General",
+          "show_on_home": false,
+          "recipient_audience": "general_reader"
+        },
+        {
+          "id": "selection-announcement",
+          "name": "Write an announcement from notes",
+          "keywords": ["draft", "announcement", "notice", "update", "audience"],
+          "instruction": "Turn the selected notes into a clear announcement. Lead with what is changing or happening, explain who is affected and any required action, retain supplied dates and contact details exactly, and do not invent decisions, reasons, or commitments.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:send",
+          "folder": "Draft & create/General",
+          "show_on_home": false,
+          "guided_drafting": true,
+          "recipient_audience": "public_online"
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "decisions-planning",
+      "name": "Decisions and planning",
+      "description": "Compare selected options, prioritise items, build an action plan and surface risks.",
+      "actions": [
+        {
+          "id": "decision-compare-options",
+          "name": "Compare the selected options",
+          "keywords": ["decision", "compare", "options", "trade-offs", "recommend"],
+          "instruction": "Compare the options described in the selected text using the criteria and constraints supplied. Explain the practical trade-offs, identify missing information, and recommend an option only when the source supports doing so; state any assumptions behind the recommendation.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:search-check",
+          "folder": "Plan & decide/General",
+          "show_on_home": false,
+          "guided_drafting": true
+        },
+        {
+          "id": "decision-prioritise-items",
+          "name": "Prioritise the selected items",
+          "keywords": ["decision", "prioritise", "rank", "items", "criteria"],
+          "instruction": "Prioritise the items in the selected text using any stated urgency, impact, effort, dependencies, and constraints. Explain the ordering briefly, preserve ties or uncertainty, and do not invent priorities or deadlines when the criteria are missing.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:list-checks",
+          "folder": "Plan & decide/General",
+          "show_on_home": false
+        },
+        {
+          "id": "decision-action-plan",
+          "name": "Turn the goal into an action plan",
+          "keywords": ["decision", "plan", "goal", "steps", "milestones"],
+          "instruction": "Turn the goal, constraints, or notes in the selected text into a practical action plan. Order the steps, identify dependencies and decision points, retain supplied owners or dates, and mark missing information instead of inventing commitments.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:file-pen-line",
+          "folder": "Plan & decide/General",
+          "show_on_home": false,
+          "guided_drafting": true
+        },
+        {
+          "id": "decision-risks-questions",
+          "name": "Identify risks and open questions",
+          "keywords": ["decision", "risks", "questions", "assumptions", "gaps"],
+          "instruction": "Review the selected plan, proposal, or decision and list its material risks, assumptions, dependencies, and unanswered questions. Tie each point to the source, distinguish likelihood from impact where possible, and do not present speculation as fact.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:search-check",
+          "folder": "Plan & decide/General",
+          "show_on_home": false
         }
       ]
     }
