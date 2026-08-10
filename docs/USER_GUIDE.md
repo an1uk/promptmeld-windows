@@ -32,6 +32,13 @@ opening ChatGPT, signing in, or transmitting information. If detection fails
 on a managed or unusual installation, setup can still be completed after an
 explicit warning.
 
+The final setup page offers six optional starter-pack themes: advanced editing,
+email and correspondence, reports and updates, social-media replies, fiction
+authors, and non-fiction authors. Choose up to three if they are genuinely
+useful, or keep the four essentials. The full catalogue is always available later from
+**Configuration > Writing actions > Browse starter packs**; it does not infer
+packs from other installed applications.
+
 1. Select text in another application.
 2. Press `Ctrl+Alt+Space`.
 3. Search for or choose a writing action, then select **Send _action name_**.

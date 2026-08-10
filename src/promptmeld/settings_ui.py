@@ -10,8 +10,12 @@ from importlib.resources import files
 from pathlib import Path
 
 from PySide6.QtCore import (
+    QEasingCurve,
     QEvent,
+    QParallelAnimationGroup,
+    QPoint,
     QPointF,
+    QPropertyAnimation,
     QRectF,
     QSize,
     Qt,
@@ -42,6 +46,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGraphicsOpacityEffect,
     QGridLayout,
     QGroupBox,
     QHeaderView,
@@ -56,7 +61,9 @@ from PySide6.QtWidgets import (
     QProxyStyle,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
+    QStackedWidget,
     QSplitter,
     QStyle,
     QTableWidget,
@@ -139,6 +146,7 @@ from .theme import (
     message_box_stylesheet,
     resolve_theme,
     system_high_contrast_enabled,
+    system_reduced_motion_enabled,
 )
 from .windows import HotkeyParseError, parse_hotkey
 
@@ -632,6 +640,40 @@ class HotkeyCaptureEdit(QLineEdit):
 class FirstRunSetupWizard(QWizard):
     """Short first-run guide with a Windows hotkey availability check."""
 
+    STARTER_PACK_OPTIONS = (
+        (
+            "editing",
+            "Advanced editing",
+            "Improve clarity, structure, tone, and persuasiveness in a draft.",
+        ),
+        (
+            "email",
+            "Email and correspondence",
+            "Draft emails, follow up, soften wording, and make requests clear.",
+        ),
+        (
+            "reports",
+            "Reports and updates",
+            "Turn notes into reports, clear updates, and executive summaries.",
+        ),
+        (
+            "social-replies",
+            "Social media replies",
+            "Reply thoughtfully to YouTube, Reddit, and Facebook text.",
+        ),
+        (
+            "authors-fiction",
+            "Fiction authors",
+            "Get beta-reader reactions, deeper questions, and scene feedback.",
+        ),
+        (
+            "authors-nonfiction",
+            "Non-fiction authors",
+            "Test an argument, evidence, reader journey, and research questions.",
+        ),
+    )
+    STARTER_PACK_LIMIT = 3
+
     def __init__(
         self,
         popup_hotkey: str,
@@ -670,7 +712,7 @@ class FirstRunSetupWizard(QWizard):
         self.setAccessibleName(f"{APP_NAME} first-use setup guide")
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.setOption(QWizard.WizardOption.NoBackButtonOnStartPage)
-        self.resize(720, 500)
+        self.resize(760, 640)
 
         welcome = QWizardPage()
         welcome.setTitle("Write from anywhere in Windows")
@@ -776,21 +818,103 @@ class FirstRunSetupWizard(QWizard):
         self.addPage(hotkey_page)
 
         finish = QWizardPage()
-        finish.setTitle("Understand which choices are remembered")
+        finish.setTitle("Finish setup with a few optional tools")
         finish.setSubTitle(
-            "PromptMeld keeps global and application-specific choices separate."
+            "Keep the essentials, or choose up to three starter packs that suit you."
         )
         finish_layout = QVBoxLayout(finish)
         explanation = QLabel(
-            "Overall defaults in Configuration are remembered for future "
-            "requests. Application profiles can override them for a particular "
-            "source application. Audience, editing strength, factual protection, "
-            "intent, and other request guidance in the launcher apply only to "
-            "the current selection unless an application profile supplies them."
+            "PromptMeld remembers overall defaults. Application profiles can "
+            "set different defaults for an application you actively use; "
+            "one-off launcher choices apply only to the current selection."
         )
         explanation.setWordWrap(True)
         explanation.setObjectName("setupBody")
         finish_layout.addWidget(explanation)
+        starter_packs = QWidget()
+        starter_packs.setObjectName("setupStarterPacks")
+        starter_packs.setAccessibleDescription(
+            "Choose up to three optional groups of writing actions to add now."
+        )
+        starter_packs_layout = QVBoxLayout(starter_packs)
+        starter_packs_layout.setContentsMargins(0, 0, 0, 0)
+        starter_packs_layout.setSpacing(6)
+        starter_packs_title = QLabel("Optional starter packs")
+        starter_packs_title.setObjectName("setupStarterPackSectionTitle")
+        starter_packs_layout.addWidget(starter_packs_title)
+        self.starter_pack_stack = QStackedWidget()
+        self.starter_pack_stack.setObjectName("setupStarterPackCarousel")
+        self.starter_pack_stack.setAccessibleName("Starter-pack choices")
+        self.starter_pack_checkboxes: dict[str, QCheckBox] = {}
+        self.starter_pack_cards: dict[str, QFrame] = {}
+        self.starter_pack_animation: QParallelAnimationGroup | None = None
+        for pack_id, name, description in self.STARTER_PACK_OPTIONS:
+            option = QFrame()
+            option.setObjectName("setupStarterPackCard")
+            option.setAccessibleName(f"Starter pack: {name}")
+            option.setMinimumHeight(164)
+            option_layout = QVBoxLayout(option)
+            option_layout.setContentsMargins(18, 16, 18, 16)
+            option_layout.setSpacing(8)
+            name_label = QLabel(name)
+            name_label.setObjectName("setupStarterPackTitle")
+            option_layout.addWidget(name_label)
+            description_label = QLabel(description)
+            description_label.setObjectName("setupStarterPackDescription")
+            description_label.setWordWrap(True)
+            option_layout.addWidget(description_label)
+            option_layout.addStretch(1)
+            checkbox = QCheckBox(f"Add {name}")
+            checkbox.setAccessibleDescription(description)
+            checkbox.toggled.connect(self._update_starter_pack_limit)
+            self.starter_pack_checkboxes[pack_id] = checkbox
+            self.starter_pack_cards[pack_id] = option
+            option_layout.addWidget(checkbox)
+            self.starter_pack_stack.addWidget(option)
+        self.starter_pack_stack.setMinimumHeight(164)
+        self.starter_pack_stack.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        starter_packs_layout.addWidget(self.starter_pack_stack)
+        starter_pack_navigation = QHBoxLayout()
+        self.previous_starter_pack_button = QPushButton("Previous")
+        self.previous_starter_pack_button.setAccessibleName(
+            "Show the previous starter pack"
+        )
+        self.previous_starter_pack_button.clicked.connect(
+            lambda: self._show_starter_pack(
+                self.starter_pack_stack.currentIndex() - 1
+            )
+        )
+        self.starter_pack_position = QLabel()
+        self.starter_pack_position.setObjectName("setupStarterPackPosition")
+        self.starter_pack_position.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.next_starter_pack_button = QPushButton("Next")
+        self.next_starter_pack_button.setAccessibleName(
+            "Show the next starter pack"
+        )
+        self.next_starter_pack_button.clicked.connect(
+            lambda: self._show_starter_pack(
+                self.starter_pack_stack.currentIndex() + 1
+            )
+        )
+        starter_pack_navigation.addWidget(self.previous_starter_pack_button)
+        starter_pack_navigation.addWidget(self.starter_pack_position, 1)
+        starter_pack_navigation.addWidget(self.next_starter_pack_button)
+        finish_layout.addWidget(starter_packs)
+        finish_layout.addLayout(starter_pack_navigation)
+        self.starter_pack_limit_label = QLabel()
+        self.starter_pack_limit_label.setObjectName("setupBody")
+        self.starter_pack_limit_label.setWordWrap(True)
+        finish_layout.addWidget(self.starter_pack_limit_label)
+        catalogue_note = QLabel(
+            "Browse, add, remove, or update all starter packs later in "
+            "Configuration > Writing actions > Browse starter packs..."
+        )
+        catalogue_note.setObjectName("setupBody")
+        catalogue_note.setWordWrap(True)
+        finish_layout.addWidget(catalogue_note)
         self.start_with_windows = QCheckBox(
             "Start PromptMeld when I sign in to Windows"
         )
@@ -810,6 +934,7 @@ class FirstRunSetupWizard(QWizard):
             app.paletteChanged.connect(self._system_appearance_changed)
         self._check_chatgpt_app()
         self._test_hotkey()
+        self._update_starter_pack_limit()
         self._update_summary()
 
     def showEvent(self, event) -> None:
@@ -911,6 +1036,35 @@ class FirstRunSetupWizard(QWizard):
                     padding: 12px 14px;
                     font-size: 14px;
                 }
+                QLabel#setupStarterPackSectionTitle {
+                    color: #202631;
+                    font-size: 15px;
+                    font-weight: 650;
+                }
+                QFrame#setupStarterPackCard {
+                    background: #ffffff;
+                    border: 1px solid #c2ccda;
+                    border-radius: 7px;
+                }
+                QFrame#setupStarterPackCard[selected="true"] {
+                    background: #eaf1ff;
+                    border: 2px solid #315ecb;
+                }
+                QLabel#setupStarterPackTitle {
+                    color: #1d2b43;
+                    font-size: 16px;
+                    font-weight: 700;
+                }
+                QFrame#setupStarterPackCard QCheckBox {
+                    color: #1d2b43;
+                    font-weight: 650;
+                }
+                QLabel#setupStarterPackDescription {
+                    color: #33445e;
+                    font-size: 13px;
+                    line-height: 1.3;
+                }
+                QLabel#setupStarterPackPosition { color: #41516a; }
                 QLabel#hotkeyStatus[state="available"] { color: #18733b; }
                 QLabel#hotkeyStatus[state="error"] { color: #a32626; }
                 QLabel#chatgptStatus[state="available"] { color: #18733b; }
@@ -989,6 +1143,35 @@ class FirstRunSetupWizard(QWizard):
                 padding: 12px 14px;
                 font-size: 14px;
             }
+            QLabel#setupStarterPackSectionTitle {
+                color: #f4f5f7;
+                font-size: 15px;
+                font-weight: 650;
+            }
+            QFrame#setupStarterPackCard {
+                background: #222832;
+                border: 1px solid #53647f;
+                border-radius: 7px;
+            }
+            QFrame#setupStarterPackCard[selected="true"] {
+                background: #283852;
+                border: 2px solid #85a0ff;
+            }
+            QLabel#setupStarterPackTitle {
+                color: #ffffff;
+                font-size: 16px;
+                font-weight: 700;
+            }
+            QFrame#setupStarterPackCard QCheckBox {
+                color: #f4f6fb;
+                font-weight: 650;
+            }
+            QLabel#setupStarterPackDescription {
+                color: #d3dbea;
+                font-size: 13px;
+                line-height: 1.3;
+            }
+            QLabel#setupStarterPackPosition { color: #c9d3e8; }
             QLabel#hotkeyStatus[state="available"] { color: #7ee2a8; }
             QLabel#hotkeyStatus[state="error"] { color: #ff9d9d; }
             QLabel#chatgptStatus[state="available"] { color: #7ee2a8; }
@@ -1040,6 +1223,100 @@ class FirstRunSetupWizard(QWizard):
 
     def selected_hotkey(self) -> str:
         return self.hotkey_editor.text().strip()
+
+    def selected_starter_pack_ids(self) -> tuple[str, ...]:
+        return tuple(
+            pack_id
+            for pack_id, checkbox in self.starter_pack_checkboxes.items()
+            if checkbox.isChecked()
+        )
+
+    def _update_starter_pack_limit(self, *args) -> None:
+        selected_count = len(self.selected_starter_pack_ids())
+        limit_reached = selected_count >= self.STARTER_PACK_LIMIT
+        for pack_id, checkbox in self.starter_pack_checkboxes.items():
+            checkbox.setEnabled(checkbox.isChecked() or not limit_reached)
+            card = self.starter_pack_cards[pack_id]
+            card.setProperty("selected", checkbox.isChecked())
+            card.style().unpolish(card)
+            card.style().polish(card)
+        self.starter_pack_limit_label.setText(
+            (
+                "No optional packs selected. You can add them later in "
+                "Configuration."
+                if not selected_count
+                else (
+                    f"{selected_count} of {self.STARTER_PACK_LIMIT} starter "
+                    "packs selected."
+                    if not limit_reached
+                    else "Three starter packs selected. Uncheck one to choose another."
+                )
+            )
+        )
+        self._show_starter_pack(self.starter_pack_stack.currentIndex())
+
+    def _show_starter_pack(self, index: int) -> None:
+        count = self.starter_pack_stack.count()
+        if not count:
+            return
+        index = max(0, min(index, count - 1))
+        previous_index = self.starter_pack_stack.currentIndex()
+        if index != previous_index:
+            self._stop_starter_pack_animation()
+        self.starter_pack_stack.setCurrentIndex(index)
+        self.previous_starter_pack_button.setEnabled(index > 0)
+        self.next_starter_pack_button.setEnabled(index < count - 1)
+        self.starter_pack_position.setText(
+            f"Starter pack {index + 1} of {count}"
+        )
+        if (
+            index != previous_index
+            and not system_reduced_motion_enabled()
+            and not system_high_contrast_enabled()
+        ):
+            self._animate_starter_pack(index > previous_index)
+        self._update_summary()
+
+    def _stop_starter_pack_animation(self) -> None:
+        if self.starter_pack_animation is not None:
+            self.starter_pack_animation.stop()
+            self.starter_pack_animation = None
+        for card in self.starter_pack_cards.values():
+            if card.graphicsEffect() is not None:
+                card.setGraphicsEffect(None)
+            card.move(QPoint(0, 0))
+
+    def _animate_starter_pack(self, moving_forward: bool) -> None:
+        card = self.starter_pack_stack.currentWidget()
+        if card is None:
+            return
+        effect = QGraphicsOpacityEffect(card)
+        card.setGraphicsEffect(effect)
+        offset = 18 if moving_forward else -18
+        card.move(QPoint(offset, 0))
+        animation = QParallelAnimationGroup(self)
+        opacity = QPropertyAnimation(effect, b"opacity", animation)
+        opacity.setDuration(180)
+        opacity.setStartValue(0.0)
+        opacity.setEndValue(1.0)
+        opacity.setEasingCurve(QEasingCurve.Type.OutCubic)
+        position = QPropertyAnimation(card, b"pos", animation)
+        position.setDuration(180)
+        position.setStartValue(QPoint(offset, 0))
+        position.setEndValue(QPoint(0, 0))
+        position.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.addAnimation(opacity)
+        animation.addAnimation(position)
+
+        def finish_animation() -> None:
+            if self.starter_pack_animation is animation:
+                card.setGraphicsEffect(None)
+                card.move(QPoint(0, 0))
+                self.starter_pack_animation = None
+
+        animation.finished.connect(finish_animation)
+        self.starter_pack_animation = animation
+        animation.start()
 
     def _check_chatgpt_app(self, *args) -> None:
         try:
@@ -1127,6 +1404,8 @@ class FirstRunSetupWizard(QWizard):
             "\n"
             f"Launcher shortcut: {self.selected_hotkey() or 'Not set'} "
             f"({status})"
+            "\n"
+            f"Starter packs: {len(self.selected_starter_pack_ids())} selected"
         )
 
     def accept(self) -> None:
@@ -4201,8 +4480,46 @@ class ActionSettingsDialog(QDialog):
         self.start_with_windows.setChecked(
             wizard.start_with_windows.isChecked()
         )
+        selected_pack_ids = getattr(
+            wizard,
+            "selected_starter_pack_ids",
+            lambda: (),
+        )()
+        self._add_setup_starter_packs(tuple(selected_pack_ids))
         self._update_hotkey_statuses(check_windows=True)
         self._mark_unsaved()
+
+    def _add_setup_starter_packs(
+        self,
+        pack_ids: tuple[str, ...],
+    ) -> None:
+        if not pack_ids:
+            return
+        packs_by_id = {
+            pack.pack_id: pack for pack in self.builtin_action_packs
+        }
+        first_added_index = len(self.actions)
+        added_count = 0
+        for pack_id in pack_ids:
+            pack = packs_by_id.get(pack_id)
+            if pack is None:
+                continue
+            result = merge_action_pack(self.actions, pack)
+            self.actions = result.actions
+            if result.added_count:
+                added_count += result.added_count
+                self._ensure_default_folder_icons(pack.actions)
+        if not added_count:
+            return
+        self._populate_folder_choices()
+        self._refresh_list(first_added_index)
+        self._mark_unsaved()
+        QMessageBox.information(
+            self,
+            "Starter packs added",
+            f"Added {added_count} optional writing actions. Choose Save to "
+            "keep them, or use Browse starter packs to add more later.",
+        )
 
     def _update_hotkey_statuses(self, check_windows: bool = False) -> None:
         for command_id, (state, message) in self._hotkey_assessments(

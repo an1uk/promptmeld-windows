@@ -59,6 +59,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QScrollArea,
     QSystemTrayIcon,
+    QWizard,
 )
 
 
@@ -2350,6 +2351,122 @@ def test_first_run_setup_tests_launcher_shortcut_and_explains_scope(qtbot):
     assert "Summarise" in wizard.hotkey_status.text()
 
 
+def test_first_run_setup_offers_a_small_deliberate_starter_pack_choice(qtbot):
+    wizard = FirstRunSetupWizard(
+        "Ctrl+Alt+Space",
+        lambda _hotkey: True,
+        chatgpt_app_available=lambda: True,
+    )
+    qtbot.addWidget(wizard)
+
+    assert tuple(wizard.starter_pack_checkboxes) == (
+        "editing",
+        "email",
+        "reports",
+        "social-replies",
+        "authors-fiction",
+        "authors-nonfiction",
+    )
+    assert wizard.selected_starter_pack_ids() == ()
+    descriptions = wizard.findChildren(QLabel, "setupStarterPackDescription")
+    assert len(descriptions) == 6
+    assert all(description.wordWrap() for description in descriptions)
+    assert wizard.starter_pack_stack.count() == 6
+    assert wizard.starter_pack_stack.currentIndex() == 0
+    assert wizard.starter_pack_position.text() == "Starter pack 1 of 6"
+    assert wizard.previous_starter_pack_button.isEnabled() is False
+    assert any(
+        "Configuration > Writing actions > Browse starter packs" in label.text()
+        for label in wizard.findChildren(QLabel)
+    )
+
+    for pack_id in ("editing", "email", "reports"):
+        wizard.starter_pack_checkboxes[pack_id].setChecked(True)
+
+    assert wizard.selected_starter_pack_ids() == (
+        "editing",
+        "email",
+        "reports",
+    )
+    assert wizard.starter_pack_checkboxes["authors-fiction"].isEnabled() is False
+    assert "Three starter packs selected" in wizard.starter_pack_limit_label.text()
+
+    wizard.starter_pack_checkboxes["reports"].setChecked(False)
+
+    assert wizard.starter_pack_checkboxes["authors-fiction"].isEnabled() is True
+    wizard.next_starter_pack_button.click()
+    assert wizard.starter_pack_stack.currentIndex() == 1
+    assert wizard.previous_starter_pack_button.isEnabled() is True
+
+
+def test_first_run_starter_pack_carousel_keeps_navigation_below_card_and_animates(
+    qtbot,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        settings_ui_module,
+        "system_reduced_motion_enabled",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        settings_ui_module,
+        "system_high_contrast_enabled",
+        lambda: False,
+    )
+    wizard = FirstRunSetupWizard(
+        "Ctrl+Alt+Space",
+        lambda _hotkey: True,
+        chatgpt_app_available=lambda: True,
+    )
+    qtbot.addWidget(wizard)
+    wizard.show()
+    qtbot.wait(1)
+    for _ in range(3):
+        wizard.button(QWizard.WizardButton.NextButton).click()
+        qtbot.wait(1)
+
+    card = wizard.starter_pack_stack.currentWidget()
+    assert card is not None
+    card_bottom = card.mapTo(
+        wizard,
+        card.rect().bottomLeft(),
+    ).y()
+    navigation_top = wizard.previous_starter_pack_button.mapTo(
+        wizard,
+        wizard.previous_starter_pack_button.rect().topLeft(),
+    ).y()
+    assert navigation_top > card_bottom
+
+    wizard.next_starter_pack_button.click()
+
+    assert wizard.starter_pack_animation is not None
+    assert wizard.starter_pack_animation.animationAt(0).duration() == 180
+    qtbot.wait(220)
+    assert wizard.starter_pack_animation is None
+
+
+def test_first_run_starter_pack_carousel_skips_animation_for_reduced_motion(
+    qtbot,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        settings_ui_module,
+        "system_reduced_motion_enabled",
+        lambda: True,
+    )
+    wizard = FirstRunSetupWizard(
+        "Ctrl+Alt+Space",
+        lambda _hotkey: True,
+        chatgpt_app_available=lambda: True,
+    )
+    qtbot.addWidget(wizard)
+
+    wizard.next_starter_pack_button.click()
+
+    assert wizard.starter_pack_stack.currentIndex() == 1
+    assert wizard.starter_pack_animation is None
+
+
 def test_first_run_setup_rechecks_missing_chatgpt_app(qtbot):
     checks = iter((False, True))
     wizard = FirstRunSetupWizard(
@@ -2417,6 +2534,9 @@ def test_first_run_setup_has_explicit_readable_dark_appearance(qtbot):
     assert "QWizard QLabel { color: #f4f5f7; }" in style
     assert "QLabel#setupSteps" in style
     assert "color: #d9e2ff" in style
+    assert "QFrame#setupStarterPackCard" in style
+    assert "QLabel#setupStarterPackDescription" in style
+    assert "color: #d3dbea" in style
     assert "QPushButton:default" in style
     assert "background-color: #17191e" in wizard.native_header_style
 
@@ -2439,6 +2559,9 @@ def test_first_run_setup_is_saved_and_reloads_hotkeys(tmp_path, monkeypatch):
 
         def selected_hotkey(self):
             return "Ctrl+Shift+F8"
+
+        def selected_starter_pack_ids(self):
+            return ("email", "reports")
 
         def deleteLater(self):
             events.append("deleted")
@@ -2477,6 +2600,11 @@ def test_first_run_setup_is_saved_and_reloads_hotkeys(tmp_path, monkeypatch):
     assert saved.first_run_setup_completed is True
     assert saved.popup_hotkey == "Ctrl+Shift+F8"
     assert saved.startup_enabled is True
+    assert {action.id for action in load_actions(paths.actions_file)} >= {
+        "edit",
+        "email-draft",
+        "report-from-notes",
+    }
     assert events == [
         "unregistered",
         "reloaded:True",
