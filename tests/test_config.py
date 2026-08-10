@@ -53,6 +53,79 @@ def test_load_actions(tmp_path):
     assert actions[0].icon == "lucide:scissors"
     assert actions[0].folder == "Editing/Quick actions"
     assert actions[0].recipient_audience == "inherit"
+    assert actions[0].purpose == "transform"
+    assert actions[0].result_handling == "purpose_default"
+
+
+def test_action_purpose_and_result_handling_round_trip(tmp_path):
+    path = tmp_path / "actions.json"
+    action = WritingAction(
+        "review",
+        "Review",
+        (),
+        "Review the selected text.",
+        purpose="analyse",
+        result_handling="copy",
+    )
+
+    save_actions(path, [action])
+
+    assert load_actions(path) == [action]
+    payload = json.loads(path.read_text(encoding="utf-8"))[0]
+    assert payload["purpose"] == "analyse"
+    assert payload["result_handling"] == "copy"
+
+
+def test_legacy_folder_purpose_migration_uses_safe_review_categories(tmp_path):
+    path = tmp_path / "actions.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "summary",
+                    "name": "Summary",
+                    "instruction": "Summarise it.",
+                    "folder": "Summarise & understand/General",
+                },
+                {
+                    "id": "reply",
+                    "name": "Reply",
+                    "instruction": "Reply to it.",
+                    "folder": "Reply/General replies",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    actions = load_actions(path)
+
+    assert actions[0].purpose == "extract"
+    assert actions[1].purpose == "reply"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("purpose", "mystery"), ("result_handling", "unsafe-magic")),
+)
+def test_invalid_action_purpose_options_are_rejected(tmp_path, field, value):
+    path = tmp_path / "actions.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "bad",
+                    "name": "Bad",
+                    "instruction": "Do it.",
+                    field: value,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match=field):
+        load_actions(path)
 
 
 def test_save_actions_round_trips_icon_and_order(tmp_path):

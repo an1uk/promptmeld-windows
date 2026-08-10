@@ -78,6 +78,28 @@ RECIPIENT_AUDIENCE_OPTIONS = (
 RECIPIENT_AUDIENCE_VALUES = tuple(
     value for value, _label in RECIPIENT_AUDIENCE_OPTIONS
 )
+ACTION_PURPOSE_OPTIONS = (
+    ("transform", "Edit or replace selected text"),
+    ("reply", "Draft a reply to selected text"),
+    ("analyse", "Analyse or review selected text"),
+    ("extract", "Extract or summarise information"),
+    ("develop", "Develop ideas or ask useful questions"),
+)
+ACTION_PURPOSE_VALUES = tuple(
+    value for value, _label in ACTION_PURPOSE_OPTIONS
+)
+ACTION_RESULT_HANDLING_OPTIONS = (
+    ("purpose_default", "Use the safe recommendation for this purpose"),
+    ("inherit", "Use application or overall defaults"),
+    ("replace", "Apply automatically when safe"),
+    ("review", "Open a review window"),
+    ("copy", "Copy to the clipboard"),
+    ("leave", "Leave the result in ChatGPT"),
+)
+ACTION_RESULT_HANDLING_VALUES = tuple(
+    value for value, _label in ACTION_RESULT_HANDLING_OPTIONS
+)
+SAFE_REVIEW_ACTION_PURPOSES = frozenset({"analyse", "extract", "develop"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +116,8 @@ class WritingAction:
     natural_voice: str = "inherit"
     guided_drafting: bool = False
     recipient_audience: str = "inherit"
+    purpose: str = "transform"
+    result_handling: str = "purpose_default"
 
 
 @dataclass(frozen=True, slots=True)

@@ -18,8 +18,8 @@ The action manager lets you:
 - Select a folder and delete it, its nested folders, and all contained actions
   after reviewing a count-bearing confirmation.
 - Import and export portable, readable JSON action packs.
-- Add any of nineteen optional four-action starter packs without replacing the
-  current library.
+- Browse twenty-one optional four-action starter packs, inspect their actions,
+  and add, update, restore, or remove them without affecting unrelated actions.
 - Organise actions in folders and nested folders.
 - Edit action names, search keywords, and ChatGPT instructions.
 - Pin actions to the launcher home screen.
@@ -28,6 +28,10 @@ The action manager lets you:
 - Allow suitable actions to use optional guided drafting.
 - Set a default recipient or audience for an action while retaining a
   per-request launcher override.
+- Describe the action's purpose and choose how its result should be handled.
+  Analysis, extraction, and idea-development purposes recommend a safe review
+  that cannot replace the original selection unless the action is explicitly
+  configured otherwise.
 - Choose bundled Lucide icons, type an emoji or symbol, or import a local image.
 - Configure badged folder icons.
 - Control how many genuinely used actions appear in **Most used**.
@@ -70,7 +74,9 @@ An exported pack has this top-level structure:
       "folder": "Edit & revise/Clarity",
       "show_on_home": false,
       "natural_voice": "inherit",
-      "guided_drafting": false
+      "guided_drafting": false,
+      "purpose": "transform",
+      "result_handling": "purpose_default"
     }
   ]
 }
@@ -80,13 +86,14 @@ Choose **New subfolder** to select a parent and name a nested level, or use `/`
 in a folder path directly, for example `Reply/General replies`. The built-in
 packs use shared intent-led roots such as
 **Reply**, **Edit & revise**, **Draft & create**, **Summarise & understand**,
-**Explain & learn**, and **Plan & decide**, rather than creating a separate
-top-level folder for every pack. Search covers every folder, while frequently
-and recently used actions rank first within the current scope. When the
-launcher has a captured selection, it also shows a **Suggested** section and
-ranks search and folder results using the source application, selection-length
-band, and locally detected text type. Pinned **Direct actions** keep their fixed
-position. Pause over a suggested action to see the ranking reasons.
+**Review & develop**, **Explain & learn**, and **Plan & decide**, rather than
+creating a separate top-level folder for every pack. Search covers every folder,
+while frequently and recently used actions rank first within the current scope.
+When the launcher has a captured selection, it also shows a **Suggested**
+section and ranks search and folder results using the source application,
+selection-length band, and locally detected text type. Pinned **Direct actions**
+keep their fixed position. Pause over a suggested action to see the ranking
+reasons.
 
 ## General settings
 
@@ -99,7 +106,10 @@ The **General** tab controls:
   custom language.
 - The number of most-used actions shown on the launcher home screen.
 - Whether PromptMeld starts automatically when you sign in to Windows.
-- A reusable first-use setup guide with launcher-shortcut testing.
+- A reusable first-use setup guide that distinguishes ChatGPT on the web from
+  the required Windows desktop app, checks its local Windows registration,
+  provides the official download page when missing, and tests the launcher
+  shortcut.
 - The ChatGPT Project base name and naming strategy:
   - **Writing action or folder** keeps the current organisation, for example
     `PromptMeld - Editing`.
@@ -286,11 +296,14 @@ All four appear on the launcher home screen and have a default shortcut:
 | `Ctrl+Alt+3` | **Shorten without losing meaning** |
 | `Ctrl+Alt+4` | **Draft a reply** |
 
-Use **Add starter pack** to expand this core with any of nineteen focused packs.
-The menu starts with the intended use of the selected text: **Reply or
-respond**, **Edit or revise**, **Draft or create**, **Summarise or extract**,
-**Plan or decide**, or **Explain or learn**. Each pack contains four actions
-and is added without replacing the current library:
+Use **Browse starter packs…** to expand this core with any of twenty-one
+focused packs. The catalogue can be searched by pack or action name and
+filtered by intended-use category: **Reply or respond**, **Edit or revise**,
+**Draft or create**, **Summarise or extract**, **Plan or decide**, **Review or
+develop**, or **Explain or learn**. Selecting a pack shows its description,
+intended use, and four wrapped action rows containing the complete instruction.
+A checkmark, plus, or circular-arrow icon shows whether each action matches the
+catalogue, is missing, or differs from the catalogue version:
 
 | Menu group | Pack | Focus |
 |---|---|---|
@@ -311,10 +324,29 @@ and is added without replacing the current library:
 | Draft or create | **CVs and applications** | CV wording, cover letters, application answers, and professional profiles |
 | Summarise or extract | **Summaries and extraction** | Concise summaries, facts and figures, open questions, and timelines |
 | Plan or decide | **Decisions and planning** | Option comparisons, prioritisation, action plans, and risk reviews |
+| Review or develop | **Fiction authors** | Beta-reader reactions, deeper questions, continuity checks, and scene craft |
+| Review or develop | **Non-fiction authors** | Critical reading, evidence testing, reader journey, and research questions |
 | Explain or learn | **Technical communication** | Explanations, troubleshooting, support requests, and bug reports |
 | Explain or learn | **Study and learning** | Explanations, study notes, revision aids, and knowledge checks |
 
-Packs can be combined, edited, exported, or removed like any other actions.
+![Simplified starter-pack catalogue](starter-pack-catalogue.png)
+
+The catalogue marks packs as not installed, partially installed, installed,
+installed with personalised settings, or different from the catalogue.
+Its single primary button offers **Add pack**, **Add missing actions**, or
+**Update from catalogue** only when relevant. Less frequent **Restore shipped
+version** and **Remove pack** operations appear under **More**. Updating keeps
+personal folder placement, shortcuts, enabled state, launcher pinning, and
+natural-voice choices. Restore deliberately resets all settings for that
+pack's actions after confirmation. Remove affects only identified pack actions
+after confirmation; unrelated actions and folders remain.
+
+Recommendations are based on familiar locally detected applications such as
+Word, Outlook, browsers, Teams, Slack, and VS Code. Application detection is
+performed on the PC and the detected application list is not transmitted.
+Recommended packs receive a star and sort first; Search and Category remain
+available without a separate recommendation filter. Packs can still be
+combined, edited, and exported like other actions.
 Most-used entries appear only after actual use.
 
 ## Local files
@@ -351,7 +383,9 @@ Each entry in `actions.json` follows this shape:
   "show_on_home": true,
   "natural_voice": "inherit",
   "guided_drafting": false,
-  "recipient_audience": "inherit"
+  "recipient_audience": "inherit",
+  "purpose": "transform",
+  "result_handling": "purpose_default"
 }
 ```
 
@@ -367,6 +401,22 @@ missing context. Valid `recipient_audience` values are `inherit`,
 `customer_client`, `company_support`, `public_online`, `general_reader`, and
 `other`. `inherit` uses the source application's audience default; a launcher
 choice for the current request takes priority.
+
+Valid `purpose` values are `transform`, `reply`, `analyse`, `extract`, and
+`develop`. Valid `result_handling` values are `purpose_default`, `inherit`,
+`replace`, `review`, `copy`, and `leave`. `purpose_default` follows application
+or overall result settings for transformation and reply actions. Analysis,
+extraction, and development actions instead open a non-destructive review and
+withhold **Apply now**. Choosing another result-handling value is an explicit
+per-action override.
+
+When an action is routed to **Open a review window**, PromptMeld asks ChatGPT
+for a marked rewrite and editorial-feedback response. The review window parses
+that structure but does not depend on it: if the markers are missing, it treats
+the response as the rewrite and still computes a local, lossless diff against
+the captured source. Analysis, extraction, and development purposes use the
+feedback view without exposing replacement controls unless their action-level
+result handling explicitly opts into a replacement-capable route.
 
 After manual JSON changes, exit and restart PromptMeld. Changes made through
 the configuration window take effect immediately after saving.

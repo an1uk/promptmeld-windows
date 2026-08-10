@@ -9,6 +9,7 @@ from promptmeld.models import (
     ApplicationProfile,
     CapturedSelection,
     SubmissionResult,
+    WritingAction,
 )
 from promptmeld.paths import AppPaths
 from promptmeld.privacy import RedactionResult
@@ -99,6 +100,7 @@ def completion_app() -> PromptMeld:
     app.pending_result_text = ""
     app.pending_result_selection = None
     app.pending_result_applied = False
+    app.pending_result_can_apply = False
     app.preserved_original = None
     app.last_replacement = None
     app.copy_result_action = FakeAction()
@@ -219,7 +221,13 @@ Second version.
     assert reviews == [
         (
             ["First version.", "Second version."],
-            {"requested_count": 2, "can_apply": True},
+            {
+                "requested_count": 2,
+                "can_apply": True,
+                    "action_purpose": "",
+                    "safe_review": False,
+                    "source_text": "Original text",
+            },
         )
     ]
     assert app.pending_result_text == "First version."
@@ -230,6 +238,10 @@ Second version.
 
 def test_review_completion_notifies_with_copy_and_apply_actions():
     app = completion_app()
+    reviews = []
+    app._show_result_review = lambda results, **options: reviews.append(
+        (results, options)
+    )
     selection = CapturedSelection(
         "Original text",
         123,
@@ -250,6 +262,53 @@ def test_review_completion_notifies_with_copy_and_apply_actions():
     assert app.notifications[-1][0] == "Response ready"
     assert app.copy_result_action.enabled is True
     assert app.apply_result_action.enabled is True
+    assert reviews[0][0] == ["Generated answer"]
+
+
+def test_safe_analysis_completion_cannot_apply_over_original_selection():
+    app = completion_app()
+    reviews = []
+    app._show_result_review = lambda results, **options: reviews.append(
+        (results, options)
+    )
+    selection = CapturedSelection(
+        "Original text",
+        123,
+        "Private title",
+        True,
+        "winword.exe",
+    )
+
+    app._submission_finished(
+        SubmissionResult(
+            submitted=True,
+            generated_text="The argument needs stronger evidence.",
+        ),
+        selection=selection,
+        return_decision=ReturnDecision(
+            review_result=True,
+            action_purpose="analyse",
+            purpose_safe_review=True,
+            action_policy_locked=True,
+        ),
+    )
+
+    assert app.copy_result_action.enabled is True
+    assert app.apply_result_action.enabled is False
+    assert app.pending_result_can_apply is False
+    assert reviews == [
+        (
+            ["The argument needs stronger evidence."],
+            {
+                "requested_count": 1,
+                "can_apply": False,
+                    "action_purpose": "analyse",
+                    "safe_review": True,
+                    "source_text": "Original text",
+            },
+        )
+    ]
+    assert "without changing" in app.notifications[-1][1]
 
 
 def test_review_choice_becomes_the_result_used_by_tray_actions(monkeypatch):
@@ -265,6 +324,54 @@ def test_review_choice_becomes_the_result_used_by_tray_actions(monkeypatch):
     app.copy_latest_result()
 
     assert clipboard == ["Second version"]
+
+
+def test_apply_uses_only_the_changes_selected_in_review(monkeypatch):
+    app = completion_app()
+    selection = CapturedSelection(
+        "Original sentence.",
+        123,
+        "Private title",
+        True,
+        "winword.exe",
+    )
+    app._remember_completed_result(
+        SubmissionResult(
+            submitted=True,
+            generated_text="Completely revised sentence.",
+        ),
+        selection,
+    )
+
+    class FakeSelectiveReview:
+        def is_selective_review(self):
+            return True
+
+        def has_selected_changes(self):
+            return True
+
+        def isVisible(self):
+            return False
+
+    app.result_review = FakeSelectiveReview()
+    app._select_completed_result("Partly revised sentence.")
+    replacements = []
+    monkeypatch.setattr(
+        app_module,
+        "replace_source_selection",
+        lambda *args: replacements.append(args),
+    )
+
+    app.apply_latest_result()
+
+    assert replacements == [
+        (
+            123,
+            "Original sentence.",
+            "Partly revised sentence.",
+            "winword.exe",
+        )
+    ]
 
 
 def recovery_app(selection: CapturedSelection) -> PromptMeld:
@@ -420,6 +527,71 @@ def test_submission_uses_explicitly_approved_redacted_prompt(
     assert options["redaction_replacements"] == {
         "[EMAIL_1]": "jane@example.com"
     }
+
+
+def test_review_submission_requests_structured_rewrite_and_feedback(
+    monkeypatch,
+):
+    app = object.__new__(PromptMeld)
+    app.automation_worker = None
+    app.settings = AppSettings(
+        auto_submit_enabled=True,
+        privacy_preview_enabled=False,
+        application_profiles={
+            "winword.exe": ApplicationProfile(return_mode="review")
+        },
+    )
+    app.current_selection = CapturedSelection(
+        "Original text",
+        123,
+        "Private title",
+        True,
+        "winword.exe",
+    )
+    app.popup = None
+    app.cancel_automation_action = FakeAction()
+    app.notify = lambda *args: None
+    app._show_automation_progress = lambda *args, **kwargs: FakeProgress()
+
+    class ThreadPool:
+        def __init__(self):
+            self.worker = None
+
+        def start(self, worker):
+            self.worker = worker
+
+    app.thread_pool = ThreadPool()
+    calls = []
+    monkeypatch.setattr(
+        app_module,
+        "submit_via_worker",
+        lambda prompt, project, settings, **options: calls.append(prompt)
+        or SubmissionResult(submitted=True),
+    )
+    prompt = (
+        "Writing task:\nRewrite this.\n\n"
+        "Source text begins below:\n<<<SOURCE>>>\nOriginal text\n"
+        "<<<END SOURCE>>>"
+    )
+
+    app._submit_prompt(
+        prompt,
+        action=WritingAction(
+            "rewrite",
+            "Rewrite",
+            (),
+            "Rewrite this.",
+            purpose="transform",
+        ),
+    )
+    app.thread_pool.worker.function(lambda *args: None)
+
+    submitted_prompt = calls[0]
+    assert "<<<PROMPTMELD_REWRITE>>>" in submitted_prompt
+    assert "<<<PROMPTMELD_FEEDBACK>>>" in submitted_prompt
+    assert submitted_prompt.index("Selective review output:") < (
+        submitted_prompt.index("Source text begins below:")
+    )
 
 
 def test_submission_skips_privacy_preview_when_disabled_for_application(

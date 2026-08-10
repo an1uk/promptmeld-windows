@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from dataclasses import dataclass, replace
 from importlib.resources import files
 from pathlib import Path
@@ -27,6 +28,9 @@ class ActionPack:
     description: str
     actions: tuple[WritingAction, ...]
     pack_id: str = ""
+    category: str = ""
+    intended_use: str = ""
+    recommended_applications: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +40,227 @@ class ActionPackMergeResult:
     renamed_count: int
     cleared_hotkey_count: int
     first_added_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class ActionPackInstallation:
+    status: str
+    installed_count: int
+    missing_count: int
+    modified_count: int
+    update_count: int = 0
+
+    @property
+    def label(self) -> str:
+        return {
+            "not_installed": "Not installed",
+            "partial": "Partially installed",
+            "installed": "Installed",
+            "modified": "Installed — personalised settings",
+            "update_available": "Content differs from catalogue",
+        }[self.status]
+
+
+@dataclass(frozen=True, slots=True)
+class ActionPackChangeResult:
+    actions: list[WritingAction]
+    added_count: int = 0
+    updated_count: int = 0
+    removed_count: int = 0
+    first_changed_index: int = -1
+
+
+PACK_CATEGORY_ORDER = (
+    "Reply or respond",
+    "Edit or revise",
+    "Draft or create",
+    "Summarise or extract",
+    "Plan or decide",
+    "Review or develop",
+    "Explain or learn",
+)
+PACK_CATEGORIES = {
+    "replies-arguments": "Reply or respond",
+    "social-replies": "Reply or respond",
+    "customer-relations": "Reply or respond",
+    "email": "Reply or respond",
+    "complaints": "Reply or respond",
+    "editing": "Edit or revise",
+    "tone-voice": "Edit or revise",
+    "social-editing": "Edit or revise",
+    "argument-editing": "Edit or revise",
+    "reviews-feedback": "Edit or revise",
+    "draft-from-selection": "Draft or create",
+    "reports": "Draft or create",
+    "social-posts": "Draft or create",
+    "meetings": "Draft or create",
+    "career-writing": "Draft or create",
+    "summaries-extraction": "Summarise or extract",
+    "decisions-planning": "Plan or decide",
+    "authors-fiction": "Review or develop",
+    "authors-nonfiction": "Review or develop",
+    "technical-communication": "Explain or learn",
+    "learning": "Explain or learn",
+}
+PACK_CATEGORY_INTENDED_USE = {
+    "Reply or respond": (
+        "Use when the selected text is something you need to answer."
+    ),
+    "Edit or revise": (
+        "Use when the selection is your draft and should remain the same kind "
+        "of text after improvement."
+    ),
+    "Draft or create": (
+        "Use when selected notes or source material should become a new, "
+        "complete piece of writing."
+    ),
+    "Summarise or extract": (
+        "Use when you need supporting information from the selection rather "
+        "than replacement prose."
+    ),
+    "Plan or decide": (
+        "Use when the selection contains options, goals, risks, or material "
+        "that needs organising into a decision."
+    ),
+    "Review or develop": (
+        "Use when you want feedback, questions, or deeper analysis without "
+        "silently rewriting the source."
+    ),
+    "Explain or learn": (
+        "Use when selected material needs explaining, teaching, or turning "
+        "into learning aids."
+    ),
+}
+PACK_RECOMMENDED_APPLICATIONS = {
+    "editing": ("winword.exe", "notepad.exe", "code.exe"),
+    "tone-voice": ("winword.exe", "outlook.exe", "olk.exe"),
+    "email": ("outlook.exe", "olk.exe", "thunderbird.exe"),
+    "customer-relations": (
+        "outlook.exe",
+        "olk.exe",
+        "ms-teams.exe",
+        "teams.exe",
+        "slack.exe",
+    ),
+    "complaints": ("outlook.exe", "olk.exe", "thunderbird.exe"),
+    "reports": ("winword.exe", "outlook.exe", "olk.exe"),
+    "meetings": ("ms-teams.exe", "teams.exe", "outlook.exe", "olk.exe"),
+    "technical-communication": ("code.exe", "chrome.exe", "msedge.exe"),
+    "learning": ("winword.exe", "chrome.exe", "msedge.exe", "firefox.exe"),
+    "career-writing": ("winword.exe", "chrome.exe", "msedge.exe"),
+    "social-posts": ("chrome.exe", "msedge.exe", "firefox.exe"),
+    "social-replies": ("chrome.exe", "msedge.exe", "firefox.exe"),
+    "social-editing": ("chrome.exe", "msedge.exe", "firefox.exe"),
+    "reviews-feedback": ("chrome.exe", "msedge.exe", "firefox.exe"),
+    "replies-arguments": (
+        "chrome.exe",
+        "msedge.exe",
+        "firefox.exe",
+        "discord.exe",
+    ),
+    "argument-editing": ("winword.exe", "code.exe", "notepad.exe"),
+    "summaries-extraction": ("winword.exe", "outlook.exe", "code.exe"),
+    "draft-from-selection": ("winword.exe", "notepad.exe", "code.exe"),
+    "decisions-planning": ("winword.exe", "notepad.exe", "code.exe"),
+    "authors-fiction": ("winword.exe", "notepad.exe", "code.exe"),
+    "authors-nonfiction": ("winword.exe", "notepad.exe", "code.exe"),
+}
+
+
+def detect_installed_applications(
+    executables: tuple[str, ...] | list[str],
+) -> frozenset[str]:
+    """Detect known Windows applications locally without launching them."""
+
+    candidates = {
+        str(value).strip().casefold()
+        for value in executables
+        if str(value).strip()
+    }
+    detected = {
+        executable
+        for executable in candidates
+        if shutil.which(executable) is not None
+    }
+    if os.name != "nt":
+        return frozenset(detected)
+
+    try:
+        import winreg
+
+        for executable in candidates - detected:
+            key_name = (
+                "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\"
+                + executable
+            )
+            for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+                try:
+                    with winreg.OpenKey(root, key_name):
+                        detected.add(executable)
+                    break
+                except OSError:
+                    continue
+    except (ImportError, OSError):
+        pass
+
+    program_files = Path(os.environ.get("ProgramFiles", ""))
+    program_files_x86 = Path(os.environ.get("ProgramFiles(x86)", ""))
+    local_app_data = Path(os.environ.get("LOCALAPPDATA", ""))
+    windows = Path(os.environ.get("WINDIR", ""))
+    known_paths: dict[str, tuple[Path, ...]] = {
+        "winword.exe": tuple(
+            root / "Microsoft Office" / "root" / "Office16" / "WINWORD.EXE"
+            for root in (program_files, program_files_x86)
+        ),
+        "outlook.exe": tuple(
+            root / "Microsoft Office" / "root" / "Office16" / "OUTLOOK.EXE"
+            for root in (program_files, program_files_x86)
+        ),
+        "chrome.exe": (
+            program_files / "Google" / "Chrome" / "Application" / "chrome.exe",
+            program_files_x86
+            / "Google"
+            / "Chrome"
+            / "Application"
+            / "chrome.exe",
+            local_app_data
+            / "Google"
+            / "Chrome"
+            / "Application"
+            / "chrome.exe",
+        ),
+        "msedge.exe": (
+            program_files_x86
+            / "Microsoft"
+            / "Edge"
+            / "Application"
+            / "msedge.exe",
+        ),
+        "firefox.exe": (
+            program_files / "Mozilla Firefox" / "firefox.exe",
+            program_files_x86 / "Mozilla Firefox" / "firefox.exe",
+        ),
+        "notepad.exe": (windows / "System32" / "notepad.exe",),
+        "code.exe": (
+            local_app_data / "Programs" / "Microsoft VS Code" / "Code.exe",
+            program_files / "Microsoft VS Code" / "Code.exe",
+        ),
+        "slack.exe": (local_app_data / "slack" / "slack.exe",),
+        "thunderbird.exe": (
+            program_files / "Mozilla Thunderbird" / "thunderbird.exe",
+            program_files_x86 / "Mozilla Thunderbird" / "thunderbird.exe",
+        ),
+    }
+    for executable in candidates - detected:
+        if any(path.is_file() for path in known_paths.get(executable, ())):
+            detected.add(executable)
+    if "discord.exe" in candidates - detected:
+        if any(
+            path.is_file()
+            for path in local_app_data.glob("Discord/app-*/Discord.exe")
+        ):
+            detected.add("discord.exe")
+    return frozenset(detected)
 
 
 def _pack_from_payload(payload: object, source_name: str) -> ActionPack:
@@ -50,10 +275,22 @@ def _pack_from_payload(payload: object, source_name: str) -> ActionPack:
     name = payload.get("name")
     description = payload.get("description", "")
     pack_id = payload.get("id", "")
+    category = payload.get("category", "")
+    intended_use = payload.get("intended_use", "")
+    recommended_applications = payload.get("recommended_applications", [])
     if not isinstance(name, str) or not name.strip():
         raise ActionPackError("The action pack needs a name.")
-    if not isinstance(description, str) or not isinstance(pack_id, str):
+    if not all(
+        isinstance(value, str)
+        for value in (description, pack_id, category, intended_use)
+    ):
         raise ActionPackError("The action-pack metadata must be text.")
+    if not isinstance(recommended_applications, list) or not all(
+        isinstance(value, str) for value in recommended_applications
+    ):
+        raise ActionPackError(
+            "Recommended applications must be a list of executable names."
+        )
     raw_actions = payload.get("actions")
     if not isinstance(raw_actions, list) or not raw_actions:
         raise ActionPackError("The action pack must contain at least one action.")
@@ -72,6 +309,13 @@ def _pack_from_payload(payload: object, source_name: str) -> ActionPack:
         description=description.strip(),
         actions=tuple(actions),
         pack_id=pack_id.strip(),
+        category=category.strip(),
+        intended_use=intended_use.strip(),
+        recommended_applications=tuple(
+            value.strip().casefold()
+            for value in recommended_applications
+            if value.strip()
+        ),
     )
 
 
@@ -106,6 +350,14 @@ def action_pack_to_dict(pack: ActionPack) -> dict[str, object]:
     }
     if pack.pack_id:
         payload["id"] = pack.pack_id
+    if pack.category:
+        payload["category"] = pack.category
+    if pack.intended_use:
+        payload["intended_use"] = pack.intended_use
+    if pack.recommended_applications:
+        payload["recommended_applications"] = list(
+            pack.recommended_applications
+        )
     return payload
 
 
@@ -151,10 +403,26 @@ def load_builtin_action_packs() -> tuple[ActionPack, ...]:
         or not isinstance(payload.get("packs"), list)
     ):
         raise ActionPackError("The built-in action-pack catalogue is invalid.")
-    packs = tuple(
-        _pack_from_payload(item, "builtin_action_packs.json")
-        for item in payload["packs"]
-    )
+    def builtin_pack(item: object) -> ActionPack:
+        pack = _pack_from_payload(item, "builtin_action_packs.json")
+        category = pack.category or PACK_CATEGORIES.get(pack.pack_id, "Other")
+        return replace(
+            pack,
+            category=category,
+            intended_use=(
+                pack.intended_use
+                or PACK_CATEGORY_INTENDED_USE.get(
+                    category,
+                    "Use this pack when its included actions match your work.",
+                )
+            ),
+            recommended_applications=(
+                pack.recommended_applications
+                or PACK_RECOMMENDED_APPLICATIONS.get(pack.pack_id, ())
+            ),
+        )
+
+    packs = tuple(builtin_pack(item) for item in payload["packs"])
     identifiers = [pack.pack_id for pack in packs]
     if any(not identifier for identifier in identifiers) or len(identifiers) != len(
         set(identifiers)
@@ -214,4 +482,141 @@ def merge_action_pack(
         renamed_count=renamed_count,
         cleared_hotkey_count=cleared_hotkey_count,
         first_added_index=first_added_index,
+    )
+
+
+def action_pack_installation(
+    existing: list[WritingAction],
+    pack: ActionPack,
+) -> ActionPackInstallation:
+    """Describe how the canonical pack currently appears in an action library."""
+
+    existing_by_id = {action.id: action for action in existing}
+    installed = [
+        source for source in pack.actions if source.id in existing_by_id
+    ]
+    missing_count = len(pack.actions) - len(installed)
+    modified_count = sum(
+        existing_by_id[source.id] != source for source in installed
+    )
+    update_count = sum(
+        _updated_pack_action(existing_by_id[source.id], source)
+        != existing_by_id[source.id]
+        for source in installed
+    )
+    if not installed:
+        status = "not_installed"
+    elif missing_count:
+        status = "partial"
+    elif update_count:
+        status = "update_available"
+    elif modified_count:
+        status = "modified"
+    else:
+        status = "installed"
+    return ActionPackInstallation(
+        status=status,
+        installed_count=len(installed),
+        missing_count=missing_count,
+        modified_count=modified_count,
+        update_count=update_count,
+    )
+
+
+def _updated_pack_action(
+    current: WritingAction,
+    source: WritingAction,
+) -> WritingAction:
+    return replace(
+        current,
+        name=source.name,
+        keywords=source.keywords,
+        instruction=source.instruction,
+        icon=source.icon,
+        guided_drafting=source.guided_drafting,
+        recipient_audience=source.recipient_audience,
+        purpose=source.purpose,
+        result_handling=source.result_handling,
+    )
+
+
+def update_builtin_action_pack(
+    existing: list[WritingAction],
+    pack: ActionPack,
+) -> ActionPackChangeResult:
+    """Update managed pack content while retaining personal library choices."""
+
+    source_by_id = {action.id: action for action in pack.actions}
+    updated: list[WritingAction] = []
+    updated_count = 0
+    first_changed_index = -1
+    seen: set[str] = set()
+    for index, current in enumerate(existing):
+        source = source_by_id.get(current.id)
+        if source is None:
+            updated.append(current)
+            continue
+        seen.add(current.id)
+        replacement = _updated_pack_action(current, source)
+        if replacement != current:
+            updated_count += 1
+            if first_changed_index < 0:
+                first_changed_index = index
+        updated.append(replacement)
+
+    missing = [action for action in pack.actions if action.id not in seen]
+    if missing and first_changed_index < 0:
+        first_changed_index = len(updated)
+    updated.extend(missing)
+    return ActionPackChangeResult(
+        actions=updated,
+        added_count=len(missing),
+        updated_count=updated_count,
+        first_changed_index=first_changed_index,
+    )
+
+
+def restore_builtin_action_pack(
+    existing: list[WritingAction],
+    pack: ActionPack,
+) -> ActionPackChangeResult:
+    """Replace every canonical pack action with the current shipped version."""
+
+    pack_ids = {action.id for action in pack.actions}
+    matching_indexes = [
+        index for index, action in enumerate(existing) if action.id in pack_ids
+    ]
+    insert_at = min(matching_indexes, default=len(existing))
+    retained = [action for action in existing if action.id not in pack_ids]
+    insert_at = min(insert_at, len(retained))
+    restored = [
+        *retained[:insert_at],
+        *pack.actions,
+        *retained[insert_at:],
+    ]
+    return ActionPackChangeResult(
+        actions=restored,
+        added_count=len(pack.actions),
+        removed_count=len(matching_indexes),
+        first_changed_index=insert_at,
+    )
+
+
+def remove_builtin_action_pack(
+    existing: list[WritingAction],
+    pack: ActionPack,
+) -> ActionPackChangeResult:
+    """Remove actions identified as members of one built-in pack."""
+
+    pack_ids = {action.id for action in pack.actions}
+    matching_indexes = [
+        index for index, action in enumerate(existing) if action.id in pack_ids
+    ]
+    remaining = [action for action in existing if action.id not in pack_ids]
+    return ActionPackChangeResult(
+        actions=remaining,
+        removed_count=len(matching_indexes),
+        first_changed_index=(
+            min(matching_indexes, default=max(0, len(remaining) - 1))
+        ),
     )

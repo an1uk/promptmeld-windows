@@ -22,7 +22,12 @@ from promptmeld.privacy import detect_sensitive_text
 from promptmeld.privacy_preview import PrivacyPreviewDialog
 from promptmeld.returning import ReturnDecision
 from promptmeld.result_review import ResultReviewDialog
-from promptmeld.settings_ui import ActionSettingsDialog, ApplicationProfileDialog
+from promptmeld.settings_ui import (
+    ActionSettingsDialog,
+    ApplicationProfileDialog,
+    StarterPackCatalogueDialog,
+)
+from promptmeld.action_packs import load_builtin_action_packs
 from promptmeld.ui import LauncherPopup
 from promptmeld.usage import UsageTracker
 
@@ -201,6 +206,20 @@ def main() -> int:
         dialog.tabs.setCurrentIndex(2)
         app.processEvents()
         dialog.grab().save(str(docs / "manage-actions.png"))
+        catalogue = StarterPackCatalogueDialog(
+            load_builtin_action_packs(),
+            actions,
+            icons,
+            frozenset({"outlook.exe"}),
+            theme="dark",
+        )
+        catalogue.refresh("reports")
+        catalogue.show()
+        app.processEvents()
+        catalogue.grab().save(
+            str(docs / "starter-pack-catalogue.png")
+        )
+        catalogue.close()
         dialog.tabs.setCurrentIndex(3)
         app.processEvents()
         dialog.grab().save(str(docs / "manage-hotkeys.png"))

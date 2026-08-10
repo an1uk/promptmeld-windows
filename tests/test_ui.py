@@ -10,11 +10,13 @@ from promptmeld import ui as ui_module
 from promptmeld.action_packs import (
     ActionPack,
     load_action_pack,
+    load_builtin_action_packs,
     save_action_pack,
 )
 from promptmeld.actions import ActionRegistry
 from promptmeld.app import PromptMeld, make_tray_icon
 from promptmeld.automation_progress import AutomationProgressWindow
+from promptmeld.chatgpt_install import CHATGPT_DOWNLOAD_URL
 from promptmeld.config import load_actions, load_settings
 from promptmeld.icons import ActionIconProvider
 from promptmeld.models import (
@@ -40,6 +42,7 @@ from promptmeld.settings_ui import (
     HotkeyCaptureEdit,
     NestedFolderDialog,
     NoWheelComboBox,
+    StarterPackCatalogueDialog,
 )
 from promptmeld.ui import LauncherPopup
 from promptmeld.usage import UsageTracker
@@ -1328,6 +1331,115 @@ def test_alternative_review_explains_an_unseparated_response(qtbot):
     assert not dialog.apply_button.isVisible()
 
 
+def test_safe_single_result_review_preserves_original_and_withholds_apply(qtbot):
+    dialog = ResultReviewDialog("light")
+    qtbot.addWidget(dialog)
+
+    dialog.set_results(
+        ["The passage is strongest when the conflict becomes specific."],
+        requested_count=1,
+        can_apply=False,
+        action_purpose="analyse",
+        safe_review=True,
+    )
+    dialog.show()
+
+    assert dialog.title.text() == "Review the analysis result"
+    assert "preserved the original" in dialog.explanation.text()
+    assert dialog.preview.toPlainText().startswith("The passage")
+    assert not dialog.options.isVisible()
+    assert not dialog.apply_button.isVisible()
+
+
+def test_selective_review_accepts_changes_and_links_editorial_comments(qtbot):
+    dialog = ResultReviewDialog("light")
+    qtbot.addWidget(dialog)
+    selected = QSignalSpy(dialog.selected_result_changed)
+    source = "The draft is very unclear. Keep this sentence."
+    response = """
+<<<PROMPTMELD_REWRITE>>>
+The draft is clear and direct. Keep this sentence.
+<<<END_PROMPTMELD_REWRITE>>>
+<<<PROMPTMELD_FEEDBACK>>>
+The revision removes vague intensification.
+<<<END_PROMPTMELD_FEEDBACK>>>
+<<<PROMPTMELD_COMMENT>>>
+<<<PROMPTMELD_SOURCE_PASSAGE>>>
+very unclear
+<<<END_PROMPTMELD_SOURCE_PASSAGE>>>
+<<<PROMPTMELD_COMMENT_TEXT>>>
+This describes the problem without showing it.
+<<<END_PROMPTMELD_COMMENT_TEXT>>>
+<<<END_PROMPTMELD_COMMENT>>>
+"""
+
+    dialog.set_results(
+        [response],
+        requested_count=1,
+        can_apply=True,
+        action_purpose="transform",
+        source_text=source,
+    )
+    dialog.show()
+
+    assert dialog.is_selective_review() is True
+    assert dialog.changes.topLevelItemCount() >= 1
+    assert dialog.selected_result() == (
+        "The draft is clear and direct. Keep this sentence."
+    )
+    assert dialog.apply_button.text() == "Apply selected changes"
+    assert dialog.feedback_overview.toPlainText().startswith("The revision")
+    assert dialog.comments.topLevelItemCount() == 1
+
+    dialog.reject_all_button.click()
+    assert dialog.selected_result() == source
+    assert dialog.has_selected_changes() is False
+    assert dialog.apply_button.isEnabled() is False
+    assert selected.at(selected.count() - 1)[0] == source
+
+    dialog.accept_all_button.click()
+    assert dialog.has_selected_changes() is True
+    assert dialog.apply_button.isEnabled() is True
+
+    comment = dialog.comments.topLevelItem(0)
+    dialog.comments.setCurrentItem(comment)
+    assert dialog.before_preview.textCursor().selectedText() == "very unclear"
+
+
+def test_popup_disables_paste_back_for_safe_action_purpose(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [
+                WritingAction(
+                    "review",
+                    "Review",
+                    (),
+                    "Analyse this.",
+                    purpose="analyse",
+                )
+            ],
+            UsageTracker(tmp_path / "usage.json"),
+        ),
+        auto_submit_enabled=True,
+        replace_selected_text_enabled=True,
+    )
+    qtbot.addWidget(popup)
+
+    popup.set_action_context(
+        ReturnDecision(
+            review_result=True,
+            action_purpose="analyse",
+            purpose_safe_review=True,
+            action_policy_locked=True,
+        )
+    )
+
+    assert popup.replace_selected_text.isChecked() is False
+    assert popup.replace_selected_text.isEnabled() is False
+    assert "disabled for this action" in popup.replace_selected_text.text()
+    assert "without replacing" in popup.source_context.text()
+
+
 def test_popup_writing_guidance_menu_shows_current_choices(qtbot, tmp_path):
     popup = LauncherPopup(
         ActionRegistry(
@@ -2208,11 +2320,14 @@ def test_hotkey_capture_uses_the_pressed_key_combination(qtbot):
 
 def test_first_run_setup_tests_launcher_shortcut_and_explains_scope(qtbot):
     checked: list[str] = []
+    download_urls: list[str] = []
     wizard = FirstRunSetupWizard(
         "Ctrl+Alt+Space",
         lambda hotkey: checked.append(hotkey) or True,
         {"Ctrl+Alt+7": "Summarise"},
         startup_enabled=True,
+        chatgpt_app_available=lambda: True,
+        open_chatgpt_download=lambda url: download_urls.append(url) or True,
     )
     qtbot.addWidget(wizard)
 
@@ -2220,13 +2335,69 @@ def test_first_run_setup_tests_launcher_shortcut_and_explains_scope(qtbot):
     assert wizard.selected_hotkey() == "Ctrl+Alt+Space"
     assert checked == ["Ctrl+Alt+Space"]
     assert wizard.start_with_windows.isChecked() is True
+    assert wizard.chatgpt_app_is_available is True
+    assert "desktop app was detected" in wizard.chatgpt_status.text()
     assert "tested and available" in wizard.summary_label.text()
+
+    wizard._open_chatgpt_download()
+
+    assert download_urls == [CHATGPT_DOWNLOAD_URL]
 
     wizard.hotkey_editor.set_hotkey("Alt+Ctrl+7")
     wizard._test_hotkey()
 
     assert wizard.hotkey_is_available is False
     assert "Summarise" in wizard.hotkey_status.text()
+
+
+def test_first_run_setup_rechecks_missing_chatgpt_app(qtbot):
+    checks = iter((False, True))
+    wizard = FirstRunSetupWizard(
+        "Ctrl+Alt+Space",
+        lambda _hotkey: True,
+        chatgpt_app_available=lambda: next(checks),
+    )
+    qtbot.addWidget(wizard)
+
+    assert wizard.chatgpt_app_is_available is False
+    assert "Not detected" in wizard.chatgpt_status.text()
+    assert "not detected" in wizard.summary_label.text()
+
+    wizard._check_chatgpt_app()
+
+    assert wizard.chatgpt_app_is_available is True
+    assert "Ready" in wizard.chatgpt_status.text()
+
+
+def test_first_run_setup_warns_before_finishing_without_chatgpt(
+    qtbot,
+    monkeypatch,
+):
+    wizard = FirstRunSetupWizard(
+        "Ctrl+Alt+Space",
+        lambda _hotkey: True,
+        chatgpt_app_available=lambda: False,
+    )
+    qtbot.addWidget(wizard)
+    choices = iter(
+        (
+            QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Yes,
+        )
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: next(choices),
+    )
+
+    wizard.accept()
+
+    assert wizard.result() == QDialog.DialogCode.Rejected
+
+    wizard.accept()
+
+    assert wizard.result() == QDialog.DialogCode.Accepted
 
 
 def test_first_run_setup_has_explicit_readable_dark_appearance(qtbot):
@@ -2384,6 +2555,10 @@ def test_action_creation_wizard_builds_and_validates_an_action(qtbot, tmp_path):
     wizard.recipient_audience.setCurrentIndex(
         wizard.recipient_audience.findData("public_online")
     )
+    wizard.purpose.setCurrentIndex(wizard.purpose.findData("analyse"))
+    wizard.result_handling.setCurrentIndex(
+        wizard.result_handling.findData("copy")
+    )
 
     action = wizard.action("make-diplomatic")
 
@@ -2395,6 +2570,9 @@ def test_action_creation_wizard_builds_and_validates_an_action(qtbot, tmp_path):
     assert action.guided_drafting is True
     assert action.natural_voice == "always"
     assert action.recipient_audience == "public_online"
+    assert action.purpose == "analyse"
+    assert action.result_handling == "copy"
+    assert "explicitly overrides" in wizard.result_handling_help.text()
 
     wizard.sample_text.setPlainText("This example is difficult to read.")
     wizard._preview_action()
@@ -2870,7 +3048,7 @@ def test_action_settings_can_load_shipped_starter_set(
     assert dialog.actions[-1].guided_drafting is True
 
 
-def test_action_settings_offers_and_adds_builtin_starter_packs_once(
+def test_action_settings_opens_catalogue_and_adds_builtin_pack_once(
     qtbot,
     tmp_path,
     monkeypatch,
@@ -2909,20 +3087,34 @@ def test_action_settings_offers_and_adds_builtin_starter_packs_once(
         "summaries-extraction",
         "draft-from-selection",
         "decisions-planning",
+        "authors-fiction",
+        "authors-nonfiction",
     ]
-    assert [
-        action.text() for action in dialog.starter_pack_menu.actions()
-    ] == [
-        "Reply or respond",
-        "Edit or revise",
-        "Draft or create",
-        "Summarise or extract",
-        "Plan or decide",
-        "Explain or learn",
-    ]
+    assert dialog.starter_pack_button.text() == "Browse starter packs…"
+    assert dialog.starter_pack_button.menu() is None
     reports = next(
         pack for pack in dialog.builtin_action_packs if pack.pack_id == "reports"
     )
+
+    catalogue = StarterPackCatalogueDialog(
+        dialog.builtin_action_packs,
+        dialog.actions,
+        dialog.icon_provider,
+        frozenset({"outlook.exe"}),
+        theme="light",
+    )
+    qtbot.addWidget(catalogue)
+    catalogue.search.setText("Reports and updates")
+    assert catalogue.pack_list.count() == 1
+    assert catalogue.selected_pack_id() == "reports"
+    assert len(catalogue.action_rows) == 4
+    assert catalogue.action_rows[0].instruction_label.text() == (
+        reports.actions[0].instruction
+    )
+    assert "Microsoft Outlook" in catalogue.recommendation.text()
+    requested = QSignalSpy(catalogue.operation_requested)
+    catalogue.primary_button.click()
+    assert requested.at(0) == ["reports", "add"]
 
     dialog._add_builtin_action_pack(reports)
 
@@ -2934,12 +3126,170 @@ def test_action_settings_offers_and_adds_builtin_starter_packs_once(
         "lucide:list-checks"
     )
     assert dialog.has_unsaved_changes() is True
-    assert dialog.starter_pack_actions["reports"].isEnabled() is False
-    assert dialog.starter_pack_actions["reports"].text().endswith("(added)")
+    catalogue.set_actions(dialog.actions)
+    assert "Installed" in catalogue.pack_status.text()
+    assert catalogue.primary_button.isHidden() is True
+    assert [
+        action.text()
+        for action in catalogue.more_menu.actions()
+        if not action.isSeparator()
+    ] == ["Remove pack"]
 
     dialog._add_builtin_action_pack(reports)
 
     assert len(dialog.actions) == 5
+
+
+def test_starter_pack_catalogue_filters_recommends_and_reports_status(
+    qtbot,
+    tmp_path,
+):
+    packs = load_builtin_action_packs()
+    dialog = StarterPackCatalogueDialog(
+        packs,
+        [],
+        ActionIconProvider(tmp_path),
+        frozenset({"outlook.exe"}),
+        theme="dark",
+    )
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+
+    assert dialog.pack_list.minimumWidth() == 190
+    assert dialog.pack_list.maximumWidth() == 250
+    assert 190 <= dialog.splitter.sizes()[0] <= 250
+    assert dialog.action_scroll.horizontalScrollBar().maximum() == 0
+    first_pack = dialog.pack_by_id[
+        dialog.pack_list.item(0).data(dialog.PACK_ID_ROLE)
+    ]
+    assert dialog.is_recommended(first_pack)
+
+    dialog.category.setCurrentText("Review or develop")
+    assert dialog.pack_list.count() == 2
+    assert {
+        dialog.pack_list.item(row).data(dialog.PACK_ID_ROLE)
+        for row in range(dialog.pack_list.count())
+    } == {"authors-fiction", "authors-nonfiction"}
+
+    dialog.category.setCurrentIndex(0)
+    dialog.search.setText("beta reader")
+    assert dialog.pack_list.count() == 1
+    assert dialog.selected_pack_id() == "authors-fiction"
+    assert dialog.pack_status.text().endswith("Not installed")
+    assert dialog.primary_button.text() == "Add pack"
+    assert dialog.primary_button.isHidden() is False
+    assert dialog.more_button.isHidden() is True
+    assert len(dialog.action_rows) == 4
+    fiction = dialog.selected_pack()
+    assert fiction is not None
+    assert dialog.action_rows[0].name_label.text() == fiction.actions[0].name
+    assert dialog.action_rows[0].instruction_label.text() == (
+        fiction.actions[0].instruction
+    )
+    assert dialog.action_rows[0].instruction_label.wordWrap() is True
+    assert dialog.action_rows[0].status_label == "Not in your library"
+    assert dialog.action_rows[0].status_icon.accessibleName() == (
+        "Library status: Not in your library"
+    )
+    assert dialog.pack_list_rows["authors-fiction"].name_label.wordWrap() is True
+    assert "<br>" in dialog.pack_list.currentItem().toolTip()
+    wrapped = settings_ui_module._wrapped_catalogue_tooltip(
+        "This intentionally long tooltip demonstrates that catalogue help "
+        "is split into readable lines instead of becoming one long strip."
+    )
+    assert all(len(line) <= 55 for line in wrapped[4:-5].split("<br>"))
+
+    dialog.set_actions([fiction.actions[0]])
+    assert "Partially installed" in dialog.pack_status.text()
+    assert dialog.primary_button.text() == "Add missing actions"
+    assert [
+        action.text()
+        for action in dialog.more_menu.actions()
+        if not action.isSeparator()
+    ] == [
+        "Update from catalogue",
+        "Restore shipped version",
+        "Remove pack",
+    ]
+    requested = QSignalSpy(dialog.operation_requested)
+    update_action = next(
+        action
+        for action in dialog.more_menu.actions()
+        if action.data() == "update"
+    )
+    update_action.trigger()
+    assert requested.at(0) == ["authors-fiction", "update"]
+
+    dialog.set_actions(list(fiction.actions))
+    assert dialog.pack_status.text().endswith("Installed")
+    assert dialog.primary_button.isHidden() is True
+    assert dialog.more_button.isHidden() is False
+
+
+def test_starter_pack_catalogue_update_restore_and_remove_lifecycle(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+):
+    dialog = ActionSettingsDialog(
+        [WritingAction("mine", "Mine", (), "Keep me.")],
+        AppPaths.discover(tmp_path),
+        ActionIconProvider(tmp_path),
+        "Ctrl+Alt+Space",
+    )
+    qtbot.addWidget(dialog)
+    catalogue = StarterPackCatalogueDialog(
+        dialog.builtin_action_packs,
+        dialog.actions,
+        dialog.icon_provider,
+        theme="light",
+    )
+    qtbot.addWidget(catalogue)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *args: None)
+    pack = next(
+        item for item in dialog.builtin_action_packs if item.pack_id == "reports"
+    )
+    catalogue.refresh(pack.pack_id)
+
+    dialog._catalogue_pack_operation(catalogue, pack.pack_id, "add")
+    installed = next(
+        action for action in dialog.actions if action.id == pack.actions[0].id
+    )
+    index = dialog.actions.index(installed)
+    dialog.actions[index] = replace(
+        installed,
+        instruction="A locally changed instruction.",
+        folder="My reports",
+        hotkey="Ctrl+Alt+8",
+    )
+    dialog._refresh_list(index)
+    catalogue.set_actions(dialog.actions)
+    assert "Content differs from catalogue" in catalogue.pack_status.text()
+    assert catalogue.primary_button.text() == "Update from catalogue"
+
+    dialog._catalogue_pack_operation(catalogue, pack.pack_id, "update")
+    updated = next(
+        action for action in dialog.actions if action.id == pack.actions[0].id
+    )
+    assert updated.instruction == pack.actions[0].instruction
+    assert updated.folder == "My reports"
+    assert updated.hotkey == "Ctrl+Alt+8"
+
+    dialog._catalogue_pack_operation(catalogue, pack.pack_id, "restore")
+    restored = next(
+        action for action in dialog.actions if action.id == pack.actions[0].id
+    )
+    assert restored == pack.actions[0]
+
+    dialog._catalogue_pack_operation(catalogue, pack.pack_id, "remove")
+    assert [action.id for action in dialog.actions] == ["mine"]
+    assert "Not installed" in catalogue.pack_status.text()
 
 
 def test_action_settings_imports_and_exports_readable_action_packs(

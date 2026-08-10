@@ -18,10 +18,19 @@ your account and plan.
 
 ## Basic workflow
 
-The first launch opens a short setup guide. It explains the three-step workflow,
-lets you record and test the global launcher shortcut against Windows and the
-included action shortcuts, and optionally enables startup with Windows. The
-guide can be opened again from **Configuration > General > Launcher**.
+The first launch opens a short setup guide. It explains that ChatGPT in a web
+browser and the ChatGPT Windows desktop app are different experiences, and that
+PromptMeld requires the installed desktop app. The guide checks for the app's
+Windows launch registration and, if it is missing, offers the official OpenAI
+download page and a **Check again** button. It also lets you record and test the
+global launcher shortcut against Windows and the included action shortcuts,
+and optionally enables startup with Windows. The guide can be opened again
+from **Configuration > General > Launcher**.
+
+The app check is local: it reads Windows app and protocol registration without
+opening ChatGPT, signing in, or transmitting information. If detection fails
+on a managed or unusual installation, setup can still be completed after an
+explicit warning.
 
 1. Select text in another application.
 2. Press `Ctrl+Alt+Space`.
@@ -100,8 +109,9 @@ adapted and shortcut clashes are cleared. Custom image files are referenced by
 the JSON but are not embedded, so use built-in icons or emoji for a pack that
 will move between computers.
 
-Nineteen optional starter packs provide four actions each. **Add starter pack**
-groups them by what you want to do with the selected text:
+Twenty-one optional starter packs provide four actions each. **Browse starter
+packs…** opens a searchable catalogue grouped by what you want to do with the
+selected text:
 
 - **Reply or respond**: Replies to selected text, Social media replies,
   Customer relations, Email and correspondence, and Complaints and resolution.
@@ -111,13 +121,29 @@ groups them by what you want to do with the selected text:
   media writing, Meetings and actions, and CVs and applications.
 - **Summarise or extract**: Summaries and extraction.
 - **Plan or decide**: Decisions and planning.
+- **Review or develop**: Fiction authors and Non-fiction authors.
 - **Explain or learn**: Technical communication and Study and learning.
+
+Select a pack to read its description and intended use and inspect every
+included action before installing it. Each action's complete ChatGPT
+instruction is wrapped directly beneath its name. The icon at the right shows
+whether it is already in the library, missing, or different from the catalogue
+version. Recommended packs receive a star and sort first using only local
+application detection; PromptMeld does not send an application list or
+selected text anywhere.
+
+The one primary button adds a pack, adds missing actions, or updates catalogue
+content according to the pack's current state. **More** contains relevant
+restore and removal operations, and the partial-pack state also offers an
+explicit update. Updating retains personal folders, shortcuts, enabled state,
+launcher pinning, and natural-voice choices. Restore and remove both show a
+confirmation, do not affect unrelated actions, and remain provisional until
+Configuration is saved.
 
 **Replies to selected text** now concentrates on direct responses, including
 **Sarcastic reply** and **Challenge the selected text**. Strengthening an
 argument and checking claims belong to **Arguments and evidence**. Packs are
-additive and can be combined, edited, exported, or removed like any other
-actions.
+additive and can be combined, edited, or exported like any other actions.
 
 The social packs separate creating, replying, and editing. YouTube actions
 favour compact conversational text, Reddit actions allow more context and
@@ -126,6 +152,24 @@ mixed audience. **Customer relations** treats the selection as a customer
 query, case history, or request and provides reply, clarification, limitation,
 and resolution workflows.
 
+The author packs use ChatGPT as a developmental reader rather than a substitute
+author. **Fiction authors** includes beta-reader reactions, deeper story
+questions, continuity and point-of-view checks, and scene diagnosis.
+**Non-fiction authors** includes critical-reader feedback, argument and evidence
+testing, reader-journey review, and questions that expose assumptions or areas
+for further research. These actions analyse the selected passage and explicitly
+avoid rewriting or continuing it unless the user chooses a separate editing
+action.
+
+Each action also has a **Purpose** and **Result handling** setting. Edit and
+reply actions normally follow the source application's result policy. Actions
+whose purpose is analysis, information extraction, or idea development instead
+open a review window by default, preserve the original selection, and withhold
+**Apply now**. This prevents beta-reader feedback, summaries, questions, and
+risk lists from being mistaken for replacement prose. An action can explicitly
+override the recommendation in Configuration when its output is genuinely
+suitable for another destination.
+
 Each writing action can define a **Default audience**. For example, social
 actions default to **Public or online audience**, while customer-relation
 replies default to **Customer or client**. An action set to inherit uses the
@@ -133,8 +177,9 @@ source application's audience. Choosing an audience under **Change this
 request** overrides both for that request only.
 
 The action library supports nested folders, so actions from different packs can
-share intent-led roots such as `Reply`, `Edit & revise`, and
-`Summarise & understand`. Expand a folder in the tree to browse its children.
+share intent-led roots such as `Reply`, `Edit & revise`,
+`Summarise & understand`, and `Review & develop`. Expand a folder in the tree
+to browse its children.
 Choose **New subfolder** to select a parent and name a nested level, or edit a
 folder path directly with `/` between levels.
 
@@ -280,6 +325,26 @@ later returns to the original application and verifies that the same text is
 still selected before replacing it. If verification fails, PromptMeld leaves
 the source untouched and copies the result instead.
 
+For an action using the safe analysis, extraction, or development default, the
+review window explains why the original was preserved. **Copy result** remains
+available, but **Apply now** is also withheld from the tray so the supporting
+material cannot accidentally overwrite the selected passage.
+
+For a rewrite held for review, PromptMeld shows **Before** and **After - selected
+changes** side by side. Proposed changes appear in a checklist; clear an item to
+retain that exact part of the original, or use **Accept all changes** and
+**Reject all changes** for a quick decision. The selected result is rebuilt
+losslessly from the source and rewrite, so **Copy selected rewrite** and
+**Apply selected changes** use only the accepted changes. Applying still
+verifies that the original source selection has not changed.
+
+The separate **Editorial feedback** view contains an overview and any comments
+ChatGPT linked to exact source passages. Selecting a linked comment highlights
+its passage in **Before** when an exact match is available. PromptMeld requests
+this structured response only for retrieved review results. If ChatGPT does not
+follow the structure, the complete response remains available as a rewrite or
+feedback result and the local before-and-after comparison still works.
+
 Only the latest generated result is retained, in memory, for these commands.
 It is forgotten when PromptMeld closes and is not included in settings, logs,
 diagnostics, or backups.
@@ -287,8 +352,9 @@ diagnostics, or backups.
 When **Two alternatives** or **Three alternatives** is selected under
 **Change this request**, PromptMeld asks ChatGPT for distinct complete options
 and opens a review window after generation. Choose an option on the left to
-read it, then use **Copy result** or **Apply now**. The selected option also
-becomes the latest result available from the tray.
+read it, accept or reject its changes, then use **Copy selected rewrite** or
+**Apply selected changes**. The selectively reconstructed option also becomes
+the latest result available from the tray.
 
 Alternative review requires automatic submission so PromptMeld can retrieve
 the response. If automatic submission is normally off, PromptMeld asks for

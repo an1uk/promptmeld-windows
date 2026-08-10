@@ -1,4 +1,9 @@
-from promptmeld.models import AppSettings, ApplicationProfile, CapturedSelection
+from promptmeld.models import (
+    AppSettings,
+    ApplicationProfile,
+    CapturedSelection,
+    WritingAction,
+)
 from promptmeld.returning import (
     application_display_name,
     normalize_application_name,
@@ -79,6 +84,74 @@ def test_review_mode_waits_then_notifies_without_copying_or_replacing():
     assert decision.summary == (
         "Notify when the result is ready for Google Chrome"
     )
+
+
+def test_analysis_purpose_defaults_to_safe_review_over_application_replace():
+    settings = AppSettings(
+        auto_submit_enabled=True,
+        application_profiles={
+            "winword.exe": ApplicationProfile(return_mode="replace")
+        },
+    )
+    action = WritingAction(
+        "critical-review",
+        "Critical review",
+        (),
+        "Analyse the selected text.",
+        purpose="analyse",
+    )
+
+    decision = resolve_return_decision(settings, selection(), action)
+
+    assert decision.review_result is True
+    assert decision.replace_selection is False
+    assert decision.copy_result is False
+    assert decision.purpose_safe_review is True
+    assert decision.action_policy_locked is True
+    assert decision.allows_manual_apply is False
+    assert "without replacing" in decision.summary
+
+
+def test_action_can_explicitly_override_safe_purpose_result_handling():
+    settings = AppSettings(auto_submit_enabled=True)
+    action = WritingAction(
+        "critical-review",
+        "Critical review",
+        (),
+        "Analyse the selected text.",
+        purpose="analyse",
+        result_handling="replace",
+    )
+
+    decision = resolve_return_decision(settings, selection(), action)
+
+    assert decision.replace_selection is True
+    assert decision.review_result is False
+    assert decision.action_overridden is True
+    assert decision.purpose_safe_review is False
+    assert decision.allows_manual_apply is True
+
+
+def test_transform_purpose_keeps_application_result_policy():
+    settings = AppSettings(
+        auto_submit_enabled=True,
+        application_profiles={
+            "winword.exe": ApplicationProfile(return_mode="replace")
+        },
+    )
+    action = WritingAction(
+        "rewrite",
+        "Rewrite",
+        (),
+        "Rewrite the selected text.",
+        purpose="transform",
+    )
+
+    decision = resolve_return_decision(settings, selection(), action)
+
+    assert decision.replace_selection is True
+    assert decision.overridden is True
+    assert decision.purpose_safe_review is False
 
 
 def test_application_names_are_path_free_and_human_readable():

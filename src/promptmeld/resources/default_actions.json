@@ -11,7 +11,9 @@
     "show_on_home": true,
     "natural_voice": "inherit",
     "guided_drafting": false,
-    "recipient_audience": "inherit"
+    "recipient_audience": "inherit",
+    "purpose": "transform",
+    "result_handling": "purpose_default"
   },
   {
     "id": "proofread",
@@ -25,7 +27,9 @@
     "show_on_home": true,
     "natural_voice": "inherit",
     "guided_drafting": false,
-    "recipient_audience": "inherit"
+    "recipient_audience": "inherit",
+    "purpose": "transform",
+    "result_handling": "purpose_default"
   },
   {
     "id": "shorten",
@@ -39,7 +43,9 @@
     "show_on_home": true,
     "natural_voice": "inherit",
     "guided_drafting": false,
-    "recipient_audience": "inherit"
+    "recipient_audience": "inherit",
+    "purpose": "transform",
+    "result_handling": "purpose_default"
   },
   {
     "id": "draft-reply",
@@ -53,6 +59,8 @@
     "show_on_home": true,
     "natural_voice": "inherit",
     "guided_drafting": true,
-    "recipient_audience": "inherit"
+    "recipient_audience": "inherit",
+    "purpose": "reply",
+    "result_handling": "purpose_default"
   }
 ]

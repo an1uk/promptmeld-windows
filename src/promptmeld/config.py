@@ -9,6 +9,8 @@ from typing import Any
 
 from .branding import DEFAULT_PROJECT_NAME
 from .models import (
+    ACTION_PURPOSE_VALUES,
+    ACTION_RESULT_HANDLING_VALUES,
     DEFAULT_NATURAL_VOICE_INSTRUCTION,
     EDITING_STRENGTH_VALUES,
     NATURAL_VOICE_MODES,
@@ -101,6 +103,9 @@ DEFAULT_FOLDER_ICONS = {
     "Plan & decide": "lucide:search-check",
     "Plan & decide/General": "lucide:search-check",
     "Plan & decide/Technical": "lucide:list-checks",
+    "Review & develop": "lucide:book-open-check",
+    "Review & develop/Fiction": "lucide:sparkles",
+    "Review & develop/Non-fiction": "lucide:search-check",
     "Editing": "lucide:pencil",
     "Editing/Reviews": "lucide:heart",
     "Replies & arguments": "lucide:message-square-text",
@@ -297,6 +302,19 @@ def normalize_folder(value: str) -> str:
     if any(part in {".", ".."} for part in parts):
         raise ConfigurationError("Folder names cannot be '.' or '..'.")
     return "/".join(parts)
+
+
+def _purpose_for_legacy_action(folder: str) -> str:
+    """Choose a safe purpose for actions saved before purpose was explicit."""
+
+    root = folder.partition("/")[0].casefold()
+    if root == "reply":
+        return "reply"
+    if root == "summarise & understand":
+        return "extract"
+    if root in {"review & develop", "plan & decide", "explain & learn"}:
+        return "analyse"
+    return "transform"
 
 
 _APPLICATION_PROFILE_KEYS = {
@@ -506,6 +524,7 @@ def actions_from_data(
             raise ConfigurationError(
                 f"Action '{action_id}' folder must be a string or null."
             )
+        normalized_folder = normalize_folder(folder or "")
         natural_voice = str(raw.get("natural_voice", "inherit")).strip().casefold()
         if natural_voice not in NATURAL_VOICE_MODES:
             raise ConfigurationError(
@@ -525,6 +544,22 @@ def actions_from_data(
                 f"Action '{action_id}' recipient_audience must be one of: "
                 f"inherit, {', '.join(RECIPIENT_AUDIENCE_VALUES)}."
             )
+        purpose = str(
+            raw.get("purpose", _purpose_for_legacy_action(normalized_folder))
+        ).strip().casefold()
+        if purpose not in ACTION_PURPOSE_VALUES:
+            raise ConfigurationError(
+                f"Action '{action_id}' purpose must be one of: "
+                f"{', '.join(ACTION_PURPOSE_VALUES)}."
+            )
+        result_handling = str(
+            raw.get("result_handling", "purpose_default")
+        ).strip().casefold()
+        if result_handling not in ACTION_RESULT_HANDLING_VALUES:
+            raise ConfigurationError(
+                f"Action '{action_id}' result_handling must be one of: "
+                f"{', '.join(ACTION_RESULT_HANDLING_VALUES)}."
+            )
         actions.append(
             WritingAction(
                 id=action_id,
@@ -536,11 +571,13 @@ def actions_from_data(
                 icon=str(
                     raw.get("icon", DEFAULT_ACTION_ICONS.get(action_id, ""))
                 ).strip(),
-                folder=normalize_folder(folder or ""),
+                folder=normalized_folder,
                 show_on_home=bool(raw.get("show_on_home", False)),
                 natural_voice=natural_voice,
                 guided_drafting=guided_drafting,
                 recipient_audience=recipient_audience,
+                purpose=purpose,
+                result_handling=result_handling,
             )
         )
     return actions
@@ -564,6 +601,8 @@ def action_to_dict(action: WritingAction) -> dict[str, object]:
         "natural_voice": action.natural_voice,
         "guided_drafting": action.guided_drafting,
         "recipient_audience": action.recipient_audience,
+        "purpose": action.purpose,
+        "result_handling": action.result_handling,
     }
 
 
