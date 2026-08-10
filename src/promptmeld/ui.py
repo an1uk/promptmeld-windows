@@ -44,6 +44,7 @@ from .theme import (
 
 class LauncherPopup(QWidget):
     action_requested = Signal(str, str, str, bool, str, int)
+    action_highlighted = Signal(str)
     custom_requested = Signal(str, str, str, bool, str, int)
     natural_voice_changed = Signal(bool)
     auto_submit_changed = Signal(bool)
@@ -83,6 +84,8 @@ class LauncherPopup(QWidget):
         self.replace_selected_text_enabled = replace_selected_text_enabled
         self.source_is_editable = True
         self.application_policy_override = False
+        self.action_result_policy_lock = False
+        self._source_profile_note = ""
         self.temporary_chat_enabled = temporary_chat_enabled
         self.guided_drafting_enabled = guided_drafting_enabled
         self.resulting_text_length_value = resulting_text_length
@@ -659,45 +662,16 @@ class LauncherPopup(QWidget):
             "for ranking. Selected text is not stored or transmitted."
         )
         self.suggestion_context_label.show()
-        self.application_policy_override = decision.overridden
         self.application_overridden_fields = (
             effective.overridden_fields if effective is not None else frozenset()
         )
-        profile_note = (
+        self._source_profile_note = (
             f" \u00b7 {len(self.application_overridden_fields)} application default"
             + ("s" if len(self.application_overridden_fields) != 1 else "")
             if self.application_overridden_fields
             else ""
         )
-        self.source_context.setText(
-            f"Result: {decision.summary}{profile_note}"
-        )
-        self.source_context.setAccessibleDescription(
-            decision.fallback_reason or decision.summary
-        )
-        self.source_context.show()
-        self.replace_selected_text.blockSignals(True)
-        self.replace_selected_text.setChecked(decision.replace_selection)
-        self.replace_selected_text.blockSignals(False)
-        self.replace_selected_text.setText(
-            "Paste result back (application policy)"
-            if decision.overridden
-            else "Paste result back"
-        )
-        self.replace_selected_text.setToolTip(
-            (
-                "This application's result policy is configured under "
-                "Configuration > Applications."
-            )
-            if decision.overridden
-            else (
-                "After ChatGPT responds, replace the selected text in its "
-                "original editable box. Requires automatic submission."
-            )
-        )
-        self.replace_selected_text.setAccessibleDescription(
-            self.replace_selected_text.toolTip()
-        )
+        self._apply_return_decision(decision)
         if effective is not None:
             self.set_natural_voice_enabled(effective.natural_voice_enabled)
             self.set_auto_submit_enabled(effective.auto_submit_enabled)
@@ -740,6 +714,55 @@ class LauncherPopup(QWidget):
             )
         self._update_replace_selected_text_availability()
 
+    def set_action_context(self, decision: ReturnDecision) -> None:
+        """Update the destination shown after an action is highlighted."""
+
+        self._apply_return_decision(decision)
+        self._update_replace_selected_text_availability()
+
+    def _apply_return_decision(self, decision: ReturnDecision) -> None:
+        self.application_policy_override = decision.overridden
+        self.action_result_policy_lock = decision.action_policy_locked
+        self.source_context.setText(
+            f"Result: {decision.summary}{self._source_profile_note}"
+        )
+        self.source_context.setAccessibleDescription(
+            decision.fallback_reason or decision.summary
+        )
+        self.source_context.show()
+        self.replace_selected_text.blockSignals(True)
+        self.replace_selected_text.setChecked(decision.replace_selection)
+        self.replace_selected_text.blockSignals(False)
+        if decision.purpose_safe_review:
+            label = "Paste result back (disabled for this action)"
+            tooltip = (
+                "This action produces analysis, extracted information, or "
+                "idea development rather than replacement prose. Change its "
+                "Result handling in Configuration > Writing actions to "
+                "override the safe review behaviour."
+            )
+        elif decision.action_policy_locked:
+            label = "Paste result back (action policy)"
+            tooltip = (
+                "This action's result policy is configured under "
+                "Configuration > Writing actions."
+            )
+        elif decision.overridden:
+            label = "Paste result back (application policy)"
+            tooltip = (
+                "This application's result policy is configured under "
+                "Configuration > Applications."
+            )
+        else:
+            label = "Paste result back"
+            tooltip = (
+                "After ChatGPT responds, replace the selected text in its "
+                "original editable box. Requires automatic submission."
+            )
+        self.replace_selected_text.setText(label)
+        self.replace_selected_text.setToolTip(tooltip)
+        self.replace_selected_text.setAccessibleDescription(tooltip)
+
     def _focus_search(self) -> None:
         self.search.setFocus()
         self.search.selectAll()
@@ -747,6 +770,7 @@ class LauncherPopup(QWidget):
     def _update_replace_selected_text_availability(self) -> None:
         self.replace_selected_text.setEnabled(
             not self.application_policy_override
+            and not self.action_result_policy_lock
             and self.auto_submit_enabled
             and self.source_is_editable
         )
@@ -1381,15 +1405,17 @@ class LauncherPopup(QWidget):
         previous: QListWidgetItem | None = None,
     ) -> None:
         self._update_selected_action_button(current, previous)
-        if self.audience_explicitly_selected or current is None:
-            return
-        if current.data(self.ITEM_KIND_ROLE) != "action":
+        if current is None or current.data(self.ITEM_KIND_ROLE) != "action":
+            self.action_highlighted.emit("")
             return
         action_id = str(
             current.data(Qt.ItemDataRole.UserRole) or ""
         )
+        self.action_highlighted.emit(action_id)
         action = self.registry.get(action_id) if action_id else None
         if action is None:
+            return
+        if self.audience_explicitly_selected:
             return
         audience = (
             action.recipient_audience

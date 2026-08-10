@@ -7,9 +7,10 @@
 <p align="center"><em>Write well and prosper.</em></p>
 
 PromptMeld is a Windows writing assistant for ChatGPT. Select text in another
-application, press a shortcut, and choose how you want to edit, transform, or
-respond to it. PromptMeld prepares the request, opens it in an organised ChatGPT
-conversation, and can return the generated result to the original application.
+application, press a shortcut, and choose whether you want ChatGPT to rewrite,
+respond to, summarise, or review it. PromptMeld prepares the request, opens it
+in an organised ChatGPT conversation, and safely handles the result according
+to its purpose—including feedback that should not replace the original text.
 
 > [!IMPORTANT]
 > PromptMeld is an early release. Changes to the ChatGPT desktop app may affect
@@ -22,15 +23,18 @@ conversation, and can return the generated result to the original application.
   essentials, optional starter packs, or your own custom instruction.
 * Guides first-time setup, including a live Windows check of the launcher
   shortcut, and provides step-by-step creation and duplication of actions.
-* Imports and exports readable JSON action packs, with nineteen built-in packs
-  organised by what you want to do: reply, edit, draft, summarise, plan, or use
-  explain-and-learn tools. Nested folders keep larger action libraries
-  manageable.
+* Includes a searchable starter-pack catalogue with action previews, local
+  application-based recommendations, installed status, and safe pack updates.
+  Twenty-one packs cover replying, editing, drafting, summarising, planning,
+  reviewing, and learning; nested folders keep larger libraries manageable.
 * Suggests useful actions locally from the source application, text length and
   type, and recent use—for example, placing email replies first in Outlook.
 * Supports editing, rewriting, replies, customer relations, tone changes,
-  correspondence, technical help, and platform-aware YouTube, Reddit, and
-  Facebook writing.
+  correspondence, technical help, platform-aware social writing, and
+  developmental feedback for fiction and non-fiction authors.
+* Gives every action a purpose and a result policy. Analysis, extraction, and
+  idea-development actions open a non-destructive review by default instead of
+  treating feedback or notes as replacement prose.
 * Opens a new chat in the appropriate ChatGPT Project or, optionally, uses
   Temporary Chat to avoid filling your chat history with unrelated
   conversations. Projects can be organised by writing action, source
@@ -49,16 +53,29 @@ conversation, and can return the generated result to the original application.
   browsers, or other Windows applications.
 * Can leave the prompt for review, submit it automatically, copy the result, or
   safely replace the original selection where possible.
-* Provides completion controls to copy a finished result or safely apply it to
-  the original selection when convenient.
-* Can request two or three alternatives, present them side by side in a review
-  window, and copy or safely apply the chosen option.
+* Provides a selective review window with before-and-after differences,
+  individually accepted changes, passage-linked editorial comments, and
+  separate rewrite and feedback views. Copy or apply only the accepted rewrite.
+* Can request two or three alternatives, compare each with the source, and
+  selectively apply the chosen option.
 * Includes cancellation, verified text replacement, clipboard fallback, Undo,
   local diagnostics, configurable shortcuts, screen-reader stage
   announcements, reduced-motion behaviour, and Windows High Contrast support.
 * Runs locally without an OpenAI API key, telemetry, or advertising.
 
 ![PromptMeld launcher and ChatGPT automation progress](docs/promptmeld-overview.png)
+
+## Use ChatGPT as a beta reader
+
+PromptMeld is not limited to producing replacement text. Select a passage from
+fiction or non-fiction and use the author starter packs to ask for beta-reader
+reactions, deeper questions, continuity or point-of-view checks, scene-craft
+feedback, argument and evidence testing, or a review of the reader's journey.
+
+These actions treat ChatGPT as a developmental reader rather than a substitute
+author. PromptMeld preserves the selected passage and presents the response as
+editorial feedback, so comments and questions are not mistaken for prose that
+should overwrite the original.
 
 ## Install
 
@@ -71,8 +88,10 @@ web browser or through the classic desktop experience.
 2. Run `PromptMeld-Setup-v<version>.exe`.
 3. Open **PromptMeld** from the Start menu.
 
-On first use, a short setup guide explains the workflow and tests whether the
-chosen launcher shortcut is available before saving it.
+On first use, a short setup guide explains the difference between ChatGPT in a
+browser and the required Windows desktop app. It checks that the desktop app is
+installed, links to the official OpenAI download page when needed, and tests
+whether the chosen launcher shortcut is available before saving it.
 
 No OpenAI API key or separate Python installation is required. PromptMeld can
 be used with a free ChatGPT account, although the available models, Projects,
@@ -120,6 +139,13 @@ PromptMeld processes selected text locally and does not save selected text,
 generated prompts, or ChatGPT responses in its settings, usage records, or
 logs. Smart action ranking is also performed locally and does not transmit the
 selected text.
+
+Starter-pack recommendations check only whether a fixed list of familiar
+executables appears in Windows registration, `PATH`, or standard installation
+locations. This check does not open those files or applications, enumerate
+other installed software, inspect documents or application data, or write any
+detection result to disk. The result exists only in memory while the catalogue
+is open and is never logged or transmitted.
 
 Text sent to ChatGPT is governed by your ChatGPT account settings and OpenAI's
 policies. PromptMeld makes no network connections other than update checks

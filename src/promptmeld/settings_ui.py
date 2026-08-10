@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import textwrap
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
@@ -8,13 +9,25 @@ from html import escape
 from importlib.resources import files
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QPointF,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import (
     QAction,
     QColor,
+    QDesktopServices,
+    QIcon,
     QPainter,
     QPalette,
     QPen,
+    QPixmap,
     QPolygonF,
     QTextCharFormat,
     QTextCursor,
@@ -35,12 +48,16 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QMenu,
     QPlainTextEdit,
     QProxyStyle,
     QPushButton,
+    QScrollArea,
     QSpinBox,
+    QSplitter,
     QStyle,
     QTableWidget,
     QTableWidgetItem,
@@ -56,12 +73,18 @@ from PySide6.QtWidgets import (
 
 from . import display_version
 from .action_packs import (
+    PACK_CATEGORY_ORDER,
     ActionPack,
     ActionPackError,
+    action_pack_installation,
+    detect_installed_applications,
     load_action_pack,
     load_builtin_action_packs,
     merge_action_pack,
+    remove_builtin_action_pack,
+    restore_builtin_action_pack,
     save_action_pack,
+    update_builtin_action_pack,
 )
 from .config import (
     DEFAULT_FOLDER_ICONS,
@@ -78,8 +101,16 @@ from .configuration_backup import (
     restore_configuration_backup,
 )
 from .branding import APP_NAME, REPOSITORY_URL, TAGLINE
+from .chatgpt_install import (
+    CHATGPT_DOWNLOAD_URL,
+    chatgpt_desktop_app_installed,
+)
 from .icons import ActionIconProvider
 from .models import (
+    ACTION_PURPOSE_OPTIONS,
+    ACTION_PURPOSE_VALUES,
+    ACTION_RESULT_HANDLING_OPTIONS,
+    ACTION_RESULT_HANDLING_VALUES,
     DEFAULT_NATURAL_VOICE_INSTRUCTION,
     EDITING_STRENGTH_OPTIONS,
     PRIMARY_LANGUAGE_OPTIONS,
@@ -610,12 +641,23 @@ class FirstRunSetupWizard(QWizard):
         startup_enabled: bool = False,
         parent: QWidget | None = None,
         theme: str = "auto",
+        chatgpt_app_available: Callable[[], bool] | None = None,
+        open_chatgpt_download: Callable[[str], bool] | None = None,
     ) -> None:
         super().__init__(parent)
         self.theme = theme
         self.resolved_theme = resolve_theme(theme)
         self.native_header_style = ""
         self.hotkey_availability = hotkey_availability
+        self.chatgpt_app_available = (
+            chatgpt_app_available or chatgpt_desktop_app_installed
+        )
+        self.open_chatgpt_download = (
+            open_chatgpt_download
+            or (lambda url: QDesktopServices.openUrl(QUrl(url)))
+        )
+        self.chatgpt_app_is_available = False
+        self.hotkey_is_available = False
         self.action_hotkeys: dict[tuple[int, int], str] = {}
         for hotkey, name in (action_hotkeys or {}).items():
             try:
@@ -655,6 +697,48 @@ class FirstRunSetupWizard(QWizard):
         welcome_layout.addWidget(steps)
         welcome_layout.addStretch(1)
         self.addPage(welcome)
+
+        chatgpt_page = QWizardPage()
+        chatgpt_page.setTitle("Check the ChatGPT Windows app")
+        chatgpt_page.setSubTitle(
+            "PromptMeld needs the installed desktop app, not only the website."
+        )
+        chatgpt_layout = QVBoxLayout(chatgpt_page)
+        chatgpt_text = QLabel(
+            "ChatGPT is available in a web browser and as a Windows desktop "
+            "app. PromptMeld opens and controls the installed Windows app, so "
+            "having chatgpt.com open in a browser is not sufficient. This "
+            "check does not sign in or send any information."
+        )
+        chatgpt_text.setWordWrap(True)
+        chatgpt_text.setObjectName("setupBody")
+        chatgpt_layout.addWidget(chatgpt_text)
+        self.chatgpt_status = QLabel()
+        self.chatgpt_status.setObjectName("chatgptStatus")
+        self.chatgpt_status.setWordWrap(True)
+        chatgpt_layout.addWidget(self.chatgpt_status)
+        chatgpt_buttons = QHBoxLayout()
+        self.check_chatgpt_button = QPushButton("Check again")
+        self.check_chatgpt_button.clicked.connect(self._check_chatgpt_app)
+        self.download_chatgpt_button = QPushButton(
+            "Open official download page"
+        )
+        self.download_chatgpt_button.clicked.connect(
+            self._open_chatgpt_download
+        )
+        chatgpt_buttons.addWidget(self.check_chatgpt_button)
+        chatgpt_buttons.addWidget(self.download_chatgpt_button)
+        chatgpt_buttons.addStretch(1)
+        chatgpt_layout.addLayout(chatgpt_buttons)
+        download_note = QLabel(
+            "Install ChatGPT from the official OpenAI page, open it once, "
+            "and sign in. Then return here and choose Check again."
+        )
+        download_note.setObjectName("setupBody")
+        download_note.setWordWrap(True)
+        chatgpt_layout.addWidget(download_note)
+        chatgpt_layout.addStretch(1)
+        self.addPage(chatgpt_page)
 
         hotkey_page = QWizardPage()
         hotkey_page.setTitle("Choose and test the launcher shortcut")
@@ -725,6 +809,7 @@ class FirstRunSetupWizard(QWizard):
         app = QApplication.instance()
         if app is not None:
             app.paletteChanged.connect(self._system_appearance_changed)
+        self._check_chatgpt_app()
         self._test_hotkey()
         self._update_summary()
 
@@ -829,6 +914,8 @@ class FirstRunSetupWizard(QWizard):
                 }
                 QLabel#hotkeyStatus[state="available"] { color: #18733b; }
                 QLabel#hotkeyStatus[state="error"] { color: #a32626; }
+                QLabel#chatgptStatus[state="available"] { color: #18733b; }
+                QLabel#chatgptStatus[state="error"] { color: #a32626; }
                 QLineEdit {
                     color: #202631;
                     background: #ffffff;
@@ -905,6 +992,8 @@ class FirstRunSetupWizard(QWizard):
             }
             QLabel#hotkeyStatus[state="available"] { color: #7ee2a8; }
             QLabel#hotkeyStatus[state="error"] { color: #ff9d9d; }
+            QLabel#chatgptStatus[state="available"] { color: #7ee2a8; }
+            QLabel#chatgptStatus[state="error"] { color: #ff9d9d; }
             QLineEdit {
                 color: #ffffff;
                 background: #22252c;
@@ -953,6 +1042,42 @@ class FirstRunSetupWizard(QWizard):
     def selected_hotkey(self) -> str:
         return self.hotkey_editor.text().strip()
 
+    def _check_chatgpt_app(self, *args) -> None:
+        try:
+            available = bool(self.chatgpt_app_available())
+        except Exception:
+            available = False
+        self.chatgpt_app_is_available = available
+        self.chatgpt_status.setProperty(
+            "state",
+            "available" if available else "error",
+        )
+        self.chatgpt_status.setText(
+            (
+                "Ready - the ChatGPT Windows desktop app was detected."
+                if available
+                else "Not detected - install the ChatGPT Windows desktop app "
+                "before using PromptMeld."
+            )
+        )
+        self.chatgpt_status.style().unpolish(self.chatgpt_status)
+        self.chatgpt_status.style().polish(self.chatgpt_status)
+        self._update_summary()
+
+    def _open_chatgpt_download(self, *args) -> None:
+        try:
+            opened = bool(self.open_chatgpt_download(CHATGPT_DOWNLOAD_URL))
+        except Exception:
+            opened = False
+        if opened:
+            return
+        QMessageBox.warning(
+            self,
+            "Could not open the ChatGPT download page",
+            "Open this official address in your browser:\n\n"
+            f"{CHATGPT_DOWNLOAD_URL}",
+        )
+
     def _set_hotkey_result(self, available: bool, message: str) -> None:
         self.hotkey_is_available = available
         self.hotkey_status.setProperty(
@@ -998,11 +1123,28 @@ class FirstRunSetupWizard(QWizard):
             return
         status = "tested and available" if self.hotkey_is_available else "not ready"
         self.summary_label.setText(
+            "ChatGPT desktop app: "
+            f"{'detected' if self.chatgpt_app_is_available else 'not detected'}"
+            "\n"
             f"Launcher shortcut: {self.selected_hotkey() or 'Not set'} "
             f"({status})"
         )
 
     def accept(self) -> None:
+        self._check_chatgpt_app()
+        if not self.chatgpt_app_is_available:
+            choice = QMessageBox.question(
+                self,
+                "ChatGPT desktop app not detected",
+                "PromptMeld requires the installed ChatGPT Windows desktop "
+                "app and cannot automate ChatGPT in a web browser. Finish "
+                "setup anyway and install it later?",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                return
         self._test_hotkey()
         if not self.hotkey_is_available:
             QMessageBox.warning(
@@ -1261,6 +1403,25 @@ class ActionCreationWizard(QWizard):
             "Show as a fixed direct action on launcher home"
         )
         self.show_on_home.setChecked(source.show_on_home)
+        self.purpose = NoWheelComboBox()
+        self.purpose.setAccessibleName("Writing action purpose")
+        for value, label in ACTION_PURPOSE_OPTIONS:
+            self.purpose.addItem(label, value)
+        self.purpose.setCurrentIndex(
+            max(0, self.purpose.findData(source.purpose))
+        )
+        self.result_handling = NoWheelComboBox()
+        self.result_handling.setAccessibleName(
+            "Writing action result handling"
+        )
+        for value, label in ACTION_RESULT_HANDLING_OPTIONS:
+            self.result_handling.addItem(label, value)
+        self.result_handling.setCurrentIndex(
+            max(0, self.result_handling.findData(source.result_handling))
+        )
+        self.result_handling_help = QLabel()
+        self.result_handling_help.setObjectName("muted")
+        self.result_handling_help.setWordWrap(True)
         self.natural_voice = NoWheelComboBox()
         self.natural_voice.addItem("Follow the launcher choice", "inherit")
         self.natural_voice.addItem("Always apply", "always")
@@ -1296,6 +1457,9 @@ class ActionCreationWizard(QWizard):
         self.guided_drafting.setChecked(source.guided_drafting)
         behaviour_form.addRow("Availability", self.enabled)
         behaviour_form.addRow("Launcher home", self.show_on_home)
+        behaviour_form.addRow("Purpose", self.purpose)
+        behaviour_form.addRow("Result handling", self.result_handling)
+        behaviour_form.addRow("", self.result_handling_help)
         behaviour_form.addRow("Natural voice", self.natural_voice)
         behaviour_form.addRow("Default audience", self.recipient_audience)
         behaviour_form.addRow("Guided drafting", self.guided_drafting)
@@ -1373,12 +1537,19 @@ class ActionCreationWizard(QWizard):
 
         self.icon.currentIndexChanged.connect(self._update_icon_preview)
         self.icon.lineEdit().textChanged.connect(self._update_icon_preview)
+        self.purpose.currentIndexChanged.connect(
+            self._update_result_handling_help
+        )
+        self.result_handling.currentIndexChanged.connect(
+            self._update_result_handling_help
+        )
         self.currentIdChanged.connect(self._wizard_page_changed)
         self._apply_appearance()
         app = QApplication.instance()
         if app is not None:
             app.paletteChanged.connect(self._system_appearance_changed)
         self._update_icon_preview()
+        self._update_result_handling_help()
         self._test_hotkey()
         self._update_accessible_page(self.currentId())
 
@@ -1732,7 +1903,31 @@ class ActionCreationWizard(QWizard):
             recipient_audience=str(
                 self.recipient_audience.currentData() or "inherit"
             ),
+            purpose=str(self.purpose.currentData() or "transform"),
+            result_handling=str(
+                self.result_handling.currentData() or "purpose_default"
+            ),
         )
+
+    def _update_result_handling_help(self, *args) -> None:
+        purpose = str(self.purpose.currentData() or "transform")
+        handling = str(
+            self.result_handling.currentData() or "purpose_default"
+        )
+        if handling != "purpose_default":
+            self.result_handling_help.setText(
+                "This action explicitly overrides its purpose recommendation."
+            )
+        elif purpose in {"analyse", "extract", "develop"}:
+            self.result_handling_help.setText(
+                "Recommended: open a non-destructive review window. The "
+                "original selection is not replaced and Apply now is withheld."
+            )
+        else:
+            self.result_handling_help.setText(
+                "Recommended: use the source application's result policy, or "
+                "the overall defaults when no application policy is set."
+            )
 
     def _go_back_to(self, page_id: int) -> None:
         while self.currentId() > page_id:
@@ -1777,6 +1972,763 @@ class ActionCreationWizard(QWizard):
         super().accept()
 
 
+def _wrapped_catalogue_tooltip(text: str, width: int = 55) -> str:
+    """Return a reliably wrapped rich-text tooltip for catalogue controls."""
+
+    lines: list[str] = []
+    for paragraph in text.splitlines() or [text]:
+        lines.extend(
+            textwrap.wrap(
+                paragraph,
+                width=width,
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+            or [""]
+        )
+    return "<qt>" + "<br>".join(escape(line) for line in lines) + "</qt>"
+
+
+class StarterPackActionRow(QFrame):
+    """A readable, accessible preview of one action in a starter pack."""
+
+    def __init__(
+        self,
+        action: WritingAction,
+        action_icon: QIcon,
+        status_icon: QIcon,
+        status_label: str,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.action = action
+        self.status_label = status_label
+        self.setObjectName("catalogueActionRow")
+        self.setAccessibleName(action.name)
+        self.setAccessibleDescription(
+            f"{action.instruction} Library status: {status_label}."
+        )
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(10)
+        self.action_icon = QLabel()
+        self.action_icon.setObjectName("catalogueActionIcon")
+        self.action_icon.setFixedSize(34, 34)
+        self.action_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.action_icon.setPixmap(action_icon.pixmap(32, 32))
+        self.action_icon.setAccessibleName(f"Icon for {action.name}")
+        layout.addWidget(self.action_icon, 0, Qt.AlignmentFlag.AlignTop)
+
+        text_layout = QVBoxLayout()
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(3)
+        self.name_label = QLabel(action.name)
+        self.name_label.setObjectName("catalogueActionName")
+        self.name_label.setWordWrap(True)
+        self.instruction_label = QLabel(action.instruction)
+        self.instruction_label.setObjectName("catalogueActionInstruction")
+        self.instruction_label.setWordWrap(True)
+        text_layout.addWidget(self.name_label)
+        text_layout.addWidget(self.instruction_label)
+        layout.addLayout(text_layout, 1)
+
+        self.status_icon = QLabel()
+        self.status_icon.setObjectName("catalogueActionStatus")
+        self.status_icon.setFixedSize(24, 24)
+        self.status_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_icon.setPixmap(status_icon.pixmap(20, 20))
+        self.status_icon.setAccessibleName(f"Library status: {status_label}")
+        self.status_icon.setAccessibleDescription(status_label)
+        self.status_icon.setToolTip(
+            _wrapped_catalogue_tooltip(status_label)
+        )
+        layout.addWidget(self.status_icon, 0, Qt.AlignmentFlag.AlignTop)
+
+
+class StarterPackListRow(QFrame):
+    """Compact pack-list row with a wrapped name and status icon."""
+
+    def __init__(
+        self,
+        name: str,
+        status_icon: QIcon,
+        accessible_text: str,
+        tooltip: str,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("cataloguePackRow")
+        self.setProperty("selected", False)
+        self.setAccessibleName(accessible_text)
+        self.setToolTip(tooltip)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(9, 5, 7, 5)
+        layout.setSpacing(7)
+        self.status_icon = QLabel()
+        self.status_icon.setFixedSize(20, 20)
+        self.status_icon.setPixmap(status_icon.pixmap(18, 18))
+        self.status_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_icon.setAccessibleName(accessible_text)
+        layout.addWidget(self.status_icon, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.name_label = QLabel(name)
+        self.name_label.setObjectName("cataloguePackName")
+        self.name_label.setWordWrap(True)
+        self.name_label.setToolTip(tooltip)
+        layout.addWidget(self.name_label, 1)
+
+    def set_selected(self, selected: bool) -> None:
+        self.setProperty("selected", selected)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+
+class StarterPackCatalogueDialog(QDialog):
+    """Browse, preview, and manage the built-in action-pack catalogue."""
+
+    operation_requested = Signal(str, str)
+    PACK_ID_ROLE = Qt.ItemDataRole.UserRole
+
+    def __init__(
+        self,
+        packs: tuple[ActionPack, ...],
+        actions: list[WritingAction],
+        icon_provider: ActionIconProvider,
+        installed_applications: frozenset[str] = frozenset(),
+        *,
+        theme: str = "auto",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.packs = packs
+        self.pack_by_id = {pack.pack_id: pack for pack in packs}
+        self.actions = list(actions)
+        self.icon_provider = icon_provider
+        self.installed_applications = frozenset(
+            normalize_application_name(value)
+            for value in installed_applications
+            if normalize_application_name(value)
+        )
+        self.theme = theme
+        self.setWindowTitle("Starter-pack catalogue")
+        self.setAccessibleName("Starter-pack catalogue")
+        self.setModal(True)
+        self.resize(1020, 680)
+        self.setMinimumSize(800, 560)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 18, 20, 18)
+        root.setSpacing(12)
+        title = QLabel("Starter-pack catalogue")
+        title.setObjectName("catalogueTitle")
+        root.addWidget(title)
+        intro = QLabel(
+            "Browse optional groups of writing actions before adding them. "
+            "Recommendations are calculated locally from applications detected "
+            "on this PC; no application list is transmitted."
+        )
+        intro.setObjectName("muted")
+        intro.setWordWrap(True)
+        root.addWidget(intro)
+
+        filters = QHBoxLayout()
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search packs or included actions…")
+        self.search.setClearButtonEnabled(True)
+        self.search.setAccessibleName("Search starter packs")
+        self.category = NoWheelComboBox()
+        self.category.setAccessibleName("Starter-pack category")
+        self.category.addItem("All categories", "")
+        present_categories = {pack.category for pack in packs}
+        for category in PACK_CATEGORY_ORDER:
+            if category in present_categories:
+                self.category.addItem(category, category)
+        for category in sorted(present_categories - set(PACK_CATEGORY_ORDER)):
+            self.category.addItem(category, category)
+        filters.addWidget(self.search, 1)
+        filters.addWidget(self.category)
+        root.addLayout(filters)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.pack_list = QListWidget()
+        self.pack_list.setMinimumWidth(190)
+        self.pack_list.setMaximumWidth(250)
+        self.pack_list.setIconSize(QSize(18, 18))
+        self.pack_list.setWordWrap(True)
+        self.pack_list_rows: dict[str, StarterPackListRow] = {}
+        self.pack_list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.pack_list.setAccessibleName("Available starter packs")
+        self.pack_list.currentItemChanged.connect(self._pack_selected)
+        splitter.addWidget(self.pack_list)
+
+        details = QWidget()
+        details_layout = QVBoxLayout(details)
+        details_layout.setContentsMargins(14, 2, 2, 2)
+        pack_heading = QHBoxLayout()
+        self.pack_name = QLabel("Select a pack")
+        self.pack_name.setObjectName("cataloguePackTitle")
+        pack_heading.addWidget(self.pack_name, 1)
+        self.pack_status = QLabel()
+        self.pack_status.setObjectName("catalogueStatus")
+        self.pack_status.setWordWrap(True)
+        pack_heading.addWidget(
+            self.pack_status,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
+        details_layout.addLayout(pack_heading)
+        self.pack_description = QLabel()
+        self.pack_description.setWordWrap(True)
+        details_layout.addWidget(self.pack_description)
+        self.pack_intended_use = QLabel()
+        self.pack_intended_use.setObjectName("muted")
+        self.pack_intended_use.setWordWrap(True)
+        details_layout.addWidget(self.pack_intended_use)
+        self.recommendation = QLabel()
+        self.recommendation.setObjectName("catalogueRecommendation")
+        self.recommendation.setWordWrap(True)
+        details_layout.addWidget(self.recommendation)
+        actions_heading = QLabel("Included actions")
+        actions_heading.setObjectName("formLabel")
+        details_layout.addWidget(actions_heading)
+        self.action_preview = QFrame()
+        self.action_preview.setObjectName("catalogueActionList")
+        self.action_preview.setAccessibleName(
+            "Actions included in the selected starter pack"
+        )
+        self.action_preview_layout = QVBoxLayout(self.action_preview)
+        self.action_preview_layout.setContentsMargins(0, 0, 0, 0)
+        self.action_preview_layout.setSpacing(7)
+        self.action_rows: list[StarterPackActionRow] = []
+        self.action_scroll = QScrollArea()
+        self.action_scroll.setObjectName("catalogueActionScroll")
+        self.action_scroll.setWidgetResizable(True)
+        self.action_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.action_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.action_scroll.setWidget(self.action_preview)
+        details_layout.addWidget(self.action_scroll, 1)
+
+        operations = QHBoxLayout()
+        self.primary_button = QPushButton("Add pack")
+        self.primary_operation = ""
+        self.more_button = QToolButton()
+        self.more_button.setObjectName("catalogueMoreButton")
+        self.more_button.setText("More")
+        self.more_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.more_menu = QMenu(self.more_button)
+        self.more_button.setMenu(self.more_menu)
+        self.close_button = QPushButton("Close")
+        self.primary_button.clicked.connect(self._request_primary)
+        self.close_button.clicked.connect(self.accept)
+        operations.addWidget(self.primary_button)
+        operations.addWidget(self.more_button)
+        operations.addStretch(1)
+        operations.addWidget(self.close_button)
+        details_layout.addLayout(operations)
+        splitter.addWidget(details)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes((220, 800))
+        self.splitter = splitter
+        root.addWidget(splitter, 1)
+
+        self.search.textChanged.connect(lambda _value: self.refresh())
+        self.category.currentIndexChanged.connect(
+            lambda _index: self.refresh()
+        )
+        self._apply_style()
+        app = QApplication.instance()
+        if app is not None:
+            app.paletteChanged.connect(self._system_appearance_changed)
+        self.refresh()
+
+    def set_actions(self, actions: list[WritingAction]) -> None:
+        self.actions = list(actions)
+        selected = self.selected_pack_id()
+        self.refresh(selected)
+
+    def selected_pack_id(self) -> str:
+        item = self.pack_list.currentItem()
+        return str(item.data(self.PACK_ID_ROLE) or "") if item else ""
+
+    def selected_pack(self) -> ActionPack | None:
+        return self.pack_by_id.get(self.selected_pack_id())
+
+    def is_recommended(self, pack: ActionPack) -> bool:
+        return bool(
+            self.installed_applications.intersection(
+                pack.recommended_applications
+            )
+        )
+
+    def recommendation_reason(self, pack: ActionPack) -> str:
+        matches = sorted(
+            self.installed_applications.intersection(
+                pack.recommended_applications
+            )
+        )
+        if not matches:
+            return ""
+        labels = [application_display_name(value) for value in matches]
+        return "Recommended because PromptMeld detected " + self._join_labels(
+            labels
+        ) + "."
+
+    def refresh(self, preferred_pack_id: str = "") -> None:
+        selected = preferred_pack_id or self.selected_pack_id()
+        query = self.search.text().strip().casefold()
+        category = str(self.category.currentData() or "")
+        visible: list[ActionPack] = []
+        for pack in self.packs:
+            if category and pack.category != category:
+                continue
+            haystack = " ".join(
+                (
+                    pack.name,
+                    pack.description,
+                    pack.intended_use,
+                    pack.category,
+                    *(action.name for action in pack.actions),
+                    *(action.instruction for action in pack.actions),
+                    *(" ".join(action.keywords) for action in pack.actions),
+                )
+            ).casefold()
+            if query and query not in haystack:
+                continue
+            visible.append(pack)
+        visible.sort(
+            key=lambda pack: (
+                not self.is_recommended(pack),
+                PACK_CATEGORY_ORDER.index(pack.category)
+                if pack.category in PACK_CATEGORY_ORDER
+                else len(PACK_CATEGORY_ORDER),
+                pack.name.casefold(),
+            )
+        )
+
+        self.pack_list.blockSignals(True)
+        self.pack_list.clear()
+        self.pack_list_rows.clear()
+        selected_row = -1
+        for row, pack in enumerate(visible):
+            installation = action_pack_installation(self.actions, pack)
+            recommended = self.is_recommended(pack)
+            prefix = "★ " if recommended else ""
+            item = QListWidgetItem()
+            item.setSizeHint(QSize(0, 48))
+            item.setData(self.PACK_ID_ROLE, pack.pack_id)
+            reason = self.recommendation_reason(pack)
+            accessible_text = f"{pack.name}. {installation.label}."
+            if reason:
+                accessible_text += f" {reason}"
+            item.setData(Qt.ItemDataRole.AccessibleTextRole, accessible_text)
+            tooltip = f"{pack.description}\n{installation.label}."
+            if reason:
+                tooltip += f"\n{reason}"
+            wrapped_tooltip = _wrapped_catalogue_tooltip(tooltip)
+            item.setToolTip(wrapped_tooltip)
+            self.pack_list.addItem(item)
+            row_widget = StarterPackListRow(
+                f"{prefix}{pack.name}",
+                self._status_icon(
+                    self._pack_icon_status(installation.status)
+                ),
+                accessible_text,
+                wrapped_tooltip,
+                self.pack_list,
+            )
+            self.pack_list.setItemWidget(item, row_widget)
+            self.pack_list_rows[pack.pack_id] = row_widget
+            if pack.pack_id == selected:
+                selected_row = row
+        if selected_row < 0 and visible:
+            selected_row = 0
+        self.pack_list.setCurrentRow(selected_row)
+        self.pack_list.blockSignals(False)
+        self._pack_selected(self.pack_list.currentItem(), None)
+
+    def _pack_selected(
+        self,
+        current: QListWidgetItem | None,
+        _previous: QListWidgetItem | None,
+    ) -> None:
+        pack = self.selected_pack() if current is not None else None
+        selected_pack_id = pack.pack_id if pack is not None else ""
+        for pack_id, row in self.pack_list_rows.items():
+            row.set_selected(pack_id == selected_pack_id)
+        if pack is None:
+            self.pack_name.setText("No packs match these filters")
+            self.pack_status.clear()
+            self.pack_description.clear()
+            self.pack_intended_use.clear()
+            self.recommendation.clear()
+            self.recommendation.setVisible(False)
+            self._clear_action_preview()
+            self.primary_button.setVisible(False)
+            self.more_button.setVisible(False)
+            return
+        installation = action_pack_installation(self.actions, pack)
+        self.pack_name.setText(pack.name)
+        details = installation.label
+        if installation.status == "partial":
+            details += (
+                f" - {installation.installed_count} of {len(pack.actions)} "
+                "actions are present"
+            )
+        elif installation.status in {"modified", "update_available"}:
+            details += (
+                f" - {installation.modified_count} action"
+                f"{'s' if installation.modified_count != 1 else ''} differ"
+            )
+        self.pack_status.setText(details)
+        self.pack_description.setText(pack.description)
+        self.pack_intended_use.setText(f"Best for: {pack.intended_use}")
+        reason = self.recommendation_reason(pack)
+        self.recommendation.setText(f"★ {reason}" if reason else "")
+        self.recommendation.setVisible(bool(reason))
+        self.recommendation.style().unpolish(self.recommendation)
+        self.recommendation.style().polish(self.recommendation)
+        self._populate_action_preview(pack)
+        self._configure_operations(installation.status)
+
+    def _populate_action_preview(self, pack: ActionPack) -> None:
+        existing = {action.id: action for action in self.actions}
+        self._clear_action_preview()
+        self.action_preview.setAccessibleDescription(
+            f"{len(pack.actions)} actions included in {pack.name}."
+        )
+        for source in pack.actions:
+            current = existing.get(source.id)
+            status = (
+                "missing"
+                if current is None
+                else "installed"
+                if current == source
+                else "different"
+            )
+            status_label = {
+                "missing": "Not in your library",
+                "installed": "Already in your library",
+                "different": "Different from this catalogue version",
+            }[status]
+            row = StarterPackActionRow(
+                source,
+                self.icon_provider.icon_for(source, 32),
+                self._status_icon(status),
+                status_label,
+                self.action_preview,
+            )
+            self.action_rows.append(row)
+            self.action_preview_layout.addWidget(row)
+        self.action_preview_layout.addStretch(1)
+
+    def _clear_action_preview(self) -> None:
+        while self.action_preview_layout.count():
+            item = self.action_preview_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.action_rows.clear()
+
+    def _request_primary(self) -> None:
+        if self.primary_operation:
+            self._request(self.primary_operation)
+
+    def _configure_operations(self, status: str) -> None:
+        primary: tuple[str, str] | None = None
+        secondary: list[tuple[str, str] | None] = []
+        if status == "not_installed":
+            primary = ("Add pack", "add")
+        elif status == "partial":
+            primary = ("Add missing actions", "add")
+            secondary = [
+                ("Update from catalogue", "update"),
+                ("Restore shipped version", "restore"),
+                None,
+                ("Remove pack", "remove"),
+            ]
+        elif status == "update_available":
+            primary = ("Update from catalogue", "update")
+            secondary = [
+                ("Restore shipped version", "restore"),
+                None,
+                ("Remove pack", "remove"),
+            ]
+        elif status == "modified":
+            secondary = [
+                ("Restore shipped version", "restore"),
+                None,
+                ("Remove pack", "remove"),
+            ]
+        elif status == "installed":
+            secondary = [("Remove pack", "remove")]
+
+        self.primary_operation = primary[1] if primary else ""
+        self.primary_button.setText(primary[0] if primary else "")
+        self.primary_button.setVisible(primary is not None)
+        self.primary_button.setEnabled(primary is not None)
+
+        self.more_menu.clear()
+        for entry in secondary:
+            if entry is None:
+                self.more_menu.addSeparator()
+                continue
+            label, operation = entry
+            action = self.more_menu.addAction(label)
+            action.setData(operation)
+            action.triggered.connect(
+                lambda _checked=False, value=operation: self._request(value)
+            )
+        self.more_button.setVisible(bool(secondary))
+        self.more_button.setEnabled(bool(secondary))
+
+    @staticmethod
+    def _pack_icon_status(status: str) -> str:
+        if status == "installed":
+            return "installed"
+        if status in {"not_installed", "partial"}:
+            return "missing"
+        return "different"
+
+    def _status_icon(self, status: str) -> QIcon:
+        size = 20
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if system_high_contrast_enabled():
+            colour = self.palette().color(QPalette.ColorRole.WindowText)
+        elif status == "installed":
+            colour = QColor(
+                "#2b8a3e"
+                if resolve_theme(self.theme) == "light"
+                else "#72d586"
+            )
+        elif status == "different":
+            colour = QColor(
+                "#a05a00"
+                if resolve_theme(self.theme) == "light"
+                else "#f0b35d"
+            )
+        else:
+            colour = QColor(
+                "#52606f"
+                if resolve_theme(self.theme) == "light"
+                else "#b3bac6"
+            )
+        painter.setPen(
+            QPen(
+                colour,
+                2.0,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin,
+            )
+        )
+        circle = QRectF(2.5, 2.5, 15, 15)
+        if status == "different":
+            painter.drawArc(circle, 35 * 16, 285 * 16)
+            painter.setBrush(colour)
+            painter.drawPolygon(
+                QPolygonF(
+                    (
+                        QPointF(15.9, 2.0),
+                        QPointF(17.9, 6.2),
+                        QPointF(13.3, 5.5),
+                    )
+                )
+            )
+        else:
+            painter.drawEllipse(circle)
+            if status == "installed":
+                painter.drawPolyline(
+                    QPolygonF(
+                        (
+                            QPointF(5.5, 10.2),
+                            QPointF(8.7, 13.1),
+                            QPointF(14.7, 6.7),
+                        )
+                    )
+                )
+            else:
+                painter.drawLine(QPointF(6.2, 10), QPointF(13.8, 10))
+                painter.drawLine(QPointF(10, 6.2), QPointF(10, 13.8))
+        painter.end()
+        return QIcon(pixmap)
+
+    def _request(self, operation: str) -> None:
+        pack_id = self.selected_pack_id()
+        if pack_id:
+            self.operation_requested.emit(pack_id, operation)
+
+    def _apply_style(self) -> None:
+        if system_high_contrast_enabled():
+            self.setStyleSheet(
+                high_contrast_stylesheet()
+                + """
+                QLabel#catalogueTitle { font-size:21px; font-weight:700; }
+                QLabel#cataloguePackTitle { font-size:19px; font-weight:650; }
+                QLabel#catalogueStatus { font-weight:650; padding:4px 8px; }
+                QFrame#catalogueActionRow {
+                    border:2px solid palette(window-text); padding:2px;
+                }
+                QFrame#cataloguePackRow[selected="true"] {
+                    color:palette(highlighted-text);
+                    background:palette(highlight);
+                }
+                QFrame#cataloguePackRow[selected="true"] QLabel {
+                    color:palette(highlighted-text);
+                    background:transparent;
+                }
+                """
+            )
+            return
+        if resolve_theme(self.theme) == "light":
+            self.setStyleSheet(
+                """
+                QDialog { color:#202631; background:#ffffff; }
+                QLabel { color:#202631; }
+                QCheckBox { color:#202631; }
+                QLabel#catalogueTitle { font-size:21px; font-weight:700; }
+                QLabel#cataloguePackTitle { font-size:19px; font-weight:650; }
+                QLabel#catalogueStatus {
+                    color:#315ecb; background:#e7edff; border-radius:8px;
+                    padding:4px 8px; font-weight:650;
+                }
+                QLabel#catalogueRecommendation {
+                    color:#185b27; background:#e3f3e6;
+                    border-radius:7px; padding:5px 8px;
+                }
+                QLabel#catalogueActionName { font-weight:650; }
+                QLabel#catalogueActionInstruction { color:#596270; }
+                QFrame#catalogueActionRow {
+                    background:#f7f8fa; border:1px solid #d4dae3;
+                    border-radius:8px;
+                }
+                QFrame#catalogueActionList,
+                QScrollArea#catalogueActionScroll {
+                    background:transparent; border:0;
+                }
+                QFrame#cataloguePackRow {
+                    color:#202631; background:transparent; border:0;
+                }
+                QFrame#cataloguePackRow[selected="true"] {
+                    background:#dce7ff;
+                }
+                QListWidget, QLineEdit, QComboBox {
+                    color:#202631; background:#f7f8fa;
+                    alternate-background-color:#edf1f6;
+                    border:1px solid #c5ccd6; border-radius:7px; padding:6px;
+                    selection-background-color:#dce7ff;
+                }
+                QListWidget::item { padding:0; }
+                QPushButton {
+                    color:white; background:#315ecb; border:0;
+                    border-radius:7px; padding:8px 13px; font-weight:600;
+                }
+                QToolButton#catalogueMoreButton {
+                    color:#244fae; background:#eef3ff;
+                    border:1px solid #9bafe2; border-radius:7px;
+                    padding:7px 12px; font-weight:600;
+                }
+                QMenu {
+                    color:#202631; background:#ffffff;
+                    border:1px solid #aeb8c5; padding:5px;
+                }
+                QMenu::item { padding:7px 24px 7px 10px; }
+                QMenu::item:selected { background:#dce7ff; }
+                QToolTip {
+                    color:#202631; background:#ffffff;
+                    border:1px solid #aeb8c5; padding:5px;
+                }
+                QPushButton:disabled { color:#7a8491; background:#e5e9ef; }
+                """
+            )
+            return
+        self.setStyleSheet(
+            """
+            QDialog { color:#e9ebef; background:#1b1d23; }
+            QLabel { color:#e9ebef; }
+            QCheckBox { color:#e9ebef; }
+            QLabel#catalogueTitle { font-size:21px; font-weight:700; }
+            QLabel#cataloguePackTitle { font-size:19px; font-weight:650; }
+            QLabel#catalogueStatus {
+                color:#d9e2ff; background:#2b3347; border-radius:8px;
+                padding:4px 8px; font-weight:650;
+            }
+            QLabel#catalogueRecommendation {
+                color:#c8f5d2; background:#23412b;
+                border-radius:7px; padding:5px 8px;
+            }
+            QLabel#catalogueActionName { color:#f4f5f7; font-weight:650; }
+            QLabel#catalogueActionInstruction { color:#b7bdc8; }
+                QFrame#catalogueActionRow {
+                    background:#23262d; border:1px solid #3a3f4a;
+                    border-radius:8px;
+                }
+            QFrame#catalogueActionList,
+            QScrollArea#catalogueActionScroll {
+                background:transparent; border:0;
+            }
+            QFrame#cataloguePackRow {
+                color:#f4f5f7; background:transparent; border:0;
+            }
+            QFrame#cataloguePackRow[selected="true"] {
+                background:#304a91;
+            }
+            QFrame#cataloguePackRow[selected="true"] QLabel {
+                color:#ffffff;
+            }
+            QListWidget, QLineEdit, QComboBox {
+                color:#f4f5f7; background:#23262d;
+                alternate-background-color:#292d34;
+                border:1px solid #3a3f4a; border-radius:7px; padding:6px;
+                selection-background-color:#304a91;
+            }
+            QListWidget::item { padding:0; }
+            QPushButton {
+                color:white; background:#4f7cff; border:0;
+                border-radius:7px; padding:8px 13px; font-weight:600;
+            }
+            QToolButton#catalogueMoreButton {
+                color:#d9e2ff; background:#2b3347;
+                border:1px solid #6679ad; border-radius:7px;
+                padding:7px 12px; font-weight:600;
+            }
+            QMenu {
+                color:#f4f5f7; background:#22252c;
+                border:1px solid #596273; padding:5px;
+            }
+            QMenu::item { padding:7px 24px 7px 10px; }
+            QMenu::item:selected { background:#304a91; }
+            QToolTip {
+                color:#f4f5f7; background:#22252c;
+                border:1px solid #596273; padding:5px;
+            }
+            QPushButton:disabled { color:#858c98; background:#292d34; }
+            """
+        )
+
+    def _system_appearance_changed(self, *args) -> None:
+        self._apply_style()
+        self.refresh(self.selected_pack_id())
+
+    @staticmethod
+    def _join_labels(labels: list[str]) -> str:
+        if len(labels) < 2:
+            return labels[0] if labels else ""
+        if len(labels) == 2:
+            return " and ".join(labels)
+        return ", ".join(labels[:-1]) + f", and {labels[-1]}"
+
+
 class ActionSettingsDialog(QDialog):
     actions_saved = Signal()
     update_check_requested = Signal()
@@ -1809,6 +2761,7 @@ class ActionSettingsDialog(QDialog):
         self.folder_icons = dict(settings.folder_icons if settings else {})
         self.actions = list(actions)
         self.builtin_action_packs = load_builtin_action_packs()
+        self.starter_pack_catalogue: StarterPackCatalogueDialog | None = None
         self.current_row = -1
         self.selected_folder = ""
         self._loading = False
@@ -2196,75 +3149,17 @@ class ActionSettingsDialog(QDialog):
         pack_buttons.addWidget(self.export_pack_button)
         left.addLayout(pack_buttons)
 
-        self.starter_pack_button = QPushButton("Add starter pack")
-        self.starter_pack_menu = QMenu(self.starter_pack_button)
-        self.starter_pack_actions: dict[str, QAction] = {}
-        pack_groups = (
-            (
-                "Reply or respond",
-                (
-                    "replies-arguments",
-                    "social-replies",
-                    "customer-relations",
-                    "email",
-                    "complaints",
-                ),
-            ),
-            (
-                "Edit or revise",
-                (
-                    "editing",
-                    "tone-voice",
-                    "social-editing",
-                    "argument-editing",
-                    "reviews-feedback",
-                ),
-            ),
-            (
-                "Draft or create",
-                (
-                    "draft-from-selection",
-                    "reports",
-                    "social-posts",
-                    "meetings",
-                    "career-writing",
-                ),
-            ),
-            (
-                "Summarise or extract",
-                ("summaries-extraction",),
-            ),
-            (
-                "Plan or decide",
-                ("decisions-planning",),
-            ),
-            (
-                "Explain or learn",
-                (
-                    "technical-communication",
-                    "learning",
-                ),
-            ),
+        self.starter_pack_button = QPushButton("Browse starter packs…")
+        self.starter_pack_button.setAccessibleName(
+            "Open the starter-pack catalogue"
         )
-        packs_by_id = {
-            pack.pack_id: pack for pack in self.builtin_action_packs
-        }
-        shown_pack_ids: set[str] = set()
-        for group_name, pack_ids in pack_groups:
-            group_menu = self.starter_pack_menu.addMenu(group_name)
-            for pack_id in pack_ids:
-                pack = packs_by_id.get(pack_id)
-                if pack is None:
-                    continue
-                self._add_starter_pack_menu_action(group_menu, pack)
-                shown_pack_ids.add(pack_id)
-        for pack in self.builtin_action_packs:
-            if pack.pack_id not in shown_pack_ids:
-                self._add_starter_pack_menu_action(
-                    self.starter_pack_menu,
-                    pack,
-                )
-        self.starter_pack_button.setMenu(self.starter_pack_menu)
+        self.starter_pack_button.setToolTip(
+            "Browse descriptions, included actions, installation status, "
+            "categories, and local application recommendations."
+        )
+        self.starter_pack_button.clicked.connect(
+            self._open_starter_pack_catalogue
+        )
         left.addWidget(self.starter_pack_button)
 
         self.starter_button = QPushButton("Replace with essential actions…")
@@ -2364,6 +3259,32 @@ class ActionSettingsDialog(QDialog):
         self.keywords = QLineEdit()
         self.keywords.setPlaceholderText("comma-separated search words")
         form.addRow(self._form_label("Keywords"), self.keywords)
+
+        self.action_purpose = NoWheelComboBox()
+        self.action_purpose.setAccessibleName("Writing action purpose")
+        for value, label in ACTION_PURPOSE_OPTIONS:
+            self.action_purpose.addItem(label, value)
+        self.action_purpose.setToolTip(
+            "Purpose tells PromptMeld whether the result is replacement text, "
+            "a reply, analysis, extracted information, or idea development."
+        )
+        form.addRow(self._form_label("Purpose"), self.action_purpose)
+
+        self.action_result_handling = NoWheelComboBox()
+        self.action_result_handling.setAccessibleName(
+            "Writing action result handling"
+        )
+        for value, label in ACTION_RESULT_HANDLING_OPTIONS:
+            self.action_result_handling.addItem(label, value)
+        self.action_result_handling.setToolTip(
+            "Analysis, extraction, and idea-development actions use a safe "
+            "review window by default. Choose another option only when this "
+            "action's output is suitable for that destination."
+        )
+        form.addRow(
+            self._form_label("Result handling"),
+            self.action_result_handling,
+        )
 
         self.natural_voice_mode = NoWheelComboBox()
         self.natural_voice_mode.addItem(
@@ -2961,6 +3882,8 @@ class ActionSettingsDialog(QDialog):
             self.folder_combo.currentTextChanged,
             self.icon_combo.currentTextChanged,
             self.keywords.textChanged,
+            self.action_purpose.currentIndexChanged,
+            self.action_result_handling.currentIndexChanged,
             self.natural_voice_mode.currentIndexChanged,
             self.action_recipient_audience.currentIndexChanged,
             self.guided_drafting.toggled,
@@ -3069,46 +3992,140 @@ class ActionSettingsDialog(QDialog):
             self._refresh_hotkey_rows()
         self._refresh_starter_pack_actions()
 
-    def _add_starter_pack_menu_action(
-        self,
-        menu: QMenu,
-        pack: ActionPack,
-    ) -> None:
-        action = menu.addAction(pack.name)
-        action.setToolTip(pack.description)
-        action.triggered.connect(
-            lambda _checked=False, selected=pack: (
-                self._add_builtin_action_pack(selected)
+    def _refresh_starter_pack_actions(self) -> None:
+        catalogue = getattr(self, "starter_pack_catalogue", None)
+        if catalogue is not None:
+            catalogue.set_actions(self.actions)
+
+    def _open_starter_pack_catalogue(self) -> None:
+        self._commit_current()
+        candidates = tuple(executable for _label, executable in COMMON_APPLICATIONS)
+        detected = detect_installed_applications(candidates)
+        catalogue = StarterPackCatalogueDialog(
+            self.builtin_action_packs,
+            self.actions,
+            self.icon_provider,
+            detected,
+            theme=str(self.theme.currentData() or "auto"),
+            parent=self,
+        )
+        self.starter_pack_catalogue = catalogue
+        catalogue.operation_requested.connect(
+            lambda pack_id, operation: self._catalogue_pack_operation(
+                catalogue,
+                pack_id,
+                operation,
             )
         )
-        self.starter_pack_actions[pack.pack_id] = action
+        try:
+            catalogue.exec()
+        finally:
+            self.starter_pack_catalogue = None
 
-    def _refresh_starter_pack_actions(self) -> None:
-        if not hasattr(self, "starter_pack_actions"):
+    def _catalogue_pack_operation(
+        self,
+        catalogue: StarterPackCatalogueDialog,
+        pack_id: str,
+        operation: str,
+    ) -> None:
+        pack = next(
+            (
+                candidate
+                for candidate in self.builtin_action_packs
+                if candidate.pack_id == pack_id
+            ),
+            None,
+        )
+        if pack is None:
             return
-        existing_ids = {action.id for action in self.actions}
-        any_available = False
-        for pack in self.builtin_action_packs:
-            menu_action = self.starter_pack_actions.get(pack.pack_id)
-            if menu_action is None:
-                continue
-            missing_count = sum(
-                action.id not in existing_ids for action in pack.actions
+        self._commit_current()
+        if operation == "add":
+            self._add_builtin_action_pack(pack)
+            catalogue.set_actions(self.actions)
+            return
+
+        installation = action_pack_installation(self.actions, pack)
+        if operation == "remove":
+            response = QMessageBox.question(
+                catalogue,
+                f"Remove {pack.name}?",
+                f"Remove {installation.installed_count} action(s) identified "
+                f"as members of {pack.name}?\n\nAny edits made to those "
+                "actions will also be removed. Other actions and folders will "
+                "remain. Nothing is written until you choose Save.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
-            if missing_count:
-                menu_action.setText(pack.name)
-                menu_action.setEnabled(True)
-                menu_action.setToolTip(
-                    f"{pack.description} Adds {missing_count} action(s)."
+            if response != QMessageBox.StandardButton.Yes:
+                return
+            result = remove_builtin_action_pack(self.actions, pack)
+            message = f"Removed {result.removed_count} action(s) from {pack.name}."
+        elif operation == "restore":
+            action_names = "\n".join(
+                f"  • {action.name}" for action in pack.actions
+            )
+            response = QMessageBox.question(
+                catalogue,
+                f"Restore {pack.name}?",
+                "Replace the pack's installed or modified actions with these "
+                f"shipped versions?\n\n{action_names}\n\nThis resets their "
+                "instructions, folders, shortcuts, icons and other action "
+                "settings. Unrelated actions remain unchanged. Nothing is "
+                "written until you choose Save.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if response != QMessageBox.StandardButton.Yes:
+                return
+            result = restore_builtin_action_pack(self.actions, pack)
+            message = f"Restored the shipped version of {pack.name}."
+        elif operation == "update":
+            response = QMessageBox.question(
+                catalogue,
+                f"Update {pack.name}?",
+                "Add missing actions and update the pack's names, instructions, "
+                "icons, purposes and safe result handling?\n\nPersonal folder "
+                "placement, shortcuts, enabled state, launcher pinning and "
+                "natural-voice choices are retained. Review the included "
+                "actions before continuing. Nothing is written until you "
+                "choose Save.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if response != QMessageBox.StandardButton.Yes:
+                return
+            result = update_builtin_action_pack(self.actions, pack)
+            if not result.added_count and not result.updated_count:
+                QMessageBox.information(
+                    catalogue,
+                    "Pack already up to date",
+                    f"{pack.name} has no managed content to update. Personal "
+                    "library differences have been left unchanged.",
                 )
-                any_available = True
-            else:
-                menu_action.setText(f"{pack.name} (added)")
-                menu_action.setEnabled(False)
-                menu_action.setToolTip(
-                    f"{pack.description} This pack is already installed."
-                )
-        self.starter_pack_button.setEnabled(any_available)
+                return
+            message = (
+                f"Updated {result.updated_count} and added "
+                f"{result.added_count} action(s) for {pack.name}."
+            )
+        else:
+            return
+
+        self.actions = result.actions
+        self._ensure_default_folder_icons(pack.actions)
+        self._populate_folder_choices()
+        selected_row = (
+            min(result.first_changed_index, len(self.actions) - 1)
+            if self.actions and result.first_changed_index >= 0
+            else -1
+        )
+        self._refresh_list(selected_row)
+        self._mark_unsaved()
+        catalogue.set_actions(self.actions)
+        QMessageBox.information(
+            catalogue,
+            "Starter pack changed",
+            f"{message}\n\nChoose Save in Configuration to keep this change.",
+        )
 
     def _tab_changed(self, index: int) -> None:
         if self.tabs.tabText(index) != "Hotkeys":
@@ -3399,6 +4416,8 @@ class ActionSettingsDialog(QDialog):
             self.name,
             self.folder_combo,
             self.keywords,
+            self.action_purpose,
+            self.action_result_handling,
             self.natural_voice_mode,
             self.action_recipient_audience,
             self.guided_drafting,
@@ -3417,6 +4436,12 @@ class ActionSettingsDialog(QDialog):
             self.folder_combo.setCurrentText(action.folder)
             self._set_icon_spec(action.icon)
             self.keywords.setText(", ".join(action.keywords))
+            purpose_index = self.action_purpose.findData(action.purpose)
+            self.action_purpose.setCurrentIndex(max(purpose_index, 0))
+            result_index = self.action_result_handling.findData(
+                action.result_handling
+            )
+            self.action_result_handling.setCurrentIndex(max(result_index, 0))
             voice_index = self.natural_voice_mode.findData(
                 action.natural_voice
             )
@@ -3438,6 +4463,8 @@ class ActionSettingsDialog(QDialog):
             self.folder_combo.setCurrentText(self.selected_folder)
             self._set_icon_spec(self.folder_icons.get(self.selected_folder, ""))
             self.keywords.clear()
+            self.action_purpose.setCurrentIndex(0)
+            self.action_result_handling.setCurrentIndex(0)
             self.natural_voice_mode.setCurrentIndex(0)
             self.action_recipient_audience.setCurrentIndex(0)
             self.guided_drafting.setChecked(False)
@@ -3451,6 +4478,8 @@ class ActionSettingsDialog(QDialog):
             self.icon_combo.setCurrentIndex(-1)
             self.icon_combo.clearEditText()
             self.keywords.clear()
+            self.action_purpose.setCurrentIndex(0)
+            self.action_result_handling.setCurrentIndex(0)
             self.natural_voice_mode.setCurrentIndex(0)
             self.action_recipient_audience.setCurrentIndex(0)
             self.guided_drafting.setChecked(False)
@@ -3482,6 +4511,13 @@ class ActionSettingsDialog(QDialog):
             show_on_home=self.show_on_home.isChecked(),
             icon=self._selected_icon_spec(),
             folder=self.folder_combo.currentText().strip(),
+            purpose=str(
+                self.action_purpose.currentData() or "transform"
+            ),
+            result_handling=str(
+                self.action_result_handling.currentData()
+                or "purpose_default"
+            ),
             natural_voice=str(
                 self.natural_voice_mode.currentData() or "inherit"
             ),
@@ -4640,6 +5676,14 @@ class ActionSettingsDialog(QDialog):
             }:
                 raise ValueError(
                     f"'{action.name}' has an invalid default audience."
+                )
+            if action.purpose not in ACTION_PURPOSE_VALUES:
+                raise ValueError(
+                    f"'{action.name}' has an invalid action purpose."
+                )
+            if action.result_handling not in ACTION_RESULT_HANDLING_VALUES:
+                raise ValueError(
+                    f"'{action.name}' has invalid result handling."
                 )
             if action.hotkey:
                 try:

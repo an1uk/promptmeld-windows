@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import PurePath
 
-from .models import AppSettings, ApplicationProfile, CapturedSelection
+from .models import (
+    SAFE_REVIEW_ACTION_PURPOSES,
+    AppSettings,
+    ApplicationProfile,
+    CapturedSelection,
+    WritingAction,
+)
 
 APPLICATION_RETURN_MODE_OPTIONS = (
     ("default", "Use overall defaults"),
@@ -137,14 +143,34 @@ class ReturnDecision:
     application: str = ""
     overridden: bool = False
     fallback_reason: str = ""
+    action_purpose: str = ""
+    action_overridden: bool = False
+    purpose_safe_review: bool = False
+    action_policy_locked: bool = False
 
     @property
     def wants_generated_text(self) -> bool:
         return self.replace_selection or self.copy_result or self.review_result
 
     @property
+    def allows_manual_apply(self) -> bool:
+        """Whether a completed result is suitable for replacing source text."""
+
+        return not self.purpose_safe_review
+
+    @property
     def summary(self) -> str:
         target = application_display_name(self.application)
+        if self.purpose_safe_review and self.review_result:
+            purpose = {
+                "analyse": "analysis",
+                "extract": "extracted information",
+                "develop": "idea development",
+            }.get(self.action_purpose, "generated")
+            return (
+                f"Review the {purpose} result for {target} without replacing "
+                "the selected text"
+            )
         if self.replace_selection and self.copy_result:
             return f"Replace in {target} and copy the result"
         if self.replace_selection:
@@ -306,6 +332,7 @@ def resolve_application_profile(
 def resolve_return_decision(
     settings: AppSettings,
     selection: CapturedSelection | None,
+    action: WritingAction | None = None,
 ) -> ReturnDecision:
     application = normalize_application_name(
         selection.source_app if selection is not None else ""
@@ -314,11 +341,31 @@ def resolve_return_decision(
         settings,
         application,
     ).return_mode
-    overridden = (
+    application_overridden = (
         configured_mode in APPLICATION_RETURN_MODE_VALUES
         and configured_mode != "default"
     )
-    requested_mode = configured_mode if overridden else "default"
+    requested_mode = configured_mode if application_overridden else "default"
+    action_purpose = action.purpose if action is not None else ""
+    action_handling = (
+        action.result_handling if action is not None else "purpose_default"
+    )
+    action_overridden = action is not None and action_handling != "purpose_default"
+    purpose_safe_review = bool(
+        action is not None
+        and action_handling == "purpose_default"
+        and action_purpose in SAFE_REVIEW_ACTION_PURPOSES
+    )
+
+    if purpose_safe_review:
+        requested_mode = "review"
+        application_overridden = False
+    elif action is not None and action_handling not in {
+        "purpose_default",
+        "inherit",
+    }:
+        requested_mode = action_handling
+        application_overridden = False
 
     if requested_mode == "replace":
         replace_selection = True
@@ -369,6 +416,16 @@ def resolve_return_decision(
         review_result=review_result,
         requested_mode=requested_mode,
         application=application,
-        overridden=overridden,
+        overridden=application_overridden,
         fallback_reason=fallback_reason,
+        action_purpose=action_purpose,
+        action_overridden=action_overridden,
+        purpose_safe_review=purpose_safe_review,
+        action_policy_locked=bool(
+            purpose_safe_review
+            or (
+                action is not None
+                and action_handling not in {"purpose_default", "inherit"}
+            )
+        ),
     )

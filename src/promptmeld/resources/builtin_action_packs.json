@@ -909,7 +909,9 @@
           "icon": "lucide:search-check",
           "folder": "Edit & revise/Arguments & evidence",
           "show_on_home": false,
-          "recipient_audience": "general_reader"
+          "recipient_audience": "general_reader",
+          "purpose": "analyse",
+          "result_handling": "purpose_default"
         },
         {
           "id": "argument-balanced-rewrite",
@@ -1092,6 +1094,136 @@
           "icon": "lucide:search-check",
           "folder": "Plan & decide/General",
           "show_on_home": false
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "authors-fiction",
+      "name": "Fiction authors",
+      "description": "Beta-read selected fiction, explore deeper questions, check continuity and diagnose scene craft without taking over the writing.",
+      "actions": [
+        {
+          "id": "fiction-beta-reader",
+          "name": "Beta-read the selected fiction",
+          "keywords": ["fiction", "author", "beta reader", "feedback", "reader reaction"],
+          "instruction": "Act as a thoughtful beta reader for the selected fiction. Explain where you felt engaged, curious, moved, confused, or distanced; identify what appears to be working; and raise the most useful reader questions or expectations. Distinguish personal reaction from a likely craft problem, refer to specific moments, and do not rewrite the passage or continue the story.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:book-open-check",
+          "folder": "Review & develop/Fiction",
+          "show_on_home": false,
+          "recipient_audience": "unspecified",
+          "purpose": "analyse",
+          "result_handling": "purpose_default"
+        },
+        {
+          "id": "fiction-deeper-questions",
+          "name": "Ask deeper questions about the story",
+          "keywords": ["fiction", "questions", "character", "motivation", "theme"],
+          "instruction": "Read the selected fiction and ask a focused set of questions that could help the author think more deeply about character motivation, stakes, relationships, setting, theme, and the consequences of what happens. Prioritise questions genuinely prompted by the passage, avoid prescribing one correct answer, and do not write new story material. Group related questions and briefly explain why each group may matter.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:message-square-text",
+          "folder": "Review & develop/Fiction",
+          "show_on_home": false,
+          "recipient_audience": "unspecified",
+          "purpose": "develop",
+          "result_handling": "purpose_default"
+        },
+        {
+          "id": "fiction-continuity-pov",
+          "name": "Check continuity, character and point of view",
+          "keywords": ["fiction", "continuity", "character", "point of view", "timeline"],
+          "instruction": "Review the selected fiction for internal continuity, character consistency, point-of-view control, timeline or spatial confusion, and details that appear to contradict one another. List clear issues separately from possible issues that need wider manuscript context, cite brief identifying phrases rather than reproducing the passage, and do not invent missing canon or rewrite the text.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:search-check",
+          "folder": "Review & develop/Fiction",
+          "show_on_home": false,
+          "recipient_audience": "unspecified",
+          "purpose": "analyse",
+          "result_handling": "purpose_default"
+        },
+        {
+          "id": "fiction-scene-craft",
+          "name": "Diagnose the selected scene",
+          "keywords": ["fiction", "scene", "pacing", "tension", "dialogue"],
+          "instruction": "Assess the selected fiction as a scene. Comment on its apparent purpose, pacing, tension, emotional movement, dialogue, description, and balance of action and reflection. Identify the two or three changes that would have the greatest effect and explain the trade-offs, while preserving the author's intended style. Do not rewrite the scene or present subjective preferences as rules.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:sparkles",
+          "folder": "Review & develop/Fiction",
+          "show_on_home": false,
+          "recipient_audience": "unspecified",
+          "purpose": "analyse",
+          "result_handling": "purpose_default"
+        }
+      ]
+    },
+    {
+      "format": "promptmeld-action-pack",
+      "format_version": 1,
+      "id": "authors-nonfiction",
+      "name": "Non-fiction authors",
+      "description": "Review selected non-fiction as a critical reader, test its support, improve its reader journey and surface deeper questions.",
+      "actions": [
+        {
+          "id": "nonfiction-critical-reader",
+          "name": "Review as a critical reader",
+          "keywords": ["non-fiction", "nonfiction", "author", "critical reader", "feedback"],
+          "instruction": "Act as a constructive critical reader for the selected non-fiction. State what you understand its purpose and central claim to be, identify the strongest material, note where a reader may become confused or unconvinced, and list the most important questions or objections it leaves open. Tie feedback to the text, distinguish fact-checking needs from writing issues, and do not rewrite the passage.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:book-open-check",
+          "folder": "Review & develop/Non-fiction",
+          "show_on_home": false,
+          "recipient_audience": "unspecified",
+          "purpose": "analyse",
+          "result_handling": "purpose_default"
+        },
+        {
+          "id": "nonfiction-argument-evidence",
+          "name": "Test claims, reasoning and evidence",
+          "keywords": ["non-fiction", "argument", "claims", "evidence", "reasoning"],
+          "instruction": "Analyse the selected non-fiction by separating its main claims, supporting evidence, assumptions, and inferences. Identify unsupported leaps, plausible counterarguments, ambiguous causation, and claims that need checking or citation. Do not claim to have verified facts or sources, do not invent evidence, and suggest what kind of support would strengthen each material weakness.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:search-check",
+          "folder": "Review & develop/Non-fiction",
+          "show_on_home": false,
+          "recipient_audience": "unspecified",
+          "purpose": "analyse",
+          "result_handling": "purpose_default"
+        },
+        {
+          "id": "nonfiction-reader-journey",
+          "name": "Review structure and the reader journey",
+          "keywords": ["non-fiction", "structure", "reader journey", "flow", "organisation"],
+          "instruction": "Review how the selected non-fiction guides a reader from its opening through its ideas and conclusion. Identify the apparent purpose of each section, repetition, abrupt transitions, misplaced detail, missing steps, and terms introduced too late or without explanation. Recommend a clearer sequence or signposting where useful, but do not rewrite the passage or remove necessary nuance.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:list-checks",
+          "folder": "Review & develop/Non-fiction",
+          "show_on_home": false,
+          "recipient_audience": "general_reader",
+          "purpose": "analyse",
+          "result_handling": "purpose_default"
+        },
+        {
+          "id": "nonfiction-deeper-questions",
+          "name": "Ask questions to deepen the work",
+          "keywords": ["non-fiction", "questions", "research", "assumptions", "implications"],
+          "instruction": "Use the selected non-fiction to ask a focused set of questions that could deepen the author's thinking and research. Cover definitions, scope, assumptions, evidence, alternative explanations, affected perspectives, implications, limitations, and what would change the conclusion where relevant. Prioritise questions that arise from this particular text, explain briefly why each group matters, and do not answer the questions or generate replacement prose.",
+          "hotkey": null,
+          "enabled": true,
+          "icon": "lucide:message-square-text",
+          "folder": "Review & develop/Non-fiction",
+          "show_on_home": false,
+          "recipient_audience": "unspecified",
+          "purpose": "develop",
+          "result_handling": "purpose_default"
         }
       ]
     }

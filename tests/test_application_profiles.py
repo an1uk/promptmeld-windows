@@ -83,6 +83,7 @@ def test_action_submission_uses_source_application_profile_defaults():
         "Client correspondence - Correspondence - Email"
     )
     assert options["selection"] == selection
+    assert options["action"] == action
 
 
 def test_action_audience_default_overrides_application_fallback():

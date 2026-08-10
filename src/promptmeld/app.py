@@ -58,6 +58,10 @@ from .returning import (
     resolve_application_profile,
     resolve_return_decision,
 )
+from .selective_review import (
+    add_selective_review_output_rule,
+    parse_selective_review_result,
+)
 from .single_instance import SingleInstance
 from .startup import StartupManager
 from .theme import apply_message_box_theme
@@ -236,6 +240,8 @@ class PromptMeld:
         self.pending_result_text = ""
         self.pending_result_selection: CapturedSelection | None = None
         self.pending_result_applied = False
+        self.pending_result_can_apply = False
+        self.pending_result_base_can_apply = False
         cleanup_update_downloads(self.update_downloads_dir)
         cached_release = self.update_state.cached_release
         if cached_release is not None:
@@ -379,6 +385,9 @@ class PromptMeld:
                 self.settings.title_subject,
             )
             self.popup.action_requested.connect(self.run_action)
+            self.popup.action_highlighted.connect(
+                self._highlighted_action_changed
+            )
             self.popup.custom_requested.connect(self.run_custom)
             self.popup.natural_voice_changed.connect(
                 self.set_natural_voice_enabled
@@ -406,6 +415,23 @@ class PromptMeld:
             )
             self.popup.title_subject_changed.connect(self.set_title_subject)
         return self.popup
+
+    def _highlighted_action_changed(self, action_id: str) -> None:
+        if self.popup is None or self.current_selection is None:
+            return
+        effective = resolve_application_profile(
+            self.settings,
+            self.current_selection,
+        )
+        settings = self._settings_with_application_profile(effective)
+        action = self.registry.get(action_id) if action_id else None
+        self.popup.set_action_context(
+            resolve_return_decision(
+                settings,
+                self.current_selection,
+                action,
+            )
+        )
 
     def register_hotkeys(self) -> None:
         failures: list[str] = []
@@ -748,6 +774,7 @@ class PromptMeld:
             selection=selection,
             effective_profile=effective,
             alternative_count=alternative_count,
+            action=action,
         )
 
     def _confirm_automatic_replacement(
@@ -953,6 +980,7 @@ class PromptMeld:
         selection: CapturedSelection | None = None,
         effective_profile: EffectiveApplicationProfile | None = None,
         alternative_count: int = 1,
+        action: WritingAction | None = None,
     ) -> None:
         if self.automation_worker is not None:
             self.notify(
@@ -993,7 +1021,16 @@ class PromptMeld:
             self.settings.project_naming_mode,
             selection.source_app if selection is not None else "",
         )
-        return_decision = resolve_return_decision(settings, selection)
+        return_decision = resolve_return_decision(settings, selection, action)
+        if (
+            selection is not None
+            and (return_decision.review_result or alternative_count > 1)
+        ):
+            prompt = add_selective_review_output_rule(
+                prompt,
+                action.purpose if action is not None else "transform",
+                alternative_count,
+            )
         if return_decision.fallback_reason:
             self.notify(
                 "Result handling adjusted",
@@ -1150,13 +1187,30 @@ class PromptMeld:
                 result.generated_text,
                 alternative_count,
             )
+            review_documents = [
+                parse_selective_review_result(
+                    value,
+                    prefer_feedback=bool(
+                        return_decision is not None
+                        and return_decision.purpose_safe_review
+                    ),
+                )
+                for value in alternatives
+            ]
             selected_result = replace(
                 result,
-                generated_text=alternatives[0],
+                generated_text=(
+                    review_documents[0].primary_text or alternatives[0]
+                ),
             )
             can_apply = self._remember_completed_result(
                 selected_result,
                 selection,
+                allow_manual_apply=(
+                    return_decision.allows_manual_apply
+                    if return_decision is not None
+                    else True
+                ),
             )
             if progress_window is not None:
                 progress_window.finish(selected_result, can_apply=False)
@@ -1165,6 +1219,16 @@ class PromptMeld:
                 alternatives,
                 requested_count=alternative_count,
                 can_apply=can_apply,
+                action_purpose=(
+                    return_decision.action_purpose
+                    if return_decision is not None
+                    else ""
+                ),
+                safe_review=bool(
+                    return_decision is not None
+                    and return_decision.purpose_safe_review
+                ),
+                source_text=selection.text if selection is not None else "",
             )
             self.notify(
                 "Alternatives ready",
@@ -1173,7 +1237,30 @@ class PromptMeld:
                 7000,
             )
             return
-        can_apply = self._remember_completed_result(result, selection)
+        remembered_result = result
+        if (
+            return_decision is not None
+            and return_decision.review_result
+            and result.generated_text
+        ):
+            document = parse_selective_review_result(
+                result.generated_text,
+                prefer_feedback=return_decision.purpose_safe_review,
+            )
+            if document.primary_text:
+                remembered_result = replace(
+                    result,
+                    generated_text=document.primary_text,
+                )
+        can_apply = self._remember_completed_result(
+            remembered_result,
+            selection,
+            allow_manual_apply=(
+                return_decision.allows_manual_apply
+                if return_decision is not None
+                else True
+            ),
+        )
         if progress_window is not None:
             progress_window.finish(result, can_apply=can_apply)
         if result.selection_replaced and selection is not None:
@@ -1209,10 +1296,27 @@ class PromptMeld:
             and return_decision.review_result
             and result.generated_text
         ):
+            if progress_window is not None:
+                progress_window.hide()
+            self._show_result_review(
+                [result.generated_text],
+                requested_count=1,
+                can_apply=can_apply,
+                action_purpose=return_decision.action_purpose,
+                safe_review=return_decision.purpose_safe_review,
+                source_text=selection.text if selection is not None else "",
+            )
             self.notify(
                 "Response ready",
-                "Use Copy result or Apply now in the PromptMeld completion "
-                "window. The same actions remain available from the tray.",
+                (
+                    "Review the result without changing the original selection. "
+                    "Copy result remains available in PromptMeld and from the tray."
+                    if return_decision.purpose_safe_review
+                    else (
+                        "Review, copy, or apply the result in the PromptMeld "
+                        "review window."
+                    )
+                ),
                 QSystemTrayIcon.MessageIcon.Information,
                 8000,
             )
@@ -1246,18 +1350,23 @@ class PromptMeld:
         self,
         result: SubmissionResult,
         selection: CapturedSelection | None,
+        *,
+        allow_manual_apply: bool = True,
     ) -> bool:
         if not result.generated_text:
             return False
         self.pending_result_text = result.generated_text
         self.pending_result_selection = selection
         self.pending_result_applied = result.selection_replaced
-        self._refresh_completion_actions()
-        return bool(
-            selection is not None
+        self.pending_result_base_can_apply = bool(
+            allow_manual_apply
+            and selection is not None
             and selection.source_is_editable
             and not result.selection_replaced
         )
+        self.pending_result_can_apply = self.pending_result_base_can_apply
+        self._refresh_completion_actions()
+        return self.pending_result_can_apply
 
     def _clear_result_review(self) -> None:
         review = getattr(self, "result_review", None)
@@ -1270,6 +1379,9 @@ class PromptMeld:
         *,
         requested_count: int,
         can_apply: bool,
+        action_purpose: str = "",
+        safe_review: bool = False,
+        source_text: str = "",
     ) -> None:
         from .result_review import ResultReviewDialog
 
@@ -1288,6 +1400,9 @@ class PromptMeld:
             alternatives,
             requested_count=requested_count,
             can_apply=can_apply,
+            action_purpose=action_purpose,
+            safe_review=safe_review,
+            source_text=source_text,
         )
         review.show()
         review.raise_()
@@ -1296,6 +1411,12 @@ class PromptMeld:
         if not generated_text:
             return
         self.pending_result_text = generated_text
+        review = getattr(self, "result_review", None)
+        if review is not None and review.is_selective_review():
+            self.pending_result_can_apply = bool(
+                getattr(self, "pending_result_base_can_apply", False)
+                and review.has_selected_changes()
+            )
         self._refresh_completion_actions()
 
     def _refresh_completion_actions(self) -> None:
@@ -1303,6 +1424,7 @@ class PromptMeld:
         selection = getattr(self, "pending_result_selection", None)
         can_apply = bool(
             result_available
+            and getattr(self, "pending_result_can_apply", False)
             and selection is not None
             and selection.source_is_editable
             and not getattr(self, "pending_result_applied", False)
@@ -1347,6 +1469,7 @@ class PromptMeld:
             or selection is None
             or not selection.source_is_editable
             or getattr(self, "pending_result_applied", False)
+            or not getattr(self, "pending_result_can_apply", False)
         ):
             return
         try:
@@ -1371,6 +1494,7 @@ class PromptMeld:
             return
 
         self.pending_result_applied = True
+        self.pending_result_can_apply = False
         self.preserved_original = selection
         self.last_replacement = selection
         self._refresh_completion_actions()
