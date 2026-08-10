@@ -128,9 +128,8 @@ Select a pack to read its description and intended use and inspect every
 included action before installing it. Each action's complete ChatGPT
 instruction is wrapped directly beneath its name. The icon at the right shows
 whether it is already in the library, missing, or different from the catalogue
-version. Recommended packs receive a star and sort first using only local
-application detection; PromptMeld does not send an application list or
-selected text anywhere.
+version. PromptMeld does not scan other installed applications or use them to
+recommend or order packs.
 
 The one primary button adds a pack, adds missing actions, or updates catalogue
 content according to the pack's current state. **More** contains relevant

@@ -77,7 +77,6 @@ from .action_packs import (
     ActionPack,
     ActionPackError,
     action_pack_installation,
-    detect_installed_applications,
     load_action_pack,
     load_builtin_action_packs,
     merge_action_pack,
@@ -2095,7 +2094,6 @@ class StarterPackCatalogueDialog(QDialog):
         packs: tuple[ActionPack, ...],
         actions: list[WritingAction],
         icon_provider: ActionIconProvider,
-        installed_applications: frozenset[str] = frozenset(),
         *,
         theme: str = "auto",
         parent: QWidget | None = None,
@@ -2105,11 +2103,6 @@ class StarterPackCatalogueDialog(QDialog):
         self.pack_by_id = {pack.pack_id: pack for pack in packs}
         self.actions = list(actions)
         self.icon_provider = icon_provider
-        self.installed_applications = frozenset(
-            normalize_application_name(value)
-            for value in installed_applications
-            if normalize_application_name(value)
-        )
         self.theme = theme
         self.setWindowTitle("Starter-pack catalogue")
         self.setAccessibleName("Starter-pack catalogue")
@@ -2124,9 +2117,8 @@ class StarterPackCatalogueDialog(QDialog):
         title.setObjectName("catalogueTitle")
         root.addWidget(title)
         intro = QLabel(
-            "Browse optional groups of writing actions before adding them. "
-            "Recommendations are calculated locally from applications detected "
-            "on this PC; no application list is transmitted."
+            "Browse optional groups of writing actions and inspect their full "
+            "instructions before adding them."
         )
         intro.setObjectName("muted")
         intro.setWordWrap(True)
@@ -2187,10 +2179,6 @@ class StarterPackCatalogueDialog(QDialog):
         self.pack_intended_use.setObjectName("muted")
         self.pack_intended_use.setWordWrap(True)
         details_layout.addWidget(self.pack_intended_use)
-        self.recommendation = QLabel()
-        self.recommendation.setObjectName("catalogueRecommendation")
-        self.recommendation.setWordWrap(True)
-        details_layout.addWidget(self.recommendation)
         actions_heading = QLabel("Included actions")
         actions_heading.setObjectName("formLabel")
         details_layout.addWidget(actions_heading)
@@ -2261,26 +2249,6 @@ class StarterPackCatalogueDialog(QDialog):
     def selected_pack(self) -> ActionPack | None:
         return self.pack_by_id.get(self.selected_pack_id())
 
-    def is_recommended(self, pack: ActionPack) -> bool:
-        return bool(
-            self.installed_applications.intersection(
-                pack.recommended_applications
-            )
-        )
-
-    def recommendation_reason(self, pack: ActionPack) -> str:
-        matches = sorted(
-            self.installed_applications.intersection(
-                pack.recommended_applications
-            )
-        )
-        if not matches:
-            return ""
-        labels = [application_display_name(value) for value in matches]
-        return "Recommended because PromptMeld detected " + self._join_labels(
-            labels
-        ) + "."
-
     def refresh(self, preferred_pack_id: str = "") -> None:
         selected = preferred_pack_id or self.selected_pack_id()
         query = self.search.text().strip().casefold()
@@ -2305,7 +2273,6 @@ class StarterPackCatalogueDialog(QDialog):
             visible.append(pack)
         visible.sort(
             key=lambda pack: (
-                not self.is_recommended(pack),
                 PACK_CATEGORY_ORDER.index(pack.category)
                 if pack.category in PACK_CATEGORY_ORDER
                 else len(PACK_CATEGORY_ORDER),
@@ -2319,24 +2286,17 @@ class StarterPackCatalogueDialog(QDialog):
         selected_row = -1
         for row, pack in enumerate(visible):
             installation = action_pack_installation(self.actions, pack)
-            recommended = self.is_recommended(pack)
-            prefix = "★ " if recommended else ""
             item = QListWidgetItem()
             item.setSizeHint(QSize(0, 48))
             item.setData(self.PACK_ID_ROLE, pack.pack_id)
-            reason = self.recommendation_reason(pack)
             accessible_text = f"{pack.name}. {installation.label}."
-            if reason:
-                accessible_text += f" {reason}"
             item.setData(Qt.ItemDataRole.AccessibleTextRole, accessible_text)
             tooltip = f"{pack.description}\n{installation.label}."
-            if reason:
-                tooltip += f"\n{reason}"
             wrapped_tooltip = _wrapped_catalogue_tooltip(tooltip)
             item.setToolTip(wrapped_tooltip)
             self.pack_list.addItem(item)
             row_widget = StarterPackListRow(
-                f"{prefix}{pack.name}",
+                pack.name,
                 self._status_icon(
                     self._pack_icon_status(installation.status)
                 ),
@@ -2368,8 +2328,6 @@ class StarterPackCatalogueDialog(QDialog):
             self.pack_status.clear()
             self.pack_description.clear()
             self.pack_intended_use.clear()
-            self.recommendation.clear()
-            self.recommendation.setVisible(False)
             self._clear_action_preview()
             self.primary_button.setVisible(False)
             self.more_button.setVisible(False)
@@ -2390,11 +2348,6 @@ class StarterPackCatalogueDialog(QDialog):
         self.pack_status.setText(details)
         self.pack_description.setText(pack.description)
         self.pack_intended_use.setText(f"Best for: {pack.intended_use}")
-        reason = self.recommendation_reason(pack)
-        self.recommendation.setText(f"★ {reason}" if reason else "")
-        self.recommendation.setVisible(bool(reason))
-        self.recommendation.style().unpolish(self.recommendation)
-        self.recommendation.style().polish(self.recommendation)
         self._populate_action_preview(pack)
         self._configure_operations(installation.status)
 
@@ -2602,10 +2555,6 @@ class StarterPackCatalogueDialog(QDialog):
                     color:#315ecb; background:#e7edff; border-radius:8px;
                     padding:4px 8px; font-weight:650;
                 }
-                QLabel#catalogueRecommendation {
-                    color:#185b27; background:#e3f3e6;
-                    border-radius:7px; padding:5px 8px;
-                }
                 QLabel#catalogueActionName { font-weight:650; }
                 QLabel#catalogueActionInstruction { color:#596270; }
                 QFrame#catalogueActionRow {
@@ -2663,10 +2612,6 @@ class StarterPackCatalogueDialog(QDialog):
                 color:#d9e2ff; background:#2b3347; border-radius:8px;
                 padding:4px 8px; font-weight:650;
             }
-            QLabel#catalogueRecommendation {
-                color:#c8f5d2; background:#23412b;
-                border-radius:7px; padding:5px 8px;
-            }
             QLabel#catalogueActionName { color:#f4f5f7; font-weight:650; }
             QLabel#catalogueActionInstruction { color:#b7bdc8; }
                 QFrame#catalogueActionRow {
@@ -2719,15 +2664,6 @@ class StarterPackCatalogueDialog(QDialog):
     def _system_appearance_changed(self, *args) -> None:
         self._apply_style()
         self.refresh(self.selected_pack_id())
-
-    @staticmethod
-    def _join_labels(labels: list[str]) -> str:
-        if len(labels) < 2:
-            return labels[0] if labels else ""
-        if len(labels) == 2:
-            return " and ".join(labels)
-        return ", ".join(labels[:-1]) + f", and {labels[-1]}"
-
 
 class ActionSettingsDialog(QDialog):
     actions_saved = Signal()
@@ -3155,7 +3091,7 @@ class ActionSettingsDialog(QDialog):
         )
         self.starter_pack_button.setToolTip(
             "Browse descriptions, included actions, installation status, "
-            "categories, and local application recommendations."
+            "categories, and pack-management options."
         )
         self.starter_pack_button.clicked.connect(
             self._open_starter_pack_catalogue
@@ -3999,13 +3935,10 @@ class ActionSettingsDialog(QDialog):
 
     def _open_starter_pack_catalogue(self) -> None:
         self._commit_current()
-        candidates = tuple(executable for _label, executable in COMMON_APPLICATIONS)
-        detected = detect_installed_applications(candidates)
         catalogue = StarterPackCatalogueDialog(
             self.builtin_action_packs,
             self.actions,
             self.icon_provider,
-            detected,
             theme=str(self.theme.currentData() or "auto"),
             parent=self,
         )

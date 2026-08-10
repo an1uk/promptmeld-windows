@@ -210,7 +210,6 @@ def main() -> int:
             load_builtin_action_packs(),
             actions,
             icons,
-            frozenset({"outlook.exe"}),
             theme="dark",
         )
         catalogue.refresh("reports")
