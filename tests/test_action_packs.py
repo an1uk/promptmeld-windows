@@ -10,7 +10,6 @@ from promptmeld.action_packs import (
     ActionPack,
     ActionPackError,
     action_pack_installation,
-    detect_installed_applications,
     load_action_pack,
     load_builtin_action_packs,
     merge_action_pack,
@@ -152,7 +151,6 @@ def test_builtin_catalog_contains_twenty_one_intent_focused_starter_packs():
     assert all(len(pack.actions) == 4 for pack in packs)
     assert all(pack.category for pack in packs)
     assert all(pack.intended_use for pack in packs)
-    assert all(pack.recommended_applications for pack in packs)
 
     pack_actions = [action for pack in packs for action in pack.actions]
     pack_action_ids = [action.id for action in pack_actions]
@@ -384,21 +382,3 @@ def test_pack_restore_and_remove_affect_only_canonical_pack_ids():
     removed = remove_builtin_action_pack(restored.actions, pack)
     assert removed.actions == [unrelated]
     assert removed.removed_count == 2
-
-
-def test_installed_application_detection_uses_local_executable_lookup(
-    monkeypatch,
-):
-    monkeypatch.setattr(
-        "promptmeld.action_packs.shutil.which",
-        lambda executable: (
-            f"C:/Apps/{executable}" if executable == "outlook.exe" else None
-        ),
-    )
-    monkeypatch.setattr("promptmeld.action_packs.os.name", "posix")
-
-    detected = detect_installed_applications(
-        ("OUTLOOK.EXE", "winword.exe", "")
-    )
-
-    assert detected == frozenset({"outlook.exe"})

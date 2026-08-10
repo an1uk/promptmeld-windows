@@ -17,10 +17,6 @@ default browser.
 - The first-use ChatGPT app check reads local Windows protocol and package
   registration only. It does not contact OpenAI. The official download page is
   opened only when you choose its button.
-- Starter-pack recommendations check only a fixed list of familiar executable
-  names in Windows registration, `PATH`, and standard installation locations.
-  They do not inspect application contents or user data, write detection data,
-  or transmit the result.
 - Selected text is transferred through the Windows clipboard and held
   transiently in process memory while PromptMeld assembles the request.
 - Smart action suggestions inspect the captured text locally and retain only
@@ -44,32 +40,17 @@ default browser.
 - The ChatGPT desktop app communicates with OpenAI after text is inserted into
   it.
 
-## How installed applications are detected
+## ChatGPT desktop-app check
 
-When the starter-pack catalogue opens, PromptMeld checks whether executables
-from a fixed, built-in list of supported applications are present. It uses only:
+PromptMeld does not scan for Word, Outlook, browsers, messaging tools, editors,
+or other installed applications. The starter-pack catalogue is the same for
+everyone and does not make recommendations from installed software.
 
-- Windows **App Paths** registration for those exact executable names.
-- Normal executable lookup through the current `PATH`.
-- File-existence checks at known installation locations under Program Files,
-  Local App Data, and the Windows directory.
-
-The check answers only whether one of those named executables appears to be
-installed. It does not enumerate the complete installed-software registry or
-search arbitrary folders and drives. It does not open or read executable
-contents, application settings, documents, email, browser history, messages,
-accounts, or other user data. It does not inspect the running-process list or
-launch any detected application.
-
-Detection is read-only: PromptMeld does not change the registry, application
-files, or any other system data. The resulting set of executable names is held
-only in process memory while the catalogue is open. It is not saved to settings,
-usage history, logs, diagnostics, backups, or update state, and it is not sent
-to GitHub, OpenAI, the PromptMeld developer, or another service.
-
-This catalogue check is separate from the first-use ChatGPT desktop-app check,
-which reads only Windows protocol and package registration. Neither check reads
-content belonging to the detected applications or writes a detection result.
+The first-use guide checks only whether the required ChatGPT Windows desktop
+app has registered its launch protocol or package. This read-only check does
+not open ChatGPT, read its content or settings, inspect other installed apps,
+or save or transmit a detection result. The official download page opens only
+when the user chooses that action.
 
 ## Privacy preview and reversible redaction
 

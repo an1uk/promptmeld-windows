@@ -3100,7 +3100,6 @@ def test_action_settings_opens_catalogue_and_adds_builtin_pack_once(
         dialog.builtin_action_packs,
         dialog.actions,
         dialog.icon_provider,
-        frozenset({"outlook.exe"}),
         theme="light",
     )
     qtbot.addWidget(catalogue)
@@ -3111,7 +3110,6 @@ def test_action_settings_opens_catalogue_and_adds_builtin_pack_once(
     assert catalogue.action_rows[0].instruction_label.text() == (
         reports.actions[0].instruction
     )
-    assert "Microsoft Outlook" in catalogue.recommendation.text()
     requested = QSignalSpy(catalogue.operation_requested)
     catalogue.primary_button.click()
     assert requested.at(0) == ["reports", "add"]
@@ -3140,7 +3138,7 @@ def test_action_settings_opens_catalogue_and_adds_builtin_pack_once(
     assert len(dialog.actions) == 5
 
 
-def test_starter_pack_catalogue_filters_recommends_and_reports_status(
+def test_starter_pack_catalogue_filters_and_reports_status(
     qtbot,
     tmp_path,
 ):
@@ -3149,7 +3147,6 @@ def test_starter_pack_catalogue_filters_recommends_and_reports_status(
         packs,
         [],
         ActionIconProvider(tmp_path),
-        frozenset({"outlook.exe"}),
         theme="dark",
     )
     qtbot.addWidget(dialog)
@@ -3160,11 +3157,6 @@ def test_starter_pack_catalogue_filters_recommends_and_reports_status(
     assert dialog.pack_list.maximumWidth() == 250
     assert 190 <= dialog.splitter.sizes()[0] <= 250
     assert dialog.action_scroll.horizontalScrollBar().maximum() == 0
-    first_pack = dialog.pack_by_id[
-        dialog.pack_list.item(0).data(dialog.PACK_ID_ROLE)
-    ]
-    assert dialog.is_recommended(first_pack)
-
     dialog.category.setCurrentText("Review or develop")
     assert dialog.pack_list.count() == 2
     assert {

@@ -341,12 +341,10 @@ natural-voice choices. Restore deliberately resets all settings for that
 pack's actions after confirmation. Remove affects only identified pack actions
 after confirmation; unrelated actions and folders remain.
 
-Recommendations are based on familiar locally detected applications such as
-Word, Outlook, browsers, Teams, Slack, and VS Code. Application detection is
-performed on the PC and the detected application list is not transmitted.
-Recommended packs receive a star and sort first; Search and Category remain
-available without a separate recommendation filter. Packs can still be
-combined, edited, and exported like other actions.
+The catalogue does not scan installed applications or infer which packs a user
+needs from software that may be bundled or rarely used. Search and Category
+provide deliberate ways to find packs, which can be combined, edited, and
+exported like other actions.
 Most-used entries appear only after actual use.
 
 ## Local files

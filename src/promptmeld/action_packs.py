@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 from dataclasses import dataclass, replace
 from importlib.resources import files
 from pathlib import Path
@@ -30,7 +29,6 @@ class ActionPack:
     pack_id: str = ""
     category: str = ""
     intended_use: str = ""
-    recommended_applications: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,138 +129,6 @@ PACK_CATEGORY_INTENDED_USE = {
         "into learning aids."
     ),
 }
-PACK_RECOMMENDED_APPLICATIONS = {
-    "editing": ("winword.exe", "notepad.exe", "code.exe"),
-    "tone-voice": ("winword.exe", "outlook.exe", "olk.exe"),
-    "email": ("outlook.exe", "olk.exe", "thunderbird.exe"),
-    "customer-relations": (
-        "outlook.exe",
-        "olk.exe",
-        "ms-teams.exe",
-        "teams.exe",
-        "slack.exe",
-    ),
-    "complaints": ("outlook.exe", "olk.exe", "thunderbird.exe"),
-    "reports": ("winword.exe", "outlook.exe", "olk.exe"),
-    "meetings": ("ms-teams.exe", "teams.exe", "outlook.exe", "olk.exe"),
-    "technical-communication": ("code.exe", "chrome.exe", "msedge.exe"),
-    "learning": ("winword.exe", "chrome.exe", "msedge.exe", "firefox.exe"),
-    "career-writing": ("winword.exe", "chrome.exe", "msedge.exe"),
-    "social-posts": ("chrome.exe", "msedge.exe", "firefox.exe"),
-    "social-replies": ("chrome.exe", "msedge.exe", "firefox.exe"),
-    "social-editing": ("chrome.exe", "msedge.exe", "firefox.exe"),
-    "reviews-feedback": ("chrome.exe", "msedge.exe", "firefox.exe"),
-    "replies-arguments": (
-        "chrome.exe",
-        "msedge.exe",
-        "firefox.exe",
-        "discord.exe",
-    ),
-    "argument-editing": ("winword.exe", "code.exe", "notepad.exe"),
-    "summaries-extraction": ("winword.exe", "outlook.exe", "code.exe"),
-    "draft-from-selection": ("winword.exe", "notepad.exe", "code.exe"),
-    "decisions-planning": ("winword.exe", "notepad.exe", "code.exe"),
-    "authors-fiction": ("winword.exe", "notepad.exe", "code.exe"),
-    "authors-nonfiction": ("winword.exe", "notepad.exe", "code.exe"),
-}
-
-
-def detect_installed_applications(
-    executables: tuple[str, ...] | list[str],
-) -> frozenset[str]:
-    """Detect known Windows applications locally without launching them."""
-
-    candidates = {
-        str(value).strip().casefold()
-        for value in executables
-        if str(value).strip()
-    }
-    detected = {
-        executable
-        for executable in candidates
-        if shutil.which(executable) is not None
-    }
-    if os.name != "nt":
-        return frozenset(detected)
-
-    try:
-        import winreg
-
-        for executable in candidates - detected:
-            key_name = (
-                "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\"
-                + executable
-            )
-            for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
-                try:
-                    with winreg.OpenKey(root, key_name):
-                        detected.add(executable)
-                    break
-                except OSError:
-                    continue
-    except (ImportError, OSError):
-        pass
-
-    program_files = Path(os.environ.get("ProgramFiles", ""))
-    program_files_x86 = Path(os.environ.get("ProgramFiles(x86)", ""))
-    local_app_data = Path(os.environ.get("LOCALAPPDATA", ""))
-    windows = Path(os.environ.get("WINDIR", ""))
-    known_paths: dict[str, tuple[Path, ...]] = {
-        "winword.exe": tuple(
-            root / "Microsoft Office" / "root" / "Office16" / "WINWORD.EXE"
-            for root in (program_files, program_files_x86)
-        ),
-        "outlook.exe": tuple(
-            root / "Microsoft Office" / "root" / "Office16" / "OUTLOOK.EXE"
-            for root in (program_files, program_files_x86)
-        ),
-        "chrome.exe": (
-            program_files / "Google" / "Chrome" / "Application" / "chrome.exe",
-            program_files_x86
-            / "Google"
-            / "Chrome"
-            / "Application"
-            / "chrome.exe",
-            local_app_data
-            / "Google"
-            / "Chrome"
-            / "Application"
-            / "chrome.exe",
-        ),
-        "msedge.exe": (
-            program_files_x86
-            / "Microsoft"
-            / "Edge"
-            / "Application"
-            / "msedge.exe",
-        ),
-        "firefox.exe": (
-            program_files / "Mozilla Firefox" / "firefox.exe",
-            program_files_x86 / "Mozilla Firefox" / "firefox.exe",
-        ),
-        "notepad.exe": (windows / "System32" / "notepad.exe",),
-        "code.exe": (
-            local_app_data / "Programs" / "Microsoft VS Code" / "Code.exe",
-            program_files / "Microsoft VS Code" / "Code.exe",
-        ),
-        "slack.exe": (local_app_data / "slack" / "slack.exe",),
-        "thunderbird.exe": (
-            program_files / "Mozilla Thunderbird" / "thunderbird.exe",
-            program_files_x86 / "Mozilla Thunderbird" / "thunderbird.exe",
-        ),
-    }
-    for executable in candidates - detected:
-        if any(path.is_file() for path in known_paths.get(executable, ())):
-            detected.add(executable)
-    if "discord.exe" in candidates - detected:
-        if any(
-            path.is_file()
-            for path in local_app_data.glob("Discord/app-*/Discord.exe")
-        ):
-            detected.add("discord.exe")
-    return frozenset(detected)
-
-
 def _pack_from_payload(payload: object, source_name: str) -> ActionPack:
     if not isinstance(payload, dict):
         raise ActionPackError(f"{source_name} must contain a JSON object.")
@@ -277,7 +143,6 @@ def _pack_from_payload(payload: object, source_name: str) -> ActionPack:
     pack_id = payload.get("id", "")
     category = payload.get("category", "")
     intended_use = payload.get("intended_use", "")
-    recommended_applications = payload.get("recommended_applications", [])
     if not isinstance(name, str) or not name.strip():
         raise ActionPackError("The action pack needs a name.")
     if not all(
@@ -285,12 +150,6 @@ def _pack_from_payload(payload: object, source_name: str) -> ActionPack:
         for value in (description, pack_id, category, intended_use)
     ):
         raise ActionPackError("The action-pack metadata must be text.")
-    if not isinstance(recommended_applications, list) or not all(
-        isinstance(value, str) for value in recommended_applications
-    ):
-        raise ActionPackError(
-            "Recommended applications must be a list of executable names."
-        )
     raw_actions = payload.get("actions")
     if not isinstance(raw_actions, list) or not raw_actions:
         raise ActionPackError("The action pack must contain at least one action.")
@@ -311,11 +170,6 @@ def _pack_from_payload(payload: object, source_name: str) -> ActionPack:
         pack_id=pack_id.strip(),
         category=category.strip(),
         intended_use=intended_use.strip(),
-        recommended_applications=tuple(
-            value.strip().casefold()
-            for value in recommended_applications
-            if value.strip()
-        ),
     )
 
 
@@ -354,10 +208,6 @@ def action_pack_to_dict(pack: ActionPack) -> dict[str, object]:
         payload["category"] = pack.category
     if pack.intended_use:
         payload["intended_use"] = pack.intended_use
-    if pack.recommended_applications:
-        payload["recommended_applications"] = list(
-            pack.recommended_applications
-        )
     return payload
 
 
@@ -415,10 +265,6 @@ def load_builtin_action_packs() -> tuple[ActionPack, ...]:
                     category,
                     "Use this pack when its included actions match your work.",
                 )
-            ),
-            recommended_applications=(
-                pack.recommended_applications
-                or PACK_RECOMMENDED_APPLICATIONS.get(pack.pack_id, ())
             ),
         )
 
