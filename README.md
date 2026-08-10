@@ -91,7 +91,11 @@ web browser or through the classic desktop experience.
 On first use, a short setup guide explains the difference between ChatGPT in a
 browser and the required Windows desktop app. It checks that the desktop app is
 installed, links to the official OpenAI download page when needed, and tests
-whether the chosen launcher shortcut is available before saving it.
+whether the chosen launcher shortcut is available before saving it. At the end
+you can optionally add up to three highlighted starter packs, including
+editing, email, reports, social replies, and author feedback, or keep the four
+essentials and browse all packs later under **Configuration > Writing actions
+> Browse starter packs**.
 
 No OpenAI API key or separate Python installation is required. PromptMeld can
 be used with a free ChatGPT account, although the available models, Projects,

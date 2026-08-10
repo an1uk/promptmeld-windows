@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import display_version
+from .action_packs import load_builtin_action_packs, merge_action_pack
 from .actions import ActionRegistry
 from .alternatives import parse_generated_alternatives, validate_alternative_count
 from .automation_client import (
@@ -36,6 +37,7 @@ from .config import (
     ensure_user_configuration,
     load_actions,
     load_settings,
+    save_actions,
     save_settings,
 )
 from .models import (
@@ -478,6 +480,22 @@ class PromptMeld:
         try:
             if wizard.exec() != QDialog.DialogCode.Accepted:
                 return
+            selected_pack_ids = getattr(
+                wizard,
+                "selected_starter_pack_ids",
+                lambda: (),
+            )()
+            selected_pack_ids = tuple(selected_pack_ids)
+            if selected_pack_ids:
+                packs_by_id = {
+                    pack.pack_id: pack for pack in load_builtin_action_packs()
+                }
+                actions = list(self.registry.all())
+                for pack_id in selected_pack_ids:
+                    pack = packs_by_id.get(pack_id)
+                    if pack is not None:
+                        actions = merge_action_pack(actions, pack).actions
+                save_actions(self.paths.actions_file, actions)
             updated = replace(
                 self.settings,
                 popup_hotkey=wizard.selected_hotkey(),
