@@ -23,8 +23,8 @@ to its purpose—including feedback that should not replace the original text.
   essentials, optional starter packs, or your own custom instruction.
 * Guides first-time setup, including a live Windows check of the launcher
   shortcut, and provides step-by-step creation and duplication of actions.
-* Includes a searchable starter-pack catalogue with action previews, local
-  application-based recommendations, installed status, and safe pack updates.
+* Includes a searchable starter-pack catalogue with action previews, installed
+  status, and safe pack updates, without scanning other installed applications.
   Twenty-one packs cover replying, editing, drafting, summarising, planning,
   reviewing, and learning; nested folders keep larger libraries manageable.
 * Suggests useful actions locally from the source application, text length and
@@ -140,12 +140,10 @@ generated prompts, or ChatGPT responses in its settings, usage records, or
 logs. Smart action ranking is also performed locally and does not transmit the
 selected text.
 
-Starter-pack recommendations check only whether a fixed list of familiar
-executables appears in Windows registration, `PATH`, or standard installation
-locations. This check does not open those files or applications, enumerate
-other installed software, inspect documents or application data, or write any
-detection result to disk. The result exists only in memory while the catalogue
-is open and is never logged or transmitted.
+PromptMeld does not scan for Word, Outlook, browsers, editors, messaging tools,
+or other installed applications. Its first-use availability check is limited
+to the required ChatGPT Windows desktop app and reads only local launch
+registration; the result is not logged or transmitted.
 
 Text sent to ChatGPT is governed by your ChatGPT account settings and OpenAI's
 policies. PromptMeld makes no network connections other than update checks
