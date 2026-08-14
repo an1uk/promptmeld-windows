@@ -44,8 +44,8 @@ class _Registry:
 
 def test_chatgpt_install_detection_accepts_registered_protocol():
     registry = _Registry(
-        keys={("classes", "chatgpt")},
-        values={("classes", "chatgpt", "URL Protocol"): ""},
+        keys={("classes", "codex")},
+        values={("classes", "codex", "URL Protocol"): ""},
     )
 
     assert chatgpt_desktop_app_installed(registry) is True
@@ -62,12 +62,26 @@ def test_chatgpt_install_detection_accepts_store_package_registration():
         children={
             location: [
                 "Microsoft.WindowsCalculator_1.0_x64",
-                "OpenAI.ChatGPT-Desktop_2.0_x64",
+                "OpenAI.Codex_2.0_x64",
             ]
         },
     )
 
     assert chatgpt_desktop_app_installed(registry) is True
+
+
+def test_chatgpt_install_detection_rejects_classic_package():
+    package_path = (
+        r"Software\Classes\Local Settings\Software\Microsoft\Windows"
+        r"\CurrentVersion\AppModel\Repository\Packages"
+    )
+    location = ("user", package_path)
+    registry = _Registry(
+        keys={location},
+        children={location: ["OpenAI.ChatGPT-Desktop_2.0_x64"]},
+    )
+
+    assert chatgpt_desktop_app_installed(registry) is False
 
 
 def test_chatgpt_install_detection_returns_false_when_not_registered():

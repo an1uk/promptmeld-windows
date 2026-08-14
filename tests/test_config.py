@@ -265,6 +265,16 @@ def test_project_naming_mode_round_trips(tmp_path, mode):
     assert load_settings(path).project_naming_mode == mode
 
 
+def test_load_settings_migrates_chatgpt_classic_protocol(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"chatgpt_uri": "chatgpt:"}),
+        encoding="utf-8",
+    )
+
+    assert load_settings(path).chatgpt_uri == "codex:"
+
+
 def test_load_settings_rejects_invalid_update_check_value(tmp_path):
     path = tmp_path / "settings.json"
     path.write_text(

@@ -7,7 +7,8 @@ except ImportError:  # pragma: no cover - PromptMeld is Windows-only.
 
 
 CHATGPT_DOWNLOAD_URL = "https://chatgpt.com/download/"
-_CHATGPT_PROTOCOL = "chatgpt"
+_CHATGPT_PROTOCOL = "codex"
+_CHATGPT_PACKAGE_PREFIX = "openai.codex_"
 _APPX_REPOSITORY = (
     r"Software\Classes\Local Settings\Software\Microsoft\Windows"
     r"\CurrentVersion\AppModel\Repository\Packages"
@@ -17,7 +18,7 @@ _APPX_REPOSITORY = (
 def chatgpt_desktop_app_installed(registry=None) -> bool:
     """Return whether Windows exposes the installed ChatGPT desktop app.
 
-    PromptMeld opens ChatGPT through its ``chatgpt:`` protocol, so protocol
+    PromptMeld opens the current ChatGPT app through its ``codex:`` protocol, so protocol
     registration is the most useful readiness check. The package repository is
     also inspected to handle a newly installed Store package whose protocol has
     not yet been materialised in the merged Classes view.
@@ -49,7 +50,7 @@ def chatgpt_desktop_app_installed(registry=None) -> bool:
                     package_name = registry.EnumKey(packages, index)
                 except OSError:
                     break
-                if "chatgpt" in package_name.casefold():
+                if package_name.casefold().startswith(_CHATGPT_PACKAGE_PREFIX):
                     return True
                 index += 1
     except OSError:

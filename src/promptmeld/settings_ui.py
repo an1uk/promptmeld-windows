@@ -2375,6 +2375,7 @@ class StarterPackCatalogueDialog(QDialog):
         icon_provider: ActionIconProvider,
         *,
         theme: str = "auto",
+        add_only: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -2383,6 +2384,7 @@ class StarterPackCatalogueDialog(QDialog):
         self.actions = list(actions)
         self.icon_provider = icon_provider
         self.theme = theme
+        self.add_only = add_only
         self.setWindowTitle("Starter-pack catalogue")
         self.setAccessibleName("Starter-pack catalogue")
         self.setModal(True)
@@ -2701,6 +2703,11 @@ class StarterPackCatalogueDialog(QDialog):
             ]
         elif status == "installed":
             secondary = [("Remove pack", "remove")]
+
+        if self.add_only:
+            secondary = []
+            if status not in {"not_installed", "partial"}:
+                primary = None
 
         self.primary_operation = primary[1] if primary else ""
         self.primary_button.setText(primary[0] if primary else "")

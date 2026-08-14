@@ -55,6 +55,7 @@ class LauncherPopup(QWidget):
     writing_block_changed = Signal(bool)
     resulting_text_formatting_changed = Signal(str)
     title_subject_changed = Signal(str)
+    starter_packs_requested = Signal()
     ITEM_KIND_ROLE = Qt.ItemDataRole.UserRole + 1
 
     def __init__(
@@ -236,6 +237,21 @@ class LauncherPopup(QWidget):
         selected_action_row.addWidget(self.send_selected_action)
         layout.addLayout(selected_action_row)
 
+        starter_pack_row = QHBoxLayout()
+        self.starter_pack_link = QPushButton("Add a starter pack…")
+        self.starter_pack_link.setObjectName("launcherLinkButton")
+        self.starter_pack_link.setFlat(True)
+        self.starter_pack_link.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.starter_pack_link.setAccessibleName(
+            "Open starter-pack catalogue in a separate window"
+        )
+        self.starter_pack_link.setToolTip(
+            "Browse optional groups of writing actions in a separate window."
+        )
+        starter_pack_row.addWidget(self.starter_pack_link)
+        starter_pack_row.addStretch(1)
+        layout.addLayout(starter_pack_row)
+
         self.options_toggle = QPushButton("Request options and custom instruction")
         self.options_toggle.setCheckable(True)
         self.options_toggle.setChecked(False)
@@ -322,7 +338,8 @@ class LauncherPopup(QWidget):
         options_layout.addLayout(temporary_row)
         self.setTabOrder(self.search, self.list)
         self.setTabOrder(self.list, self.send_selected_action)
-        self.setTabOrder(self.send_selected_action, self.options_toggle)
+        self.setTabOrder(self.send_selected_action, self.starter_pack_link)
+        self.setTabOrder(self.starter_pack_link, self.options_toggle)
         self.setTabOrder(self.options_toggle, self.natural_voice)
         self.setTabOrder(self.natural_voice, self.guided_drafting)
         self.setTabOrder(self.guided_drafting, self.auto_submit)
@@ -546,6 +563,7 @@ class LauncherPopup(QWidget):
             self._selected_action_changed
         )
         self.send_selected_action.clicked.connect(self._run_current)
+        self.starter_pack_link.clicked.connect(self.starter_packs_requested)
         self.options_toggle.toggled.connect(self._set_options_expanded)
         self.natural_voice.toggled.connect(self._natural_voice_toggled)
         self.auto_submit.toggled.connect(self._auto_submit_toggled)
@@ -1558,6 +1576,15 @@ class LauncherPopup(QWidget):
                     font-weight: 600;
                 }
                 QPushButton:hover { background: #244fae; }
+                QPushButton#launcherLinkButton {
+                    background: transparent;
+                    border: none;
+                    color: #244fae;
+                    padding: 3px 0;
+                    text-align: left;
+                    text-decoration: underline;
+                }
+                QPushButton#launcherLinkButton:hover { color: #173a83; }
                 QPushButton:disabled {
                     color: #7a8491;
                     background: #e5e9ef;
@@ -1685,6 +1712,15 @@ class LauncherPopup(QWidget):
                 font-weight: 600;
             }
             QPushButton:hover { background: #3d6ede; }
+            QPushButton#launcherLinkButton {
+                background: transparent;
+                border: none;
+                color: #8eafff;
+                padding: 3px 0;
+                text-align: left;
+                text-decoration: underline;
+            }
+            QPushButton#launcherLinkButton:hover { color: #bfd0ff; }
             QPushButton:disabled {
                 color: #858c98;
                 background: #292d34;

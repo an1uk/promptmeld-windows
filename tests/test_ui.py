@@ -134,6 +134,47 @@ def test_automation_stages_emit_screen_reader_announcements(qtbot):
     )
 
 
+def test_recoverable_delivery_exposes_guided_actions(qtbot):
+    window = AutomationProgressWindow("light")
+    qtbot.addWidget(window)
+    retries = QSignalSpy(window.retry_requested)
+    window.begin("PromptMeld")
+
+    window.finish(
+        SubmissionResult(
+            submitted=False,
+            recoverable=True,
+            retry_mode="delivery",
+            failure_code="chatgpt_not_ready",
+        )
+    )
+
+    assert window.retry_button.isHidden() is False
+    assert window.open_chatgpt_button.isHidden() is False
+    assert window.copy_prompt_button.isHidden() is False
+    window.retry_button.click()
+    assert retries.at(0) == ["delivery"]
+
+
+def test_ambiguous_submission_never_offers_automatic_retry(qtbot):
+    window = AutomationProgressWindow("dark")
+    qtbot.addWidget(window)
+    window.begin("PromptMeld")
+
+    window.finish(
+        SubmissionResult(
+            submitted=False,
+            recoverable=True,
+            retry_mode="inspect",
+            failure_code="submission_unconfirmed",
+        )
+    )
+
+    assert window.retry_button.isHidden() is True
+    assert window.open_chatgpt_button.isHidden() is False
+    assert window.copy_prompt_button.isHidden() is False
+
+
 def test_automation_stage_announcements_do_not_use_audible_alerts(
     qtbot,
     monkeypatch,
@@ -443,6 +484,45 @@ def test_launcher_has_top_right_close_button(qtbot, tmp_path):
     qtbot.mouseClick(popup.close_button, Qt.MouseButton.LeftButton)
 
     assert popup.isVisible() is False
+
+
+def test_launcher_starter_pack_link_requests_separate_catalogue(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        )
+    )
+    qtbot.addWidget(popup)
+    requested = QSignalSpy(popup.starter_packs_requested)
+
+    assert popup.starter_pack_link.text() == "Add a starter pack…"
+    assert "separate window" in popup.starter_pack_link.accessibleName()
+    popup.starter_pack_link.click()
+
+    assert requested.count() == 1
+
+
+def test_hotkey_during_active_run_restores_progress_without_capture():
+    events: list[str] = []
+    progress = SimpleNamespace(
+        showNormal=lambda: events.append("show"),
+        raise_=lambda: events.append("raise"),
+    )
+    app = PromptMeld.__new__(PromptMeld)
+    app.automation_worker = object()
+    app.automation_state = "waiting"
+    app.automation_progress = progress
+    app.capture = SimpleNamespace(
+        capture=lambda: (_ for _ in ()).throw(
+            AssertionError("selection capture must not run")
+        )
+    )
+    app.notify = lambda *args, **kwargs: events.append("notify")
+
+    app.handle_hotkey("__popup__")
+
+    assert events == ["show", "raise", "notify"]
 
 
 def test_launcher_exposes_keyboard_search_and_accessible_action_list(
@@ -3264,6 +3344,70 @@ def test_action_settings_opens_catalogue_and_adds_builtin_pack_once(
     dialog._add_builtin_action_pack(reports)
 
     assert len(dialog.actions) == 5
+
+
+def test_launcher_catalogue_is_add_only_and_non_modal(qtbot, tmp_path):
+    packs = load_builtin_action_packs()
+    installed = list(packs[0].actions)
+    dialog = StarterPackCatalogueDialog(
+        packs,
+        installed,
+        ActionIconProvider(tmp_path),
+        add_only=True,
+    )
+    qtbot.addWidget(dialog)
+    dialog.setModal(False)
+    dialog.refresh(packs[0].pack_id)
+
+    assert dialog.isModal() is False
+    assert dialog.primary_button.isHidden() is True
+    assert dialog.more_button.isHidden() is True
+
+    dialog.refresh(packs[1].pack_id)
+
+    assert dialog.primary_button.text() == "Add pack"
+    assert dialog.primary_button.isHidden() is False
+    assert dialog.more_button.isHidden() is True
+
+
+def test_launcher_catalogue_adds_pack_immediately(qtbot, tmp_path, monkeypatch):
+    paths = AppPaths.discover(tmp_path)
+    paths.ensure()
+    original = [WritingAction("one", "One", (), "First.")]
+    settings_ui_module.save_actions(paths.actions_file, original)
+    settings_ui_module.save_settings(paths.settings_file, AppSettings())
+    app = PromptMeld.__new__(PromptMeld)
+    app.paths = paths
+    app.actions = original
+    app.settings = AppSettings()
+    refreshed: list[bool] = []
+
+    def reload_configuration():
+        app.actions = load_actions(paths.actions_file)
+        app.settings = load_settings(paths.settings_file)
+        refreshed.append(True)
+
+    app.reload_configuration_after_save = reload_configuration
+    catalogue_actions: list[list[WritingAction]] = []
+    catalogue = SimpleNamespace(
+        set_actions=lambda actions: catalogue_actions.append(list(actions))
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *args: None)
+
+    app._starter_pack_operation(catalogue, "reports", "add")
+
+    assert refreshed == [True]
+    assert len(app.actions) == 5
+    assert app.actions[1].id == "report-from-notes"
+    assert catalogue_actions[-1] == app.actions
+    assert app.settings.folder_icons["Draft & create/Reports"] == (
+        "lucide:list-checks"
+    )
 
 
 def test_starter_pack_catalogue_filters_and_reports_status(

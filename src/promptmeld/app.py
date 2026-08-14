@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
+import os
 import platform
 import subprocess
 import sys
 import threading
 import time
-from dataclasses import replace
+import uuid
+from dataclasses import dataclass, replace
 from importlib.resources import files
 from logging.handlers import RotatingFileHandler
 from typing import TYPE_CHECKING
@@ -34,6 +36,7 @@ from .branding import APP_ID, APP_NAME
 from .clipboard import write_clipboard_text
 from .config import (
     ConfigurationError,
+    DEFAULT_FOLDER_ICONS,
     ensure_user_configuration,
     load_actions,
     load_settings,
@@ -95,6 +98,20 @@ from .windows import (
 from .worker import FunctionWorker
 
 LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class AutomationRunContext:
+    run_id: str
+    prompt: str
+    project_name: str
+    settings: AppSettings
+    selection: CapturedSelection | None
+    return_decision: ReturnDecision
+    alternative_count: int
+    redaction_replacements: dict[str, str]
+    response_timeout_seconds: float | None
+    response_baseline: tuple[str, ...] = ()
 
 if TYPE_CHECKING:
     from .automation_progress import AutomationProgressWindow
@@ -221,6 +238,7 @@ class PromptMeld:
         self.startup = StartupManager()
         self.startup.migrate_legacy_registration()
         self.settings_dialog: ActionSettingsDialog | None = None
+        self.starter_pack_catalogue = None
         self.first_run_wizard = None
         self.update_state_path = paths.data_dir / "update-state.json"
         self.update_downloads_dir = paths.data_dir / "updates"
@@ -236,6 +254,8 @@ class PromptMeld:
         self.update_progress_dialog: QProgressDialog | None = None
         self.automation_worker: FunctionWorker | None = None
         self.automation_cancel_event: threading.Event | None = None
+        self.automation_state = "idle"
+        self.automation_run_context: AutomationRunContext | None = None
         self.preserved_original: CapturedSelection | None = None
         self.last_replacement: CapturedSelection | None = None
         self.last_automation_result: SubmissionResult | None = None
@@ -302,6 +322,12 @@ class PromptMeld:
             self.copy_preserved_original
         )
         diagnostics_menu = self.menu.addMenu("Diagnostics")
+        self.test_chatgpt_action = diagnostics_menu.addAction(
+            "Test ChatGPT connection"
+        )
+        self.test_chatgpt_action.triggered.connect(
+            self.test_chatgpt_connection
+        )
         self.copy_diagnostics_action = diagnostics_menu.addAction(
             "Copy diagnostic information"
         )
@@ -416,7 +442,125 @@ class PromptMeld:
                 self.set_resulting_text_formatting
             )
             self.popup.title_subject_changed.connect(self.set_title_subject)
+            self.popup.starter_packs_requested.connect(
+                self.open_starter_pack_catalogue
+            )
         return self.popup
+
+    def open_starter_pack_catalogue(self) -> None:
+        """Open the add-only starter-pack catalogue as its own window."""
+
+        if self.popup is not None:
+            self.popup.hide()
+        existing = self.starter_pack_catalogue
+        if existing is not None:
+            try:
+                existing.showNormal()
+                existing.raise_()
+                existing.activateWindow()
+                return
+            except RuntimeError:
+                self.starter_pack_catalogue = None
+
+        from .settings_ui import StarterPackCatalogueDialog
+
+        catalogue = StarterPackCatalogueDialog(
+            load_builtin_action_packs(),
+            self.actions,
+            self._ensure_icons(),
+            theme=self.settings.theme,
+            add_only=True,
+        )
+        catalogue.setModal(False)
+        catalogue.setWindowModality(Qt.WindowModality.NonModal)
+        catalogue.operation_requested.connect(
+            lambda pack_id, operation, current=catalogue: (
+                self._starter_pack_operation(current, pack_id, operation)
+            )
+        )
+        catalogue.finished.connect(
+            lambda _result, current=catalogue: (
+                self._starter_pack_catalogue_closed(current)
+            )
+        )
+        self.starter_pack_catalogue = catalogue
+        catalogue.show()
+        catalogue.raise_()
+        catalogue.activateWindow()
+
+    def _starter_pack_catalogue_closed(self, catalogue) -> None:
+        if self.starter_pack_catalogue is catalogue:
+            self.starter_pack_catalogue = None
+
+    def _starter_pack_operation(
+        self,
+        catalogue,
+        pack_id: str,
+        operation: str,
+    ) -> None:
+        if operation != "add":
+            return
+        pack = next(
+            (
+                candidate
+                for candidate in load_builtin_action_packs()
+                if candidate.pack_id == pack_id
+            ),
+            None,
+        )
+        if pack is None:
+            return
+        existing_ids = {action.id for action in self.actions}
+        missing = tuple(
+            action for action in pack.actions if action.id not in existing_ids
+        )
+        if not missing:
+            catalogue.set_actions(self.actions)
+            return
+        action_names = "\n".join(f"  • {action.name}" for action in missing)
+        response = QMessageBox.question(
+            catalogue,
+            f"Add {pack.name}?",
+            f"{pack.description}\n\nAdd these {len(missing)} actions?\n\n"
+            f"{action_names}\n\nExisting actions will remain.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if response != QMessageBox.StandardButton.Yes:
+            return
+
+        result = merge_action_pack(self.actions, replace(pack, actions=missing))
+        updated_settings = self.settings
+        folder_icons = dict(self.settings.folder_icons)
+        for action in missing:
+            parts = action.folder.split("/") if action.folder else []
+            for depth in range(1, len(parts) + 1):
+                folder = "/".join(parts[:depth])
+                if folder in DEFAULT_FOLDER_ICONS:
+                    folder_icons.setdefault(folder, DEFAULT_FOLDER_ICONS[folder])
+        if folder_icons != self.settings.folder_icons:
+            updated_settings = replace(self.settings, folder_icons=folder_icons)
+        try:
+            save_actions(self.paths.actions_file, result.actions)
+            if updated_settings is not self.settings:
+                save_settings(self.paths.settings_file, updated_settings)
+        except OSError as exc:
+            LOGGER.exception("Starter pack could not be saved")
+            QMessageBox.warning(
+                catalogue,
+                "Starter pack could not be added",
+                str(exc),
+            )
+            return
+
+        self.reload_configuration_after_save()
+        catalogue.set_actions(self.actions)
+        QMessageBox.information(
+            catalogue,
+            "Starter pack added",
+            f"Added {result.added_count} action(s) from {pack.name}. "
+            "They are ready in the launcher.",
+        )
 
     def _highlighted_action_changed(self, action_id: str) -> None:
         if self.popup is None or self.current_selection is None:
@@ -526,6 +670,9 @@ class PromptMeld:
             wizard.deleteLater()
 
     def handle_hotkey(self, command_id: str) -> None:
+        if self._automation_is_active():
+            self._present_current_automation()
+            return
         # WM_HOTKEY is delivered on key-down. A fixed delay is unreliable for
         # manually held shortcuts and Logitech Smart Actions, so wait until the
         # complete trigger chord is physically released before sending Ctrl+C.
@@ -587,11 +734,17 @@ class PromptMeld:
             self.capture_and_submit(action)
 
     def capture_and_show(self) -> None:
+        if self._automation_is_active():
+            self._present_current_automation()
+            return
+        self.automation_state = "capturing"
         try:
             self.current_selection = self.capture.capture()
         except SelectionCaptureError as exc:
+            self.automation_state = "idle"
             self.notify(APP_NAME, str(exc), QSystemTrayIcon.MessageIcon.Warning)
             return
+        self.automation_state = "idle"
         popup = self._ensure_popup()
         effective = resolve_application_profile(
             self.settings,
@@ -629,12 +782,45 @@ class PromptMeld:
         )
 
     def capture_and_submit(self, action: WritingAction) -> None:
+        if self._automation_is_active():
+            self._present_current_automation()
+            return
+        self.automation_state = "capturing"
         try:
             selection = self.capture.capture()
         except SelectionCaptureError as exc:
+            self.automation_state = "idle"
             self.notify(APP_NAME, str(exc), QSystemTrayIcon.MessageIcon.Warning)
             return
+        self.automation_state = "idle"
         self._submit_action(action, selection)
+
+    def _automation_is_active(self) -> bool:
+        return getattr(self, "automation_worker", None) is not None or getattr(
+            self, "automation_state", "idle"
+        ) in {
+            "capturing",
+            "preparing",
+            "launching",
+            "navigating",
+            "inserting",
+            "submitted",
+            "waiting",
+            "returning",
+            "cancelling",
+        }
+
+    def _present_current_automation(self) -> None:
+        progress = getattr(self, "automation_progress", None)
+        if progress is not None:
+            progress.showNormal()
+            progress.raise_()
+        self.notify(
+            "PromptMeld is already working",
+            "The current automation has been restored. Finish or cancel it "
+            "before starting another request.",
+            QSystemTrayIcon.MessageIcon.Information,
+        )
 
     def run_action(
         self,
@@ -1007,6 +1193,7 @@ class PromptMeld:
                 QSystemTrayIcon.MessageIcon.Information,
             )
             return
+        self.automation_state = "preparing"
         selection = selection or self.current_selection
         effective_profile = effective_profile or resolve_application_profile(
             self.settings,
@@ -1018,6 +1205,7 @@ class PromptMeld:
             else RedactionResult(prompt, {})
         )
         if privacy_result is None:
+            self.automation_state = "idle"
             return
         prompt = privacy_result.text
         redaction_replacements = privacy_result.replacements
@@ -1027,6 +1215,7 @@ class PromptMeld:
         alternative_count = validate_alternative_count(alternative_count)
         if alternative_count > 1 and not settings.auto_submit_enabled:
             if not self._confirm_alternative_submission(alternative_count):
+                self.automation_state = "idle"
                 return
             settings = replace(settings, auto_submit_enabled=True)
         project_base = (
@@ -1065,48 +1254,86 @@ class PromptMeld:
             self.last_replacement = None
             self.copy_original_action.setEnabled(True)
             self._refresh_recovery_actions()
+        run_id = str(uuid.uuid4())
+        self.automation_run_context = AutomationRunContext(
+            run_id=run_id,
+            prompt=prompt,
+            project_name=project_name,
+            settings=settings,
+            selection=selection,
+            return_decision=return_decision,
+            alternative_count=alternative_count,
+            redaction_replacements=dict(redaction_replacements),
+            response_timeout_seconds=effective_profile.response_timeout_seconds,
+        )
+        self._start_automation_context(self.automation_run_context)
+
+    def _start_automation_context(
+        self,
+        context: AutomationRunContext,
+        *,
+        operation: str = "deliver",
+    ) -> None:
+        self.automation_run_context = context
+        self.automation_state = "preparing"
         self.automation_cancel_event = threading.Event()
         self.cancel_automation_action.setText("Cancel current automation")
         self.cancel_automation_action.setEnabled(True)
         progress_window = self._show_automation_progress(
-            project_name,
-            temporary_chat=settings.temporary_chat_enabled,
+            context.project_name,
+            temporary_chat=context.settings.temporary_chat_enabled,
         )
         worker = FunctionWorker(
             lambda report_progress: submit_via_worker(
-                prompt,
-                project_name,
-                settings,
-                source_hwnd=(selection.source_hwnd if selection else None),
-                source_is_editable=(
-                    selection.source_is_editable if selection else False
+                context.prompt,
+                context.project_name,
+                context.settings,
+                source_hwnd=(
+                    context.selection.source_hwnd if context.selection else None
                 ),
-                source_text=(selection.text if selection else ""),
-                source_app=(selection.source_app if selection else ""),
+                source_is_editable=(
+                    context.selection.source_is_editable
+                    if context.selection
+                    else False
+                ),
+                source_text=(context.selection.text if context.selection else ""),
+                source_app=(
+                    context.selection.source_app if context.selection else ""
+                ),
                 replace_selected_text=(
-                    return_decision.replace_selection
-                    and alternative_count == 1
+                    operation == "deliver"
+                    and context.return_decision.replace_selection
+                    and context.alternative_count == 1
                 ),
                 copy_generated_text=(
-                    return_decision.copy_result and alternative_count == 1
+                    operation == "deliver"
+                    and context.return_decision.copy_result
+                    and context.alternative_count == 1
                 ),
                 capture_generated_text=(
-                    alternative_count > 1 or return_decision.review_result
+                    operation == "retrieve_response"
+                    or context.alternative_count > 1
+                    or context.return_decision.review_result
                 ),
-                response_timeout_seconds=(
-                    effective_profile.response_timeout_seconds
-                ),
-                redaction_replacements=redaction_replacements,
+                response_timeout_seconds=context.response_timeout_seconds,
+                redaction_replacements=context.redaction_replacements,
                 progress_callback=report_progress,
                 is_cancelled=self.automation_cancel_event.is_set,
+                run_id=context.run_id,
+                operation=operation,
+                response_baseline=context.response_baseline,
             ),
             with_progress=True,
         )
-        worker.signals.progress.connect(progress_window.update_stage)
+        worker.signals.progress.connect(
+            lambda stage, message, window=progress_window: (
+                self._automation_progressed(window, stage, message)
+            )
+        )
         worker.signals.finished.connect(
-            lambda result, window=progress_window, captured=selection, decision=(
-                return_decision
-            ), alternatives=alternative_count: self._submission_finished(
+            lambda result, window=progress_window, captured=context.selection,
+            decision=context.return_decision,
+            alternatives=context.alternative_count: self._submission_finished(
                 result,
                 window,
                 captured,
@@ -1177,11 +1404,102 @@ class PromptMeld:
             self.automation_progress.apply_result_requested.connect(
                 self.apply_latest_result
             )
+            self.automation_progress.retry_requested.connect(
+                self.retry_automation
+            )
+            self.automation_progress.open_chatgpt_requested.connect(
+                self.open_chatgpt_for_recovery
+            )
+            self.automation_progress.copy_prompt_requested.connect(
+                self.copy_recovery_prompt
+            )
         self.automation_progress.begin(
             project_name,
             temporary_chat=temporary_chat,
         )
         return self.automation_progress
+
+    def retry_automation(self, mode: str) -> None:
+        if mode == "connection":
+            self.test_chatgpt_connection()
+            return
+        context = getattr(self, "automation_run_context", None)
+        if context is None or self.automation_worker is not None:
+            return
+        if mode not in {"delivery", "response"}:
+            return
+        operation = "retrieve_response" if mode == "response" else "deliver"
+        if mode == "delivery" and self.last_automation_result is not None:
+            if self.last_automation_result.submission_confirmed:
+                return
+            context.run_id = str(uuid.uuid4())
+        self._start_automation_context(context, operation=operation)
+
+    def open_chatgpt_for_recovery(self) -> None:
+        try:
+            os.startfile("codex:")
+        except OSError as exc:
+            self.notify(
+                "ChatGPT could not be opened",
+                str(exc),
+                QSystemTrayIcon.MessageIcon.Warning,
+            )
+
+    def copy_recovery_prompt(self) -> None:
+        context = getattr(self, "automation_run_context", None)
+        if context is None:
+            return
+        try:
+            write_clipboard_text(context.prompt)
+        except Exception as exc:
+            self.notify(
+                "Prompt could not be copied",
+                str(exc),
+                QSystemTrayIcon.MessageIcon.Warning,
+            )
+            return
+        self.notify(
+            "Prompt copied",
+            "The prepared prompt is on the clipboard.",
+            QSystemTrayIcon.MessageIcon.Information,
+        )
+
+    def _automation_progressed(
+        self,
+        window: AutomationProgressWindow,
+        stage: str,
+        message: str,
+    ) -> None:
+        state_by_stage = {
+            "locating-chatgpt": "launching",
+            "selecting-mode": "navigating",
+            "opening-chat": "navigating",
+            "opening-project": "navigating",
+            "creating-project": "navigating",
+            "finding-composer": "inserting",
+            "inserting-prompt": "inserting",
+            "finishing": "inserting",
+            "submitted": "submitted",
+            "waiting-for-response": "waiting",
+            "copying-response": "returning",
+            "replacing-selection": "returning",
+            "cancelling": "cancelling",
+        }
+        self.automation_state = state_by_stage.get(
+            stage,
+            self.automation_state,
+        )
+        LOGGER.info(
+            "Automation run=%s state=%s stage=%s",
+            (
+                self.automation_run_context.run_id
+                if self.automation_run_context is not None
+                else "unknown"
+            ),
+            self.automation_state,
+            stage,
+        )
+        window.update_stage(stage, message)
 
     def _submission_finished(
         self,
@@ -1198,6 +1516,12 @@ class PromptMeld:
             cancel_action.setText("Cancel current automation")
             cancel_action.setEnabled(False)
         self.last_automation_result = result
+        context = getattr(self, "automation_run_context", None)
+        if context is not None and result.response_baseline:
+            context.response_baseline = result.response_baseline
+        self.automation_state = "recoverable" if result.recoverable else "complete"
+        if not result.recoverable:
+            self.automation_run_context = None
         if result.generated_text:
             self._clear_result_review()
         if alternative_count > 1 and result.generated_text:
@@ -1535,6 +1859,7 @@ class PromptMeld:
         if self.automation_cancel_event is None:
             return
         self.automation_cancel_event.set()
+        self.automation_state = "cancelling"
         self.cancel_automation_action.setText("Cancelling automation...")
         self.cancel_automation_action.setEnabled(False)
         LOGGER.info("Automation cancellation requested")
@@ -1630,7 +1955,20 @@ class PromptMeld:
                         f"replaced={result.selection_replaced}, "
                         f"copied={result.generated_text_copied}, "
                         f"failed={result.output_failed}, "
-                        f"cancelled={result.cancelled}"
+                        f"cancelled={result.cancelled}, "
+                        f"stage={result.failed_stage or 'complete'}, "
+                        f"code={result.failure_code or 'none'}, "
+                        f"submission_confirmed={result.submission_confirmed}, "
+                        f"retry_mode={result.retry_mode or 'none'}"
+                    )
+                ),
+                "Last automation timings: "
+                + (
+                    "none"
+                    if result is None or not result.timings
+                    else ", ".join(
+                        f"{stage}={milliseconds:.1f}ms"
+                        for stage, milliseconds in result.timings
                     )
                 ),
                 f"Log folder: {self.paths.data_dir}",
@@ -1665,6 +2003,59 @@ class PromptMeld:
                 str(self.paths.data_dir),
                 QSystemTrayIcon.MessageIcon.Warning,
             )
+
+    def test_chatgpt_connection(self) -> None:
+        if self._automation_is_active():
+            self._present_current_automation()
+            return
+        run_id = str(uuid.uuid4())
+        self.automation_state = "launching"
+        self.automation_cancel_event = threading.Event()
+        progress = self._show_automation_progress(
+            self.settings.project_name,
+            temporary_chat=False,
+        )
+        worker = FunctionWorker(
+            lambda report_progress: submit_via_worker(
+                "",
+                "",
+                self.settings,
+                progress_callback=report_progress,
+                is_cancelled=self.automation_cancel_event.is_set,
+                run_id=run_id,
+                operation="check_connection",
+            ),
+            with_progress=True,
+        )
+        worker.signals.progress.connect(
+            lambda stage, message: self._automation_progressed(
+                progress,
+                stage,
+                message,
+            )
+        )
+        worker.signals.finished.connect(
+            lambda result: self._connection_test_finished(result, progress)
+        )
+        self.automation_worker = worker
+        self.thread_pool.start(worker)
+
+    def _connection_test_finished(self, result, progress) -> None:
+        self.automation_worker = None
+        self.automation_cancel_event = None
+        self.last_automation_result = result
+        self.automation_state = "recoverable" if result.recoverable else "complete"
+        progress.finish(result, can_apply=False)
+        self.notify(
+            "ChatGPT connection ready" if result.prepared else "ChatGPT needs attention",
+            result.message,
+            (
+                QSystemTrayIcon.MessageIcon.Information
+                if result.prepared
+                else QSystemTrayIcon.MessageIcon.Warning
+            ),
+            7000,
+        )
 
     def reload_configuration_after_save(self) -> None:
         if self.icons is not None:
@@ -2427,6 +2818,8 @@ class PromptMeld:
             QTimer.singleShot(0, self.open_action_settings)
 
     def quit(self) -> None:
+        self.automation_run_context = None
+        self.automation_state = "complete"
         if self.automation_cancel_event is not None:
             self.automation_cancel_event.set()
         if self.update_cancel_event is not None:
@@ -2437,6 +2830,8 @@ class PromptMeld:
         shutdown_automation_helper()
         if self.automation_progress is not None:
             self.automation_progress.close()
+        if self.starter_pack_catalogue is not None:
+            self.starter_pack_catalogue.close()
         self.tray.hide()
         self.qt_app.quit()
 

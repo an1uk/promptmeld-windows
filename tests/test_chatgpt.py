@@ -73,12 +73,18 @@ class FakeComposer(FakeControl):
 
 
 class FakeWindow(FakeControl):
-    def __init__(self, controls, events):
+    def __init__(self, controls, events, process_id=None):
         super().__init__("ChatGPT", "Window", events)
         self.controls = controls
+        self._process_id = process_id
 
     def descendants(self):
         return self.controls
+
+    def process_id(self):
+        if self._process_id is None:
+            raise RuntimeError("No fake process id")
+        return self._process_id
 
 
 class FakeDesktop:
@@ -87,6 +93,119 @@ class FakeDesktop:
 
     def windows(self, **kwargs):
         return [self.window]
+
+
+def test_get_or_launch_window_opens_current_chatgpt_app():
+    events: list[str] = []
+    window = FakeWindow([], events, process_id=42)
+    searches = iter([[], [window], [window]])
+    launched: list[str] = []
+
+    class SequencedDesktop:
+        def windows(self, **kwargs):
+            return next(searches)
+
+    adapter = ChatGPTDesktop(
+        timeout_seconds=0.2,
+        desktop_factory=lambda **kwargs: SequencedDesktop(),
+        startfile=launched.append,
+        process_path_reader=lambda process_id: (
+            r"C:\Program Files\WindowsApps\OpenAI.Codex_1\app\ChatGPT.exe"
+        ),
+    )
+
+    assert adapter._get_or_launch_window() is window
+    assert launched == ["codex:"]
+
+
+def test_find_window_ignores_chatgpt_classic():
+    events: list[str] = []
+    classic = FakeWindow([], events, process_id=1)
+    current = FakeWindow([], events, process_id=2)
+
+    class CandidateDesktop:
+        def windows(self, **kwargs):
+            return [classic, current]
+
+    paths = {
+        1: r"C:\Program Files\WindowsApps\OpenAI.ChatGPT-Desktop_1\app\ChatGPT Classic.exe",
+        2: r"C:\Program Files\WindowsApps\OpenAI.Codex_1\app\ChatGPT.exe",
+    }
+    adapter = ChatGPTDesktop(
+        desktop_factory=lambda **kwargs: CandidateDesktop(),
+        process_path_reader=paths.get,
+    )
+
+    assert adapter._find_window() is current
+
+
+def test_find_window_prefers_foreground_verified_current_app():
+    events: list[str] = []
+    first = FakeWindow([FakeComposer(events)], events, process_id=1)
+    second = FakeWindow([FakeComposer(events)], events, process_id=2)
+    first.handle = 100
+    second.handle = 200
+
+    class CandidateDesktop:
+        def windows(self, **kwargs):
+            return [first, second]
+
+    adapter = ChatGPTDesktop(
+        desktop_factory=lambda **kwargs: CandidateDesktop(),
+        foreground_window_reader=lambda: 200,
+        process_path_reader=lambda process_id: (
+            rf"C:\Program Files\WindowsApps\OpenAI.Codex_{process_id}"
+            r"\app\ChatGPT.exe"
+        ),
+    )
+
+    assert adapter._find_window() is second
+
+
+def test_submission_confirmation_rejects_unchanged_composer():
+    events: list[str] = []
+    composer = FakeComposer(events)
+    composer.value = "complete prompt"
+    window = FakeWindow([composer], events, process_id=42)
+    window.handle = 900
+    adapter = ChatGPTDesktop(
+        timeout_seconds=0.01,
+        desktop_factory=lambda **kwargs: FakeDesktop(window),
+        process_path_reader=lambda process_id: (
+            r"C:\Program Files\WindowsApps\OpenAI.Codex_1\app\ChatGPT.exe"
+        ),
+    )
+
+    assert adapter._confirm_submission(window, composer, "complete prompt", ()) is False
+
+
+def test_response_wait_never_copies_a_preexisting_response():
+    events: list[str] = []
+    copied: list[str] = []
+    copy_button = FakeControl(
+        "Copy",
+        "Button",
+        events,
+        on_click=lambda: copied.append("old response"),
+    )
+    window = FakeWindow([copy_button], events)
+    adapter = ChatGPTDesktop(
+        timeout_seconds=0.01,
+        response_timeout_seconds=0.01,
+        desktop_factory=lambda **kwargs: FakeDesktop(window),
+        clipboard_reader=lambda: copied[-1] if copied else "unchanged",
+        clipboard_writer=lambda text: copied.append(text),
+    )
+    baseline = adapter._response_control_tokens(window)
+
+    with pytest.raises(ChatGPTAutomationError, match="completed response"):
+        adapter._copy_latest_response(
+            window,
+            "new prompt",
+            baseline=baseline,
+        )
+
+    assert "click:Copy" not in events
 
 
 def test_submit_navigates_project_and_restores_clipboard():
@@ -377,7 +496,7 @@ def test_background_activation_does_not_take_focus_as_a_fallback():
 def test_late_response_does_not_interrupt_work_in_another_window(monkeypatch):
     events: list[str] = []
     clipboard = {"text": "Original text"}
-    foreground_windows = iter((901,))
+    foreground = {"hwnd": 900}
     controls = [
         FakeControl(
             "Switch mode, current mode: ChatGPT",
@@ -404,20 +523,26 @@ def test_late_response_does_not_interrupt_work_in_another_window(monkeypatch):
         ),
         FakeComposer(events),
     ]
-    window = FakeWindow(controls, events)
+    window = FakeWindow(controls, events, process_id=42)
     window.handle = 900
     adapter = ChatGPTDesktop(
         desktop_factory=lambda **kwargs: FakeDesktop(window),
         clipboard_reader=lambda: clipboard["text"],
         clipboard_writer=lambda text: clipboard.update(text=text),
         send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
-        foreground_window_reader=lambda: next(foreground_windows),
+        foreground_window_reader=lambda: foreground["hwnd"],
+        process_path_reader=lambda process_id: (
+            r"C:\Program Files\WindowsApps\OpenAI.Codex_1\app\ChatGPT.exe"
+        ),
     )
     monkeypatch.setattr(
         adapter,
         "_copy_latest_response",
-        lambda window, prompt: "Generated answer",
+        lambda window, prompt, **kwargs: (
+            foreground.update(hwnd=901) or "Generated answer"
+        ),
     )
+    monkeypatch.setattr(adapter, "_confirm_submission", lambda *args: True)
     monkeypatch.setattr(
         adapter,
         "_replace_source_selection",
@@ -485,7 +610,7 @@ def test_failed_replacement_copies_verified_generated_text(monkeypatch):
     monkeypatch.setattr(
         adapter,
         "_copy_latest_response",
-        lambda window, prompt: "Generated answer",
+        lambda window, prompt, **kwargs: "Generated answer",
     )
     monkeypatch.setattr(
         adapter,

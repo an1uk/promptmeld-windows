@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import asdict
 
 from .chatgpt import ChatGPTDesktop, DEFAULT_RESPONSE_TIMEOUT_SECONDS
+from .models import DEFAULT_CHATGPT_URI
 
 PER_MONITOR_AWARE_V2 = -4
 
@@ -70,10 +71,27 @@ def _process_payload(
             if raw_response_timeout is None
             else float(raw_response_timeout)
         ),
-        chatgpt_uri=str(payload.get("chatgpt_uri", "chatgpt:")),
+        chatgpt_uri=str(payload.get("chatgpt_uri", DEFAULT_CHATGPT_URI)),
         project_uri=str(payload.get("project_uri", "")),
         progress_callback=progress_callback,
+        run_id=str(payload.get("run_id", "")),
     )
+    if str(payload.get("operation", "deliver")) == "retrieve_response":
+        result = adapter.retrieve_response(
+            str(payload.get("prompt", "")),
+            response_baseline=tuple(payload.get("response_baseline", ())),
+            redaction_replacements=dict(
+                payload.get("redaction_replacements", {})
+            ),
+        )
+        response = asdict(result)
+        response["_timings"] = adapter.timings
+        return response
+    if str(payload.get("operation", "deliver")) == "check_connection":
+        result = adapter.check_connection()
+        response = asdict(result)
+        response["_timings"] = adapter.timings
+        return response
     submit_kwargs: dict[str, object] = {
         "auto_submit": bool(payload.get("auto_submit", False)),
         "temporary_chat": bool(payload.get("temporary_chat", False)),

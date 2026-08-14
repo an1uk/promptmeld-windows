@@ -14,6 +14,19 @@ DEFAULT_NATURAL_VOICE_INSTRUCTION = (
     "details or deliberately introduce errors."
 )
 NATURAL_VOICE_MODES = ("inherit", "always", "never")
+DEFAULT_CHATGPT_URI = "codex:"
+LEGACY_CHATGPT_URI = "chatgpt:"
+
+
+def normalize_chatgpt_uri(value: object) -> str:
+    """Return the current ChatGPT app URI, migrating the Classic protocol."""
+
+    uri = str(value).strip()
+    if not uri or uri.casefold() == LEGACY_CHATGPT_URI:
+        return DEFAULT_CHATGPT_URI
+    return uri
+
+
 PRIMARY_LANGUAGE_OPTIONS = (
     "English (UK)",
     "English (US)",
@@ -146,6 +159,14 @@ class SubmissionResult:
     cancelled: bool = False
     message: str = ""
     generated_text: str = ""
+    run_id: str = ""
+    failed_stage: str = ""
+    failure_code: str = ""
+    submission_confirmed: bool = False
+    retry_mode: str = ""
+    recoverable: bool = False
+    response_baseline: tuple[str, ...] = ()
+    timings: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,7 +202,7 @@ class AppSettings:
     first_run_setup_completed: bool = True
     startup_enabled: bool = False
     check_for_updates_enabled: bool = True
-    chatgpt_uri: str = "chatgpt:"
+    chatgpt_uri: str = DEFAULT_CHATGPT_URI
     app_names: tuple[str, ...] = ("ChatGPT",)
     project_uri: str = ""
     home_most_used_count: int = 3
