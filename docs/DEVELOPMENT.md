@@ -92,3 +92,18 @@ never for a build containing new code or documentation.
    non-prerelease GitHub release, then attach that single installer.
 9. Confirm GitHub reports a SHA-256 digest for the uploaded asset and that the
    release is returned by the repository's latest stable release endpoint.
+
+## Publish changes to GitHub
+
+Repository publication uses the dedicated `build\github-publish` checkout so
+development changes cannot accidentally be mixed with a stale branch or local
+build output. The mandatory workflow and safety checks are recorded in the
+root `AGENTS.md`, which is also loaded automatically by Codex sessions working
+in this repository.
+
+In summary: authenticate with `gh`, fetch the latest `origin/main` in the
+publication checkout, create a fresh `codex/<description>` branch, transfer
+only the verified files, stage explicit paths, run the staged diff checks,
+push with upstream tracking, open a draft pull request, and read the resulting
+pull request back from GitHub. Never commit `build`, `dist`, or installer
+artifacts; attach a verified installer to the corresponding GitHub release.
