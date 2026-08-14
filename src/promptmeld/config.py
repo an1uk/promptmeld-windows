@@ -12,6 +12,7 @@ from .models import (
     ACTION_PURPOSE_VALUES,
     ACTION_RESULT_HANDLING_VALUES,
     DEFAULT_NATURAL_VOICE_INSTRUCTION,
+    DEFAULT_CHATGPT_URI,
     EDITING_STRENGTH_VALUES,
     NATURAL_VOICE_MODES,
     PROJECT_NAMING_VALUES,
@@ -22,6 +23,7 @@ from .models import (
     AppSettings,
     ApplicationProfile,
     WritingAction,
+    normalize_chatgpt_uri,
 )
 from .returning import (
     APPLICATION_RESPONSE_WAIT_VALUES,
@@ -906,7 +908,9 @@ def load_settings(path: Path) -> AppSettings:
         first_run_setup_completed=first_run_setup_completed,
         startup_enabled=bool(raw.get("startup_enabled", False)),
         check_for_updates_enabled=check_for_updates_enabled,
-        chatgpt_uri=str(raw.get("chatgpt_uri", "chatgpt:")).strip() or "chatgpt:",
+        chatgpt_uri=normalize_chatgpt_uri(
+            raw.get("chatgpt_uri", DEFAULT_CHATGPT_URI)
+        ),
         app_names=tuple(item.strip() for item in app_names),
         project_uri=str(raw.get("project_uri", "")).strip(),
         home_most_used_count=home_most_used_count,

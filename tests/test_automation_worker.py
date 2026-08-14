@@ -194,6 +194,40 @@ def test_worker_forwards_redaction_key_for_local_result_restoration(
     }
 
 
+def test_response_retry_never_calls_submit(monkeypatch):
+    calls = []
+
+    class FakeAdapter:
+        timings = []
+
+        def __init__(self, **kwargs):
+            pass
+
+        def submit(self, *args, **kwargs):
+            raise AssertionError("response retry must not submit")
+
+        def retrieve_response(self, prompt, **kwargs):
+            calls.append((prompt, kwargs))
+            return SubmissionResult(
+                submitted=True,
+                generated_text="Existing response",
+                submission_confirmed=True,
+            )
+
+    monkeypatch.setattr(automation_worker, "ChatGPTDesktop", FakeAdapter)
+
+    response = automation_worker._process_payload(
+        {
+            "operation": "retrieve_response",
+            "prompt": "original prompt",
+            "response_baseline": ["0:old"],
+        }
+    )
+
+    assert response["generated_text"] == "Existing response"
+    assert calls[0][1]["response_baseline"] == ("0:old",)
+
+
 def test_server_processes_multiple_requests_before_shutdown(monkeypatch):
     stdin = io.StringIO(
         '{"prompt":"one"}\n'

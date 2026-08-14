@@ -254,6 +254,11 @@ The same tab can copy privacy-filtered diagnostics or open the local log
 folder. Diagnostics contain versions, operational result flags, the source
 executable name and safe feature-state flags, but not selected text, prompts,
 responses, writing actions, free-text settings or window titles.
+The tray's **Diagnostics > Test ChatGPT connection** action also performs a
+non-destructive package, launch, sign-in, and accessibility readiness check. It
+does not create a chat or insert text. Copied diagnostics include the last
+privacy-safe stage, failure code, submission checkpoint, retry mode, and stage
+timings.
 
 The launcher's **This request: intent or additional context** field is
 deliberately temporary and is cleared whenever a new selection is captured. It

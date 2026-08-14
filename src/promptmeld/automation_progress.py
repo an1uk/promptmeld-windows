@@ -27,6 +27,9 @@ class AutomationProgressWindow(QWidget):
     cancel_requested = Signal()
     copy_result_requested = Signal()
     apply_result_requested = Signal()
+    retry_requested = Signal(str)
+    open_chatgpt_requested = Signal()
+    copy_prompt_requested = Signal()
     stage_announced = Signal(str)
 
     def __init__(self, theme: str = "auto"):
@@ -100,6 +103,20 @@ class AutomationProgressWindow(QWidget):
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
+        self.retry_button = QPushButton("Retry")
+        self.retry_button.clicked.connect(self._request_retry)
+        self.retry_button.hide()
+        button_row.addWidget(self.retry_button)
+        self.open_chatgpt_button = QPushButton("Open ChatGPT")
+        self.open_chatgpt_button.clicked.connect(
+            self.open_chatgpt_requested.emit
+        )
+        self.open_chatgpt_button.hide()
+        button_row.addWidget(self.open_chatgpt_button)
+        self.copy_prompt_button = QPushButton("Copy prompt")
+        self.copy_prompt_button.clicked.connect(self.copy_prompt_requested.emit)
+        self.copy_prompt_button.hide()
+        button_row.addWidget(self.copy_prompt_button)
         self.copy_result_button = QPushButton("Copy result")
         self.copy_result_button.setAccessibleName("Copy generated result")
         self.copy_result_button.clicked.connect(
@@ -137,6 +154,7 @@ class AutomationProgressWindow(QWidget):
         self.setTabOrder(self.copy_result_button, self.apply_result_button)
         self.setTabOrder(self.apply_result_button, self.cancel_button)
         self.setTabOrder(self.cancel_button, self.close_button)
+        self.retry_mode = ""
 
         self._apply_progress_style()
         app = QApplication.instance()
@@ -160,6 +178,10 @@ class AutomationProgressWindow(QWidget):
             else f"Project: {project_name}"
         )
         self.close_button.hide()
+        self.retry_button.hide()
+        self.open_chatgpt_button.hide()
+        self.copy_prompt_button.hide()
+        self.retry_mode = ""
         self.copy_result_button.setText("Copy result")
         self.copy_result_button.hide()
         self.apply_result_button.setText("Apply now")
@@ -187,6 +209,7 @@ class AutomationProgressWindow(QWidget):
         has_result = bool(result.generated_text)
         self.copy_result_button.setVisible(has_result)
         self.apply_result_button.setVisible(has_result and can_apply)
+        self._configure_recovery(result)
         if result.cancelled:
             self.title.setText("Cancelled")
             self._complete_current_operation()
@@ -248,6 +271,27 @@ class AutomationProgressWindow(QWidget):
             state="error",
         )
         self.close_button.show()
+
+    def _configure_recovery(self, result: SubmissionResult) -> None:
+        self.retry_mode = result.retry_mode
+        recoverable = bool(result.recoverable)
+        self.open_chatgpt_button.setVisible(recoverable)
+        self.copy_prompt_button.setVisible(
+            recoverable and result.retry_mode in {"delivery", "inspect"}
+        )
+        can_retry = recoverable and result.retry_mode in {
+            "delivery",
+            "response",
+            "connection",
+        }
+        self.retry_button.setVisible(can_retry)
+        self.retry_button.setText(
+            "Retry response" if result.retry_mode == "response" else "Retry"
+        )
+
+    def _request_retry(self) -> None:
+        if self.retry_mode:
+            self.retry_requested.emit(self.retry_mode)
 
     def mark_result_copied(self) -> None:
         self.copy_result_button.setText("Copied")

@@ -26,7 +26,11 @@ For each writing action, PromptMeld:
    supported, otherwise uses a control-targeted clipboard paste.
 11. Reads the composer back and continues only after the complete prompt is
     verified.
-12. Presses Enter only when **Submit automatically** is enabled.
+12. Presses Enter only when **Submit automatically** is enabled. Before
+    submission it records the response controls already present. After
+    activating Send, it requires evidence that ChatGPT accepted this request,
+    such as the composer clearing, generation beginning, or a new response
+    control appearing. An ambiguous submission is never retried automatically.
 13. When generated-text output or alternative review is enabled and automatic
     submission is on,
     waits for ChatGPT's generating control to disappear and remain absent,
@@ -64,6 +68,10 @@ attention. A successful result is added as the final entry; a problem stays
 visible so it can be acted on. Choose **Cancel** or press Escape to stop the
 helper; ChatGPT may continue if the prompt was already submitted, so the final
 message tells you what to check before retrying.
+
+Only one automation can run at a time. Pressing a PromptMeld hotkey while a run
+is active restores the current progress window without capturing another
+selection, changing the clipboard, or queuing text that may become stale.
 
 ChatGPT can take several minutes to answer. PromptMeld reports that it is still
 waiting every 30 seconds. The inherited limit is five minutes; an application
@@ -105,6 +113,11 @@ coordinates. It first tries UI Automation's Invoke and SelectionItem patterns,
 then focused keyboard activation. A physical click is retained only as a final
 compatibility fallback for controls that expose none of those methods.
 
+The current ChatGPT app is verified by its installed package and process, not
+only by the visible window title. ChatGPT Classic and unknown processes are
+ignored. A cold launch allows extra time for the app and accessibility tree to
+become ready, while already-ready windows keep the fast path.
+
 That final fallback validates the control against the complete Windows virtual
 desktop, supports negative coordinates used by monitors positioned above or to
 the left of the primary display, and restores the pointer after clicking. It
@@ -126,6 +139,26 @@ PromptMeld does not activate **Copy** while a visible, enabled **Stop
 generating** control indicates that the answer is still streaming, and it
 confirms the generating control remains absent before copying. The selected
 text is never replaced based on an incomplete or unverified clipboard value.
+Response controls that existed before submission are excluded, so an older
+answer cannot be mistaken for the response to the current request.
+
+Short clipboard operations preserve the prior Windows clipboard data object
+when possible. PromptMeld restores a clipboard value only while it still owns
+the most recent clipboard change; content copied by the user or another
+application while PromptMeld is waiting is never overwritten.
+
+## Guided recovery
+
+Recoverable failures remain in the progress window with actions appropriate to
+the last verified checkpoint. Before submission, **Retry** repeats delivery of
+the already prepared prompt. After confirmed submission, **Retry response**
+retrieves the existing response without sending the prompt again. Ambiguous
+submission offers **Open ChatGPT** and **Copy prompt**, but deliberately omits
+automatic retry to avoid duplicate messages.
+
+The tray's **Diagnostics > Test ChatGPT connection** action performs a
+non-destructive package, launch, sign-in, and accessibility readiness check. It
+does not create a chat, insert text, or submit anything.
 
 Automatic replacement is deliberately opt-in. PromptMeld keeps the original
 selection in memory, verifies that selection again immediately before pasting,

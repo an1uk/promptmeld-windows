@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -250,6 +251,9 @@ def submit_via_worker(
     redaction_replacements: dict[str, str] | None = None,
     progress_callback: Callable[[str, str], None] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
+    run_id: str = "",
+    operation: str = "deliver",
+    response_baseline: tuple[str, ...] = (),
 ) -> SubmissionResult:
     effective_replace = (
         settings.replace_selected_text_enabled
@@ -262,6 +266,8 @@ def submit_via_worker(
         else copy_generated_text
     )
     payload = {
+        "run_id": run_id or str(uuid.uuid4()),
+        "operation": operation,
         "prompt": prompt,
         "project_name": project_name,
         "timeout_seconds": settings.automation_timeout_seconds,
@@ -278,6 +284,7 @@ def submit_via_worker(
         "copy_generated_text": effective_copy,
         "capture_generated_text": capture_generated_text,
         "redaction_replacements": dict(redaction_replacements or {}),
+        "response_baseline": list(response_baseline),
     }
     try:
         waits_for_generated_text = bool(
@@ -331,6 +338,21 @@ def submit_via_worker(
                 if isinstance(raw.get("generated_text", ""), str)
                 else ""
             ),
+            run_id=str(raw.get("run_id", payload["run_id"])),
+            failed_stage=str(raw.get("failed_stage", "")),
+            failure_code=str(raw.get("failure_code", "")),
+            submission_confirmed=bool(raw.get("submission_confirmed", False)),
+            retry_mode=str(raw.get("retry_mode", "")),
+            recoverable=bool(raw.get("recoverable", False)),
+            response_baseline=tuple(raw.get("response_baseline", ())),
+            timings=tuple(
+                (
+                    str(timing.get("stage", "unknown")),
+                    float(timing.get("milliseconds", 0.0)),
+                )
+                for timing in raw.get("_timings", ())
+                if isinstance(timing, dict)
+            ),
         )
     except AutomationCancelled:
         LOGGER.info("ChatGPT automation was cancelled")
@@ -342,6 +364,8 @@ def submit_via_worker(
                 "already submitted. Check the original application before "
                 "trying again."
             ),
+            run_id=str(payload["run_id"]),
+            failed_stage="cancelling",
         )
     except Exception:
         LOGGER.exception("ChatGPT automation helper failed")
@@ -354,4 +378,11 @@ def submit_via_worker(
                 "The ChatGPT automation helper failed. The complete prompt has "
                 "been copied to the clipboard."
             ),
+            run_id=str(payload["run_id"]),
+            failed_stage="helper",
+            failure_code="helper_failed",
+            retry_mode="delivery" if operation == "deliver" else "response",
+            recoverable=True,
+            submission_confirmed=(operation == "retrieve_response"),
+            response_baseline=response_baseline,
         )

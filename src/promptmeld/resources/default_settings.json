@@ -8,7 +8,7 @@
   "first_run_setup_completed": false,
   "startup_enabled": false,
   "check_for_updates_enabled": true,
-  "chatgpt_uri": "chatgpt:",
+  "chatgpt_uri": "codex:",
   "app_names": ["ChatGPT"],
   "project_uri": "",
   "home_most_used_count": 3,

@@ -15,6 +15,7 @@ from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QWidget
 
 from .clipboard import (
+    ClipboardSnapshot,
     ClipboardBusyError,
     empty_clipboard,
     read_clipboard_text,
@@ -48,7 +49,9 @@ class SelectionCapture:
             source_class,
             source_hwnd,
         )
+        snapshot = ClipboardSnapshot.capture()
         self._empty_clipboard()
+        snapshot.mark_owned()
         self._send_copy()
 
         started = time.monotonic()
@@ -77,6 +80,7 @@ class SelectionCapture:
             time.sleep(0.025)
 
         if not text or not text.strip():
+            snapshot.restore_if_owned()
             LOGGER.warning(
                 "No text selection detected from window class=%r hwnd=%s",
                 source_class,
@@ -86,6 +90,8 @@ class SelectionCapture:
                 "No selected text was detected. Select text in another "
                 "application and try again."
             )
+        snapshot.mark_owned()
+        snapshot.restore_if_owned()
         return CapturedSelection(
             text=text,
             source_hwnd=source_hwnd,

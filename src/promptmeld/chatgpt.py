@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 import os
 import time
+import uuid
 from collections.abc import Callable
 
 from .clipboard import read_clipboard_text, write_clipboard_text
-from .models import SubmissionResult
+from .models import DEFAULT_CHATGPT_URI, SubmissionResult, normalize_chatgpt_uri
 from .privacy import restore_placeholders
 from .windows import SourceRecoveryError, replace_source_selection
 
@@ -26,7 +27,16 @@ def _foreground_window_handle() -> int | None:
 
 
 class ChatGPTAutomationError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "automation_failed",
+        retry_mode: str = "delivery",
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.retry_mode = retry_mode
 
 
 def _click_control_on_virtual_desktop(
@@ -126,7 +136,7 @@ class ChatGPTDesktop:
     def __init__(
         self,
         timeout_seconds: float = 8.0,
-        chatgpt_uri: str = "chatgpt:",
+        chatgpt_uri: str = DEFAULT_CHATGPT_URI,
         project_uri: str = "",
         desktop_factory: Callable[..., object] | None = None,
         startfile: Callable[[str], None] = os.startfile,
@@ -137,9 +147,11 @@ class ChatGPTDesktop:
         progress_callback: Callable[[str, str], None] | None = None,
         response_timeout_seconds: float | None = DEFAULT_RESPONSE_TIMEOUT_SECONDS,
         foreground_window_reader: Callable[[], int | None] | None = None,
+        process_path_reader: Callable[[int], str | None] | None = None,
+        run_id: str = "",
     ):
         self.timeout_seconds = timeout_seconds
-        self.chatgpt_uri = chatgpt_uri
+        self.chatgpt_uri = normalize_chatgpt_uri(chatgpt_uri)
         self.project_uri = project_uri
         self.desktop_factory = desktop_factory
         self.startfile = startfile
@@ -156,8 +168,15 @@ class ChatGPTDesktop:
         self.foreground_window_reader = (
             foreground_window_reader or _foreground_window_handle
         )
+        self.process_path_reader = process_path_reader or self._process_path
+        self.run_id = run_id or str(uuid.uuid4())
         self.timings: list[dict[str, float | str]] = []
         self.navigation_failure: str | None = None
+        self.current_stage = "preparing"
+        self.submission_confirmed = False
+        self.response_baseline: tuple[str, ...] = ()
+        self.stage_started_at = time.perf_counter()
+        self.stage_attempts: dict[str, int] = {}
 
     def submit(
         self,
@@ -220,6 +239,7 @@ class ChatGPTDesktop:
                     prompt,
                     f"ChatGPT opened, but PromptMeld could not {failed_operation}. "
                     f"The prompt has been copied. {recovery}",
+                    failure_code="navigation_failed",
                 )
             self._log_timing(
                 (
@@ -242,6 +262,7 @@ class ChatGPTDesktop:
                     prompt,
                     "The ChatGPT composer could not be verified. The prompt has been "
                     "copied instead of typing into an unknown control.",
+                    failure_code="composer_unavailable",
                 )
 
             self._report_progress(
@@ -269,24 +290,44 @@ class ChatGPTDesktop:
                     "finishing",
                     "Submitting the verified prompt",
                 )
+                self.response_baseline = (
+                    self._response_control_tokens(window)
+                    if self._native_window_handle(window) is not None
+                    else ()
+                )
                 composer = self._find_composer(window) or composer
                 self._submit_verified_prompt(window, composer)
+                if not self._confirm_submission(
+                    window,
+                    composer,
+                    prompt,
+                    self.response_baseline,
+                ):
+                    return self._fallback(
+                        prompt,
+                        "PromptMeld activated ChatGPT's submit control but could "
+                        "not prove that this prompt was accepted. Inspect ChatGPT "
+                        "before trying again to avoid a duplicate submission.",
+                        failure_code="submission_unconfirmed",
+                        retry_mode="inspect",
+                    )
+                self.submission_confirmed = True
+                self._report_progress(
+                    "submitted",
+                    "ChatGPT accepted the verified prompt",
+                )
             else:
                 self._report_progress(
                     "finishing",
                     "Leaving the verified prompt ready for review",
                 )
             if previous_clipboard is not None:
-                if input_method == "clipboard" and not (
-                    auto_submit
-                    and (replace_selected_text or copy_generated_text)
-                ):
+                if input_method == "clipboard":
                     time.sleep(0.08)
-                if not (
-                    auto_submit
-                    and (replace_selected_text or copy_generated_text)
-                ):
-                    self.clipboard_writer(previous_clipboard)
+                self._restore_clipboard_if_unchanged(
+                    previous_clipboard,
+                    expected=(prompt if input_method == "clipboard" else previous_clipboard),
+                )
             self._log_timing("insert and submit", stage_started)
             if not auto_submit:
                 destination = (
@@ -306,6 +347,7 @@ class ChatGPTDesktop:
                         "Choose the model or reasoning level in ChatGPT, then "
                         "press Enter to submit."
                     ),
+                    run_id=self.run_id,
                 )
 
             generated_text = None
@@ -325,14 +367,21 @@ class ChatGPTDesktop:
                     "continue working in another window.",
                 )
                 try:
+                    response_clipboard = self.clipboard_reader()
                     generated_text = self._copy_latest_response(
                         window,
                         prompt,
+                        baseline=self.response_baseline,
                     )
                     generated_text = restore_placeholders(
                         generated_text,
                         redaction_replacements or {},
                     )
+                    if not copy_generated_text:
+                        self._restore_clipboard_if_unchanged(
+                            response_clipboard,
+                            expected=generated_text,
+                        )
                 except Exception as exc:
                     LOGGER.exception("ChatGPT response could not be retrieved")
                     if previous_clipboard is not None:
@@ -346,6 +395,13 @@ class ChatGPTDesktop:
                             "verify. The original text was not replaced. "
                             f"Details: {exc}"
                         ),
+                        run_id=self.run_id,
+                        failed_stage="waiting-for-response",
+                        failure_code="response_unavailable",
+                        submission_confirmed=True,
+                        retry_mode="response",
+                        recoverable=True,
+                        response_baseline=self.response_baseline,
                     )
 
                 if replace_selected_text and source_is_editable:
@@ -438,13 +494,20 @@ class ChatGPTDesktop:
                         else ""
                     )
                 ),
+                run_id=self.run_id,
+                submission_confirmed=True,
+                response_baseline=self.response_baseline,
             )
         except Exception as exc:
             LOGGER.exception("ChatGPT submission failed")
+            failure_code = getattr(exc, "code", "automation_failed")
+            retry_mode = getattr(exc, "retry_mode", "delivery")
             return self._fallback(
                 prompt,
                 "ChatGPT automation failed. The complete prompt has been copied to "
                 f"the clipboard. Details: {exc}",
+                failure_code=failure_code,
+                retry_mode=retry_mode,
             )
         finally:
             self._log_timing("total submission", submission_started)
@@ -460,19 +523,158 @@ class ChatGPTDesktop:
 
             self.send_keys = send_keys
 
+    def retrieve_response(
+        self,
+        prompt: str,
+        *,
+        response_baseline: tuple[str, ...] = (),
+        redaction_replacements: dict[str, str] | None = None,
+    ) -> SubmissionResult:
+        """Retry response retrieval without ever submitting the prompt again."""
+
+        import pythoncom
+
+        self.response_baseline = tuple(response_baseline)
+        self.submission_confirmed = True
+        self._ensure_automation_dependencies()
+        pythoncom.CoInitialize()
+        try:
+            self._report_progress(
+                "waiting-for-response",
+                "Retrying retrieval of the existing ChatGPT response",
+            )
+            window = self._get_or_launch_window()
+            before = self.clipboard_reader()
+            generated = self._copy_latest_response(
+                window,
+                prompt,
+                baseline=self.response_baseline,
+            )
+            generated = restore_placeholders(
+                generated,
+                redaction_replacements or {},
+            )
+            self._restore_clipboard_if_unchanged(before, expected=generated)
+            return SubmissionResult(
+                submitted=True,
+                generated_text=generated,
+                message="The existing ChatGPT response was retrieved.",
+                run_id=self.run_id,
+                submission_confirmed=True,
+                response_baseline=self.response_baseline,
+            )
+        except Exception as exc:
+            LOGGER.exception("Existing ChatGPT response could not be retrieved")
+            return SubmissionResult(
+                submitted=True,
+                output_failed=True,
+                message=f"The existing response is not ready: {exc}",
+                run_id=self.run_id,
+                failed_stage=self.current_stage,
+                failure_code=getattr(exc, "code", "response_unavailable"),
+                submission_confirmed=True,
+                retry_mode="response",
+                recoverable=True,
+                response_baseline=self.response_baseline,
+            )
+        finally:
+            pythoncom.CoUninitialize()
+
+    def check_connection(self) -> SubmissionResult:
+        """Check current-app readiness without navigating or inserting text."""
+
+        import pythoncom
+
+        self._ensure_automation_dependencies()
+        pythoncom.CoInitialize()
+        try:
+            self._report_progress(
+                "locating-chatgpt",
+                "Checking the current ChatGPT app",
+            )
+            window = self._get_or_launch_window()
+            blocked = self._blocked_window_state(window)
+            if blocked:
+                return SubmissionResult(
+                    submitted=False,
+                    message=(
+                        "ChatGPT needs attention before PromptMeld can use it."
+                    ),
+                    run_id=self.run_id,
+                    failed_stage="locating-chatgpt",
+                    failure_code=blocked,
+                    retry_mode="connection",
+                    recoverable=True,
+                )
+            controls = self._descendants(window) or []
+            usable = any(
+                getattr(control.element_info, "control_type", "")
+                in {"Button", "Edit", "Document"}
+                for control in controls
+            )
+            if not usable:
+                raise ChatGPTAutomationError(
+                    "ChatGPT did not expose its accessibility controls.",
+                    code="accessibility_unavailable",
+                )
+            return SubmissionResult(
+                submitted=False,
+                prepared=True,
+                message="The current ChatGPT app and accessibility controls are ready.",
+                run_id=self.run_id,
+            )
+        except Exception as exc:
+            return SubmissionResult(
+                submitted=False,
+                message=str(exc),
+                run_id=self.run_id,
+                failed_stage=self.current_stage,
+                failure_code=getattr(exc, "code", "connection_failed"),
+                retry_mode="connection",
+                recoverable=True,
+            )
+        finally:
+            pythoncom.CoUninitialize()
+
     def _get_or_launch_window(self):
         window = self._find_window()
-        if window is not None:
+        if window is not None and self._window_accessibility_ready(window):
             return window
-        self.startfile(self.project_uri or self.chatgpt_uri)
-        deadline = time.monotonic() + self.timeout_seconds
+        if window is None:
+            self.startfile(self.project_uri or self.chatgpt_uri)
+        deadline = time.monotonic() + max(20.0, self.timeout_seconds)
+        stable_handle = None
+        stable_checks = 0
         while time.monotonic() < deadline:
             window = self._find_window()
             if window is not None:
-                return window
+                handle = self._native_window_handle(window)
+                ready = self._window_accessibility_ready(window)
+                if ready and handle == stable_handle:
+                    stable_checks += 1
+                elif ready:
+                    stable_handle = handle
+                    stable_checks = 1
+                else:
+                    stable_handle = None
+                    stable_checks = 0
+                if stable_checks >= 2:
+                    return window
             time.sleep(0.2)
+        blocked = self._blocked_window_state(window) if window is not None else ""
+        messages = {
+            "sign_in_required": "ChatGPT is open but requires sign-in.",
+            "introductory_dialog": (
+                "ChatGPT is waiting for an introductory dialog to be completed."
+            ),
+            "update_required": "ChatGPT is waiting for an application update.",
+        }
         raise ChatGPTAutomationError(
-            "The ChatGPT desktop window did not appear before the timeout."
+            messages.get(
+                blocked,
+                "The current ChatGPT app did not become ready before the timeout.",
+            ),
+            code=blocked or "chatgpt_not_ready",
         )
 
     def _find_window(self):
@@ -483,7 +685,104 @@ class ChatGPTDesktop:
             visible_only=True,
             enabled_only=True,
         )
-        return candidates[0] if candidates else None
+        verified = [
+            candidate for candidate in candidates if self._is_current_window(candidate)
+        ]
+        foreground = self.foreground_window_reader()
+        verified.sort(
+            key=lambda candidate: (
+                self._native_window_handle(candidate) != foreground,
+                not self._window_accessibility_ready(candidate),
+                self._native_window_handle(candidate) or 0,
+            )
+        )
+        return verified[0] if verified else None
+
+    def _is_current_window(self, window) -> bool:
+        try:
+            process_id = int(window.process_id())
+            process_path = self.process_path_reader(process_id) or ""
+        except Exception:
+            LOGGER.debug(
+                "Could not verify the ChatGPT window process",
+                exc_info=True,
+            )
+            # UIA test doubles do not expose native handles. A real top-level
+            # Windows candidate must always be process-verifiable.
+            return self._native_window_handle(window) is None
+        normalized = process_path.replace("/", "\\").casefold()
+        accepted = (
+            "\\openai.codex_" in normalized
+            and normalized.endswith("\\app\\chatgpt.exe")
+        )
+        if not accepted:
+            LOGGER.info(
+                "Ignoring unverified ChatGPT window process_id=%s",
+                process_id,
+            )
+        else:
+            LOGGER.info(
+                "Verified current ChatGPT window process_id=%s handle=%s "
+                "package=OpenAI.Codex",
+                process_id,
+                self._native_window_handle(window),
+            )
+        return accepted
+
+    def _window_accessibility_ready(self, window) -> bool:
+        controls = self._descendants(window)
+        if controls is None:
+            return False
+        if not controls and self._native_window_handle(window) is None:
+            return True
+        return bool(
+            controls
+            and any(
+                getattr(control.element_info, "control_type", "")
+                in {"Button", "Edit", "Document"}
+                for control in controls
+            )
+        )
+
+    def _blocked_window_state(self, window) -> str:
+        controls = self._descendants(window) or []
+        names = {
+            str(getattr(control.element_info, "name", "") or "").strip().casefold()
+            for control in controls
+        }
+        if names.intersection({"log in", "sign in", "continue with google"}):
+            return "sign_in_required"
+        if any("update" in name and "chatgpt" in name for name in names):
+            return "update_required"
+        if names.intersection({"get started", "continue", "next"}) and not self._find_composer(window):
+            return "introductory_dialog"
+        return ""
+
+    @staticmethod
+    def _process_path(process_id: int) -> str | None:
+        import win32api
+        import win32con
+        import win32process
+
+        handle = None
+        try:
+            handle = win32api.OpenProcess(
+                win32con.PROCESS_QUERY_INFORMATION
+                | win32con.PROCESS_VM_READ,
+                False,
+                process_id,
+            )
+            return str(win32process.GetModuleFileNameEx(handle, 0))
+        except Exception:
+            LOGGER.debug(
+                "Could not read ChatGPT window process %s",
+                process_id,
+                exc_info=True,
+            )
+            return None
+        finally:
+            if handle is not None:
+                win32api.CloseHandle(handle)
 
     def _navigate_to_temporary_chat(self, window) -> bool:
         self._report_progress(
@@ -820,7 +1119,12 @@ class ChatGPTDesktop:
                 "Could not dismiss the stale ChatGPT navigation surface",
                 exc_info=True,
             )
-        time.sleep(0.25)
+        deadline = time.monotonic() + min(max(self.timeout_seconds, 0.25), 1.0)
+        while time.monotonic() < deadline:
+            refreshed = self._refresh_chatgpt_window()
+            if refreshed is not None and self._window_accessibility_ready(refreshed):
+                return
+            time.sleep(0.05)
 
     def _navigation_failed(self, operation: str) -> bool:
         self.navigation_failure = operation
@@ -1608,6 +1912,65 @@ class ChatGPTDesktop:
         composer.set_focus()
         self.send_keys("{ENTER}", pause=0.02)
 
+    def _confirm_submission(
+        self,
+        window,
+        composer,
+        prompt: str,
+        baseline: tuple[str, ...],
+    ) -> bool:
+        if self._native_window_handle(window) is None:
+            return True
+        deadline = time.monotonic() + min(max(self.timeout_seconds, 1.0), 5.0)
+        while time.monotonic() < deadline:
+            current = self._refresh_chatgpt_window() or window
+            controls = self._descendants(current) or []
+            if self._response_is_generating(controls):
+                return True
+            if set(self._response_control_tokens(current)) - set(baseline):
+                return True
+            refreshed_composer = self._find_composer(current) or composer
+            value = self._read_composer_text(refreshed_composer)
+            if value is not None and (
+                not value.strip()
+                or self._normalise_composer_text(value)
+                != self._normalise_composer_text(prompt)
+            ):
+                return True
+            time.sleep(0.1)
+        return False
+
+    def _response_control_tokens(self, window) -> tuple[str, ...]:
+        controls = self._descendants(window) or []
+        tokens: list[str] = []
+        copy_index = 0
+        for control in controls:
+            info = getattr(control, "element_info", None)
+            if (
+                info is None
+                or getattr(info, "control_type", "") != "Button"
+                or str(getattr(info, "name", "") or "").strip().casefold()
+                not in {"copy", "copy response"}
+            ):
+                continue
+            tokens.append(self._response_control_token(control, copy_index))
+            copy_index += 1
+        return tuple(tokens)
+
+    def _restore_clipboard_if_unchanged(
+        self,
+        value: str | None,
+        *,
+        expected: str | None = None,
+    ) -> bool:
+        if value is None:
+            return False
+        current = self.clipboard_reader()
+        if expected is not None and current != expected:
+            return False
+        self.clipboard_writer(value)
+        return True
+
     def _wait_for_send_button(self, window, timeout_seconds: float):
         names = {name.casefold() for name in self.SEND_BUTTON_NAMES}
         return self._wait_for_refreshed_control(
@@ -1857,7 +2220,13 @@ class ChatGPTDesktop:
                 return value
         return None
 
-    def _copy_latest_response(self, window, prompt: str) -> str:
+    def _copy_latest_response(
+        self,
+        window,
+        prompt: str,
+        *,
+        baseline: tuple[str, ...] = (),
+    ) -> str:
         """Use ChatGPT's verified response Copy control to get plain text."""
 
         started = time.monotonic()
@@ -1902,7 +2271,12 @@ class ChatGPTDesktop:
                     in {"copy", "copy response"}
                 )
             ]
-            for control in reversed(copy_controls):
+            eligible = []
+            for index, control in enumerate(copy_controls):
+                token = self._response_control_token(control, index)
+                if generation_seen or token not in baseline:
+                    eligible.append(control)
+            for control in reversed(eligible):
                 self.clipboard_writer(sentinel)
                 if not self._activate_control(
                     control,
@@ -1922,8 +2296,19 @@ class ChatGPTDesktop:
             time.sleep(0.15)
         raise ChatGPTAutomationError(
             "ChatGPT did not expose a completed response Copy control before "
-            "the configured response timeout."
+            "the configured response timeout.",
+            code="response_unavailable",
+            retry_mode="response",
         )
+
+    @staticmethod
+    def _response_control_token(control, index: int) -> str:
+        info = getattr(control, "element_info", None)
+        runtime_id = getattr(info, "runtime_id", None)
+        automation_id = str(getattr(info, "automation_id", "") or "")
+        handle = getattr(info, "handle", None) or getattr(control, "handle", None)
+        identity = runtime_id or automation_id or handle
+        return f"{index}:{identity!s}"
 
     @staticmethod
     def _response_is_generating(controls) -> bool:
@@ -2224,6 +2609,34 @@ class ChatGPTDesktop:
         )
 
     def _report_progress(self, stage: str, message: str) -> None:
+        next_stage = stage.strip() or self.current_stage
+        now = time.perf_counter()
+        if self.current_stage and next_stage != self.current_stage:
+            elapsed_ms = (now - self.stage_started_at) * 1000
+            self.timings.append(
+                {
+                    "stage": self.current_stage,
+                    "milliseconds": round(elapsed_ms, 1),
+                }
+            )
+            LOGGER.info(
+                "Automation run=%s stage=%s completed_ms=%.1f",
+                self.run_id,
+                self.current_stage,
+                elapsed_ms,
+            )
+            self.stage_started_at = now
+        self.current_stage = next_stage
+        if self.current_stage not in self.stage_attempts:
+            self.stage_attempts[self.current_stage] = 1
+        elif message.casefold().startswith("retry"):
+            self.stage_attempts[self.current_stage] += 1
+        LOGGER.info(
+            "Automation run=%s stage=%s attempt=%s",
+            self.run_id,
+            self.current_stage,
+            self.stage_attempts[self.current_stage],
+        )
         if self.progress_callback is None:
             return
         try:
@@ -2234,12 +2647,34 @@ class ChatGPTDesktop:
                 exc_info=True,
             )
 
-    def _fallback(self, prompt: str, message: str) -> SubmissionResult:
+    def _fallback(
+        self,
+        prompt: str,
+        message: str,
+        *,
+        failure_code: str = "automation_failed",
+        retry_mode: str = "delivery",
+    ) -> SubmissionResult:
         self.clipboard_writer(prompt)
-        LOGGER.warning(message)
+        LOGGER.warning(
+            "Automation run=%s failed_stage=%s failure_code=%s "
+            "submission_confirmed=%s elapsed_ms=%.1f",
+            self.run_id,
+            self.current_stage,
+            failure_code,
+            self.submission_confirmed,
+            (time.perf_counter() - self.stage_started_at) * 1000,
+        )
         return SubmissionResult(
             submitted=False,
             prepared=False,
             fallback_copied=True,
             message=message,
+            run_id=self.run_id,
+            failed_stage=self.current_stage,
+            failure_code=failure_code,
+            submission_confirmed=self.submission_confirmed,
+            retry_mode=retry_mode,
+            recoverable=True,
+            response_baseline=self.response_baseline,
         )
