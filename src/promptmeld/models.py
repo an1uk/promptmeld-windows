@@ -3,6 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from .automation_protocol import (
+    ApplyVerification,
+    AutomationCheckpoint,
+    RecoveryAction,
+    SubmissionDisposition,
+)
 from .branding import DEFAULT_PROJECT_NAME
 
 DEFAULT_NATURAL_VOICE_INSTRUCTION = (
@@ -134,12 +140,50 @@ class WritingAction:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceFingerprint:
+    process_id: int = 0
+    process_started: int = 0
+    top_level_hwnd: int = 0
+    top_level_class: str = ""
+    focused_hwnd: int = 0
+    focused_class: str = ""
+    adapter_id: str = ""
+    selection_start: int = -1
+    selection_end: int = -1
+
+
+@dataclass(frozen=True, slots=True)
 class CapturedSelection:
     text: str
     source_hwnd: int
     source_title: str
     source_is_editable: bool = False
     source_app: str = ""
+    source_fingerprint: SourceFingerprint | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResponseAnchor:
+    destination_token: str = ""
+    destination_kind: str = ""
+    destination_name: str = ""
+    destination_hwnd: int = 0
+    baseline_tokens: tuple[str, ...] = ()
+    user_message_baseline_tokens: tuple[str, ...] = ()
+    prompt_digest: str = ""
+    submitted_message_token: str = ""
+    conversation_container_token: str = ""
+    response_control_token: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyReceipt:
+    adapter_id: str
+    source_fingerprint: SourceFingerprint
+    original_text: str
+    generated_text: str
+    replacement_start: int
+    replacement_end: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +211,15 @@ class SubmissionResult:
     recoverable: bool = False
     response_baseline: tuple[str, ...] = ()
     timings: tuple[tuple[str, float], ...] = ()
+    checkpoint: AutomationCheckpoint = AutomationCheckpoint.PREPARING
+    submission_disposition: SubmissionDisposition = (
+        SubmissionDisposition.NOT_ATTEMPTED
+    )
+    recovery_actions: tuple[RecoveryAction, ...] = ()
+    response_anchor: ResponseAnchor | None = None
+    apply_verification: ApplyVerification = ApplyVerification.NOT_REQUESTED
+    selector_ids: tuple[str, ...] = ()
+    chatgpt_hwnd: int = 0
 
 
 @dataclass(frozen=True, slots=True)

@@ -32,8 +32,24 @@ from .automation_client import (
     shutdown_automation_helper,
     submit_via_worker,
 )
+from .automation_protocol import (
+    AUTOMATION_PROTOCOL_VERSION,
+    ApplyVerification,
+    AutomationCheckpoint,
+    RecoveryAction,
+    SubmissionDisposition,
+    checkpoint_for_stage,
+    disposition_for_checkpoint,
+    recovery_actions_for,
+)
+from .automation_recovery import (
+    PendingAutomationRecord,
+    clear_pending_automation,
+    load_pending_automation,
+    save_pending_automation,
+)
 from .branding import APP_ID, APP_NAME
-from .clipboard import write_clipboard_text
+from .clipboard import ClipboardCanaryProbe, write_clipboard_text
 from .config import (
     ConfigurationError,
     DEFAULT_FOLDER_ICONS,
@@ -44,8 +60,10 @@ from .config import (
     save_settings,
 )
 from .models import (
+    ApplyReceipt,
     AppSettings,
     CapturedSelection,
+    ResponseAnchor,
     SubmissionResult,
     WritingAction,
 )
@@ -91,9 +109,13 @@ from .windows import (
     SelectionCapture,
     SelectionCaptureError,
     SourceRecoveryError,
+    apply_verified_source_selection,
+    automatic_source_return_is_allowed,
+    capture_promptmeld_scratch_selection,
     is_hotkey_released,
-    replace_source_selection,
-    undo_source_replacement,
+    release_promptmeld_scratch_selection,
+    reverse_verified_source_replacement,
+    source_supports_verified_apply,
 )
 from .worker import FunctionWorker
 
@@ -112,6 +134,13 @@ class AutomationRunContext:
     redaction_replacements: dict[str, str]
     response_timeout_seconds: float | None
     response_baseline: tuple[str, ...] = ()
+    response_anchor: ResponseAnchor | None = None
+    checkpoint: AutomationCheckpoint = AutomationCheckpoint.PREPARING
+    submission_disposition: SubmissionDisposition = (
+        SubmissionDisposition.NOT_ATTEMPTED
+    )
+    recovery_actions: tuple[RecoveryAction, ...] = ()
+    apply_verification: ApplyVerification = ApplyVerification.NOT_REQUESTED
 
 if TYPE_CHECKING:
     from .automation_progress import AutomationProgressWindow
@@ -214,6 +243,15 @@ def make_tray_icon() -> QIcon:
     return QIcon(pixmap)
 
 
+def _canonical_canary_response(value: str, expected: str) -> str | None:
+    """Accept only the literal canary or ChatGPT's exact Markdown escaping."""
+
+    candidate = value.strip()
+    if candidate == expected or candidate == expected.replace("_", "\\_"):
+        return expected
+    return None
+
+
 class PromptMeld:
     def __init__(
         self,
@@ -239,6 +277,7 @@ class PromptMeld:
         self.startup.migrate_legacy_registration()
         self.settings_dialog: ActionSettingsDialog | None = None
         self.starter_pack_catalogue = None
+        self.quitting = False
         self.first_run_wizard = None
         self.update_state_path = paths.data_dir / "update-state.json"
         self.update_downloads_dir = paths.data_dir / "updates"
@@ -257,13 +296,18 @@ class PromptMeld:
         self.automation_state = "idle"
         self.automation_run_context: AutomationRunContext | None = None
         self.preserved_original: CapturedSelection | None = None
-        self.last_replacement: CapturedSelection | None = None
+        self.last_replacement: ApplyReceipt | None = None
         self.last_automation_result: SubmissionResult | None = None
         self.pending_result_text = ""
         self.pending_result_selection: CapturedSelection | None = None
         self.pending_result_applied = False
         self.pending_result_can_apply = False
         self.pending_result_base_can_apply = False
+        self.pending_automation_path = paths.data_dir / "pending-automation.json"
+        self.pending_automation_record = load_pending_automation(
+            self.pending_automation_path
+        )
+        self.interrupted_automation = self.pending_automation_record
         cleanup_update_downloads(self.update_downloads_dir)
         cached_release = self.update_state.cached_release
         if cached_release is not None:
@@ -328,6 +372,21 @@ class PromptMeld:
         self.test_chatgpt_action.triggered.connect(
             self.test_chatgpt_connection
         )
+        self.full_canary_action = diagnostics_menu.addAction(
+            "Run full automation test…"
+        )
+        self.full_canary_action.triggered.connect(
+            self.run_full_automation_canary
+        )
+        self.interrupted_automation_action = diagnostics_menu.addAction(
+            "Review interrupted automation"
+        )
+        self.interrupted_automation_action.setEnabled(
+            self.interrupted_automation is not None
+        )
+        self.interrupted_automation_action.triggered.connect(
+            self.review_interrupted_automation
+        )
         self.copy_diagnostics_action = diagnostics_menu.addAction(
             "Copy diagnostic information"
         )
@@ -360,6 +419,8 @@ class PromptMeld:
             QTimer.singleShot(250, self.open_first_run_setup)
         if getattr(sys, "frozen", False):
             QTimer.singleShot(10_000, self._scheduled_update_check)
+        if self.interrupted_automation is not None:
+            QTimer.singleShot(750, self._notify_interrupted_automation)
 
     def _load_components(self, first_load: bool = False) -> None:
         self.settings = load_settings(self.paths.settings_file)
@@ -489,8 +550,21 @@ class PromptMeld:
         catalogue.activateWindow()
 
     def _starter_pack_catalogue_closed(self, catalogue) -> None:
-        if self.starter_pack_catalogue is catalogue:
-            self.starter_pack_catalogue = None
+        if self.starter_pack_catalogue is not catalogue:
+            return
+        self.starter_pack_catalogue = None
+        if getattr(self, "quitting", False):
+            return
+        popup = self.popup
+        if popup is None:
+            return
+        try:
+            popup.show()
+            popup.raise_()
+            popup.activateWindow()
+            popup.search.setFocus(Qt.FocusReason.OtherFocusReason)
+        except RuntimeError:
+            self.popup = None
 
     def _starter_pack_operation(
         self,
@@ -561,6 +635,7 @@ class PromptMeld:
             f"Added {result.added_count} action(s) from {pack.name}. "
             "They are ready in the launcher.",
         )
+        catalogue.accept()
 
     def _highlighted_action_changed(self, action_id: str) -> None:
         if self.popup is None or self.current_selection is None:
@@ -737,6 +812,7 @@ class PromptMeld:
         if self._automation_is_active():
             self._present_current_automation()
             return
+        self.automation_run_context = None
         self.automation_state = "capturing"
         try:
             self.current_selection = self.capture.capture()
@@ -785,6 +861,7 @@ class PromptMeld:
         if self._automation_is_active():
             self._present_current_automation()
             return
+        self.automation_run_context = None
         self.automation_state = "capturing"
         try:
             selection = self.capture.capture()
@@ -1266,7 +1343,59 @@ class PromptMeld:
             redaction_replacements=dict(redaction_replacements),
             response_timeout_seconds=effective_profile.response_timeout_seconds,
         )
+        self._begin_pending_automation(self.automation_run_context)
         self._start_automation_context(self.automation_run_context)
+
+    def _begin_pending_automation(self, context: AutomationRunContext) -> None:
+        path = getattr(self, "pending_automation_path", None)
+        if path is None:
+            return
+        record = PendingAutomationRecord.create(context.run_id)
+        self.pending_automation_record = record
+        try:
+            save_pending_automation(path, record)
+        except OSError:
+            LOGGER.exception("Could not save pending automation metadata")
+
+    def _advance_pending_automation(
+        self,
+        checkpoint: AutomationCheckpoint,
+        disposition: SubmissionDisposition,
+    ) -> None:
+        context = getattr(self, "automation_run_context", None)
+        if context is not None:
+            context.checkpoint = checkpoint
+            context.submission_disposition = disposition
+            context.recovery_actions = recovery_actions_for(
+                disposition,
+                has_result=checkpoint
+                in {
+                    AutomationCheckpoint.RESPONSE_CAPTURED,
+                    AutomationCheckpoint.SOURCE_APPLY_STARTED,
+                    AutomationCheckpoint.SOURCE_APPLY_VERIFIED,
+                    AutomationCheckpoint.COMPLETE,
+                },
+            )
+        record = getattr(self, "pending_automation_record", None)
+        path = getattr(self, "pending_automation_path", None)
+        if record is None or path is None:
+            return
+        record = record.advanced(checkpoint, disposition)
+        self.pending_automation_record = record
+        try:
+            save_pending_automation(path, record)
+        except OSError:
+            LOGGER.exception("Could not advance pending automation metadata")
+
+    def _clear_pending_automation(self) -> None:
+        path = getattr(self, "pending_automation_path", None)
+        if path is not None:
+            clear_pending_automation(path)
+        self.pending_automation_record = None
+        self.interrupted_automation = None
+        action = getattr(self, "interrupted_automation_action", None)
+        if action is not None:
+            action.setEnabled(False)
 
     def _start_automation_context(
         self,
@@ -1288,23 +1417,7 @@ class PromptMeld:
                 context.prompt,
                 context.project_name,
                 context.settings,
-                source_hwnd=(
-                    context.selection.source_hwnd if context.selection else None
-                ),
-                source_is_editable=(
-                    context.selection.source_is_editable
-                    if context.selection
-                    else False
-                ),
-                source_text=(context.selection.text if context.selection else ""),
-                source_app=(
-                    context.selection.source_app if context.selection else ""
-                ),
-                replace_selected_text=(
-                    operation == "deliver"
-                    and context.return_decision.replace_selection
-                    and context.alternative_count == 1
-                ),
+                replace_selected_text=False,
                 copy_generated_text=(
                     operation == "deliver"
                     and context.return_decision.copy_result
@@ -1314,6 +1427,7 @@ class PromptMeld:
                     operation == "retrieve_response"
                     or context.alternative_count > 1
                     or context.return_decision.review_result
+                    or context.return_decision.replace_selection
                 ),
                 response_timeout_seconds=context.response_timeout_seconds,
                 redaction_replacements=context.redaction_replacements,
@@ -1322,6 +1436,7 @@ class PromptMeld:
                 run_id=context.run_id,
                 operation=operation,
                 response_baseline=context.response_baseline,
+                response_anchor=context.response_anchor,
             ),
             with_progress=True,
         )
@@ -1430,7 +1545,10 @@ class PromptMeld:
             return
         operation = "retrieve_response" if mode == "response" else "deliver"
         if mode == "delivery" and self.last_automation_result is not None:
-            if self.last_automation_result.submission_confirmed:
+            if (
+                self.last_automation_result.submission_disposition
+                != SubmissionDisposition.NOT_ATTEMPTED
+            ):
                 return
             context.run_id = str(uuid.uuid4())
         self._start_automation_context(context, operation=operation)
@@ -1484,6 +1602,10 @@ class PromptMeld:
             "copying-response": "returning",
             "replacing-selection": "returning",
             "cancelling": "cancelling",
+            "destination-verified": "navigating",
+            "composer-verified": "inserting",
+            "send-started": "submitting",
+            "response-captured": "returning",
         }
         self.automation_state = state_by_stage.get(
             stage,
@@ -1499,7 +1621,153 @@ class PromptMeld:
             self.automation_state,
             stage,
         )
+        checkpoint = checkpoint_for_stage(stage)
+        if checkpoint != AutomationCheckpoint.PREPARING:
+            disposition = (
+                self.automation_run_context.submission_disposition
+                if (
+                    self.automation_run_context is not None
+                    and checkpoint
+                    in {
+                        AutomationCheckpoint.COMPLETE,
+                        AutomationCheckpoint.CANCELLED,
+                    }
+                )
+                else disposition_for_checkpoint(checkpoint)
+            )
+            self._advance_pending_automation(checkpoint, disposition)
         window.update_stage(stage, message)
+
+    def _apply_automatic_result_if_safe(
+        self,
+        result: SubmissionResult,
+        selection: CapturedSelection | None,
+        return_decision: ReturnDecision | None,
+        alternative_count: int,
+    ) -> SubmissionResult:
+        if (
+            not result.generated_text
+            or selection is None
+            or return_decision is None
+            or not return_decision.replace_selection
+            or alternative_count != 1
+            or result.selection_replaced
+        ):
+            return result
+        if not source_supports_verified_apply(selection):
+            return replace(
+                result,
+                message=(
+                    result.message
+                    + " The source application does not expose a verifiable "
+                    "replacement adapter, so the original was left unchanged."
+                ).strip(),
+                apply_verification=ApplyVerification.UNSUPPORTED,
+                recovery_actions=tuple(
+                    dict.fromkeys(
+                        (
+                            *result.recovery_actions,
+                            RecoveryAction.COPY_RESULT,
+                        )
+                    )
+                ),
+            )
+        if not automatic_source_return_is_allowed(selection, result.chatgpt_hwnd):
+            return replace(
+                result,
+                message=(
+                    result.message
+                    + " Another application is currently in use, so the original "
+                    "selection was left unchanged."
+                ).strip(),
+                apply_verification=ApplyVerification.UNSUPPORTED,
+                recovery_actions=tuple(
+                    dict.fromkeys(
+                        (
+                            *result.recovery_actions,
+                            RecoveryAction.COPY_RESULT,
+                        )
+                    )
+                ),
+            )
+        self._advance_pending_automation(
+            AutomationCheckpoint.SOURCE_APPLY_STARTED,
+            SubmissionDisposition.CONFIRMED,
+        )
+        # This attempt becomes the newest recovery target. Do not let a receipt
+        # from an older document be paired with the new preserved original.
+        self.last_replacement = None
+        self.preserved_original = selection
+        self._refresh_recovery_actions()
+        try:
+            receipt = apply_verified_source_selection(
+                selection,
+                result.generated_text,
+            )
+        except SourceRecoveryError as exc:
+            self._refresh_recovery_actions()
+            original_status = (
+                "The exact original was restored."
+                if exc.original_preserved is True
+                else (
+                    "PromptMeld could not prove that the source remained unchanged."
+                    if exc.original_preserved is False
+                    else "No verified source replacement was completed."
+                )
+            )
+            return replace(
+                result,
+                output_failed=True,
+                message=(
+                    "The response is ready, but PromptMeld could not verify a "
+                    f"safe source replacement. {original_status} {exc}"
+                ),
+                failed_stage="returning",
+                failure_code="source_apply_unverified",
+                retry_mode="",
+                recoverable=True,
+                checkpoint=AutomationCheckpoint.RESPONSE_CAPTURED,
+                submission_disposition=SubmissionDisposition.CONFIRMED,
+                recovery_actions=(
+                    RecoveryAction.COPY_RESULT,
+                    RecoveryAction.COPY_ORIGINAL,
+                ),
+                apply_verification=ApplyVerification.FAILED,
+            )
+        self.last_replacement = receipt
+        self.preserved_original = selection
+        self._advance_pending_automation(
+            AutomationCheckpoint.SOURCE_APPLY_VERIFIED,
+            SubmissionDisposition.CONFIRMED,
+        )
+        return replace(
+            result,
+            selection_replaced=True,
+            message=(result.message + " The selected text was verified and replaced.").strip(),
+            checkpoint=AutomationCheckpoint.SOURCE_APPLY_VERIFIED,
+            submission_disposition=SubmissionDisposition.CONFIRMED,
+            recovery_actions=(
+                RecoveryAction.COPY_RESULT,
+                RecoveryAction.COPY_ORIGINAL,
+                RecoveryAction.REVERSE_APPLY,
+            ),
+            apply_verification=ApplyVerification.VERIFIED,
+        )
+
+    def _finalise_pending_automation(self, result: SubmissionResult) -> None:
+        if result.generated_text or result.prepared:
+            self._clear_pending_automation()
+            return
+        if result.submitted and not result.output_failed and not result.cancelled:
+            self._clear_pending_automation()
+            return
+        if result.submission_disposition == SubmissionDisposition.NOT_ATTEMPTED:
+            self._clear_pending_automation()
+            return
+        self._advance_pending_automation(
+            result.checkpoint,
+            result.submission_disposition,
+        )
 
     def _submission_finished(
         self,
@@ -1519,6 +1787,21 @@ class PromptMeld:
         context = getattr(self, "automation_run_context", None)
         if context is not None and result.response_baseline:
             context.response_baseline = result.response_baseline
+        if context is not None and result.response_anchor is not None:
+            context.response_anchor = result.response_anchor
+        result = self._apply_automatic_result_if_safe(
+            result,
+            selection,
+            return_decision,
+            alternative_count,
+        )
+        self.last_automation_result = result
+        if context is not None:
+            context.checkpoint = result.checkpoint
+            context.submission_disposition = result.submission_disposition
+            context.recovery_actions = result.recovery_actions
+            context.apply_verification = result.apply_verification
+        self._finalise_pending_automation(result)
         self.automation_state = "recoverable" if result.recoverable else "complete"
         if not result.recoverable:
             self.automation_run_context = None
@@ -1607,7 +1890,6 @@ class PromptMeld:
             progress_window.finish(result, can_apply=can_apply)
         if result.selection_replaced and selection is not None:
             self.preserved_original = selection
-            self.last_replacement = selection
             self._refresh_recovery_actions()
         if result.cancelled:
             self.notify(
@@ -1704,6 +1986,7 @@ class PromptMeld:
             allow_manual_apply
             and selection is not None
             and selection.source_is_editable
+            and source_supports_verified_apply(selection)
             and not result.selection_replaced
         )
         self.pending_result_can_apply = self.pending_result_base_can_apply
@@ -1814,12 +2097,13 @@ class PromptMeld:
             or not getattr(self, "pending_result_can_apply", False)
         ):
             return
+        self.last_replacement = None
+        self.preserved_original = selection
+        self._refresh_recovery_actions()
         try:
-            replace_source_selection(
-                selection.source_hwnd,
-                selection.text,
+            receipt = apply_verified_source_selection(
+                selection,
                 generated_text,
-                selection.source_app,
             )
         except SourceRecoveryError as exc:
             try:
@@ -1838,7 +2122,7 @@ class PromptMeld:
         self.pending_result_applied = True
         self.pending_result_can_apply = False
         self.preserved_original = selection
-        self.last_replacement = selection
+        self.last_replacement = receipt
         self._refresh_completion_actions()
         self._refresh_recovery_actions()
         progress = getattr(self, "automation_progress", None)
@@ -1872,7 +2156,9 @@ class PromptMeld:
         )
         if self.last_replacement is not None:
             application = application_display_name(
-                self.last_replacement.source_app
+                self.preserved_original.source_app
+                if self.preserved_original is not None
+                else ""
             )
             self.undo_replacement_action.setText(
                 f"Undo last replacement in {application}"
@@ -1903,21 +2189,15 @@ class PromptMeld:
         if replacement is None:
             return
         try:
-            undo_source_replacement(replacement.source_hwnd)
+            reverse_verified_source_replacement(replacement)
         except SourceRecoveryError as exc:
-            try:
-                write_clipboard_text(replacement.text)
-            except Exception as clipboard_exc:
-                self.notify(
-                    "Undo and clipboard recovery were unavailable",
-                    f"{exc} Clipboard details: {clipboard_exc}",
-                    QSystemTrayIcon.MessageIcon.Warning,
-                    9000,
-                )
-                return
+            # A receipt that no longer verifies must never remain actionable.
+            self.last_replacement = None
+            self._refresh_recovery_actions()
             self.notify(
                 "Undo was unavailable",
-                f"{exc} The preserved original was copied instead.",
+                f"{exc} Use Copy preserved original from the tray if needed; "
+                "the clipboard was left unchanged.",
                 QSystemTrayIcon.MessageIcon.Warning,
                 8000,
             )
@@ -1926,7 +2206,7 @@ class PromptMeld:
         self._refresh_recovery_actions()
         self.notify(
             "Replacement undone",
-            "The original application's Undo command was used.",
+            "The exact verified PromptMeld replacement was reversed.",
             QSystemTrayIcon.MessageIcon.Information,
         )
 
@@ -1941,6 +2221,7 @@ class PromptMeld:
             (
                 f"{APP_NAME} diagnostics",
                 f"Version: {display_version()}",
+                f"Automation protocol: {AUTOMATION_PROTOCOL_VERSION}",
                 f"Packaged build: {bool(getattr(sys, 'frozen', False))}",
                 f"Windows: {platform.platform()}",
                 f"Source application: {source_app or 'not captured'}",
@@ -1960,7 +2241,16 @@ class PromptMeld:
                         f"code={result.failure_code or 'none'}, "
                         f"submission_confirmed={result.submission_confirmed}, "
                         f"retry_mode={result.retry_mode or 'none'}"
+                        f", checkpoint={result.checkpoint.value}"
+                        f", disposition={result.submission_disposition.value}"
+                        f", apply_verification={result.apply_verification.value}"
                     )
+                ),
+                "Selector capabilities: "
+                + (
+                    "none"
+                    if result is None or not result.selector_ids
+                    else ", ".join(result.selector_ids)
                 ),
                 "Last automation timings: "
                 + (
@@ -1975,6 +2265,309 @@ class PromptMeld:
                 "Selected text, prompts, responses, writing actions, free-text "
                 "settings and window titles are intentionally excluded.",
             )
+        )
+
+    @staticmethod
+    def _interrupted_automation_message(
+        record: PendingAutomationRecord,
+    ) -> str:
+        if record.submission_disposition == SubmissionDisposition.CONFIRMED:
+            return (
+                "A previous PromptMeld run definitely submitted a request to "
+                "ChatGPT but did not record a clean completion. Open ChatGPT to "
+                "review it; PromptMeld will not resubmit or reapply it automatically."
+            )
+        if record.submission_disposition == SubmissionDisposition.MAYBE_SUBMITTED:
+            return (
+                "A previous PromptMeld run stopped after Send was activated, but "
+                "submission was not confirmed. Inspect ChatGPT before retrying to "
+                "avoid a duplicate request."
+            )
+        return (
+            "A previous PromptMeld run stopped before Send was activated. "
+            "No prompt, selected text, response, Project name, or window title was "
+            "stored in the recovery record."
+        )
+
+    def _notify_interrupted_automation(self) -> None:
+        record = getattr(self, "interrupted_automation", None)
+        if record is None:
+            return
+        self.notify(
+            "Previous automation needs review",
+            self._interrupted_automation_message(record),
+            QSystemTrayIcon.MessageIcon.Warning,
+            10_000,
+        )
+
+    def review_interrupted_automation(self) -> None:
+        record = getattr(self, "interrupted_automation", None)
+        if record is None:
+            return
+        message = QMessageBox(getattr(self, "popup", None))
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setWindowTitle("Review interrupted automation")
+        message.setText(self._interrupted_automation_message(record))
+        open_button = message.addButton(
+            "Open ChatGPT",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        message.addButton("Dismiss", QMessageBox.ButtonRole.RejectRole)
+        message.exec()
+        if message.clickedButton() is open_button:
+            self.open_chatgpt_for_recovery()
+        self._clear_pending_automation()
+
+    def run_full_automation_canary(self) -> None:
+        if self._automation_is_active():
+            self._present_current_automation()
+            return
+        choice = QMessageBox.question(
+            getattr(self, "popup", None),
+            "Run a full ChatGPT automation test?",
+            "This sends one harmless unique test phrase to ChatGPT Temporary "
+            "Chat. "
+            "It contains no selected text or settings and does not touch a user "
+            "document. PromptMeld will verify the reply in its own scratch editor "
+            "and temporarily place a harmless private marker on the clipboard to "
+            "verify full-format restoration. Any newer clipboard content will be "
+            "left untouched. Temporary Chat must be verified before the message "
+            "is sent.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if choice != QMessageBox.StandardButton.Yes:
+            return
+
+        from PySide6.QtWidgets import QPlainTextEdit
+
+        token = f"PROMPTMELD_CANARY_{uuid.uuid4().hex[:12].upper()}"
+        prompt = f"Reply with exactly this phrase and nothing else: {token}"
+        settings = replace(
+            self.settings,
+            auto_submit_enabled=True,
+            temporary_chat_enabled=True,
+            replace_selected_text_enabled=False,
+            copy_generated_text_enabled=False,
+        )
+        run_id = str(uuid.uuid4())
+        scratch = QPlainTextEdit()
+        scratch.setObjectName("automationCanaryScratch")
+        scratch.setPlainText("PromptMeld canary source")
+        scratch.selectAll()
+        try:
+            scratch_selection = capture_promptmeld_scratch_selection(scratch)
+        except Exception as exc:
+            LOGGER.exception("Full canary scratch source preparation failed")
+            scratch.deleteLater()
+            self.notify(
+                "Full automation test could not start",
+                "PromptMeld could not prepare its private scratch editor. No "
+                f"ChatGPT message was sent. Details: {exc}",
+                QSystemTrayIcon.MessageIcon.Warning,
+                9000,
+            )
+            return
+        try:
+            clipboard_probe = ClipboardCanaryProbe.begin(token)
+        except Exception as exc:
+            LOGGER.exception("Full canary clipboard probe preparation failed")
+            release_promptmeld_scratch_selection(scratch_selection)
+            scratch.deleteLater()
+            self.notify(
+                "Full automation test could not start",
+                "PromptMeld could not safely prepare the clipboard check. No "
+                f"ChatGPT message was sent. Details: {exc}",
+                QSystemTrayIcon.MessageIcon.Warning,
+                9000,
+            )
+            return
+        context = AutomationRunContext(
+            run_id=run_id,
+            prompt=prompt,
+            project_name="",
+            settings=settings,
+            selection=None,
+            return_decision=ReturnDecision(review_result=True),
+            alternative_count=1,
+            redaction_replacements={},
+            response_timeout_seconds=120.0,
+        )
+        self.automation_run_context = context
+        self._begin_pending_automation(context)
+        self.automation_state = "preparing"
+        self.automation_cancel_event = threading.Event()
+        self.cancel_automation_action.setText("Cancel current automation")
+        self.cancel_automation_action.setEnabled(True)
+        progress = self._show_automation_progress("", temporary_chat=True)
+        worker = FunctionWorker(
+            lambda report_progress: submit_via_worker(
+                prompt,
+                "",
+                settings,
+                capture_generated_text=True,
+                response_timeout_seconds=120.0,
+                progress_callback=report_progress,
+                is_cancelled=self.automation_cancel_event.is_set,
+                run_id=run_id,
+            ),
+            with_progress=True,
+        )
+        worker.signals.progress.connect(
+            lambda stage, text: self._automation_progressed(
+                progress,
+                stage,
+                text,
+            )
+        )
+        worker.signals.finished.connect(
+            lambda result: self._full_canary_finished(
+                result,
+                progress,
+                token,
+                scratch,
+                scratch_selection,
+                clipboard_probe,
+            )
+        )
+        self.automation_worker = worker
+        self.thread_pool.start(worker)
+
+    def _full_canary_finished(
+        self,
+        result: SubmissionResult,
+        progress,
+        expected_token: str,
+        scratch,
+        scratch_selection: CapturedSelection,
+        clipboard_probe: ClipboardCanaryProbe,
+    ) -> None:
+        LOGGER.info(
+            "Full canary completion started checkpoint=%s submitted=%s "
+            "has_response=%s failure_code=%s",
+            result.checkpoint.value,
+            result.submitted,
+            bool(result.generated_text),
+            result.failure_code or "none",
+        )
+        self.automation_worker = None
+        self.automation_cancel_event = None
+        self.cancel_automation_action.setEnabled(False)
+        generated = result.generated_text.strip()
+        canonical_response = _canonical_canary_response(
+            generated,
+            expected_token,
+        )
+        response_verified = bool(
+            result.submitted
+            and not result.cancelled
+            and canonical_response is not None
+        )
+        application_verified = False
+        application_error = ""
+        if response_verified:
+            try:
+                LOGGER.info("Full canary scratch apply started")
+                receipt = apply_verified_source_selection(
+                    scratch_selection,
+                    canonical_response,
+                )
+                application_verified = scratch.toPlainText() == expected_token
+                if application_verified:
+                    reverse_verified_source_replacement(receipt)
+                    application_verified = (
+                        scratch.toPlainText() == scratch_selection.text
+                    )
+                LOGGER.info(
+                    "Full canary scratch apply finished verified=%s",
+                    application_verified,
+                )
+            except SourceRecoveryError as exc:
+                application_error = str(exc)
+                LOGGER.exception("Full canary scratch apply failed")
+        LOGGER.info("Full canary clipboard restoration started")
+        clipboard_preserved = clipboard_probe.finish()
+        LOGGER.info(
+            "Full canary clipboard restoration finished preserved=%s",
+            clipboard_preserved,
+        )
+        release_promptmeld_scratch_selection(scratch_selection)
+        scratch.deleteLater()
+        passed = bool(
+            response_verified
+            and application_verified
+            and clipboard_preserved
+        )
+        if passed:
+            result = replace(
+                result,
+                output_failed=False,
+                message=(
+                    "Full automation test passed: Temporary Chat submission, "
+                    "response correlation, result transfer, scratch application, "
+                    "read-back and reversal verification, full clipboard "
+                    "preservation, and cleanup all succeeded."
+                ),
+                checkpoint=AutomationCheckpoint.COMPLETE,
+                apply_verification=ApplyVerification.VERIFIED,
+                recoverable=False,
+                retry_mode="",
+            )
+            self._clear_pending_automation()
+        elif result.generated_text:
+            if not response_verified:
+                failure_code = "canary_response_mismatch"
+                failure_detail = (
+                    "The response did not exactly match the unique test phrase."
+                )
+            elif not application_verified:
+                failure_code = "canary_source_verification_failed"
+                failure_detail = (
+                    "The verified scratch apply or reversal failed"
+                    + (f": {application_error}" if application_error else ".")
+                )
+            else:
+                failure_code = "canary_clipboard_verification_failed"
+                failure_detail = (
+                    "The full clipboard marker was not preserved. Any newer "
+                    "clipboard content was left untouched."
+                )
+            result = replace(
+                result,
+                output_failed=True,
+                message=(
+                    f"{failure_detail} The full automation test was not accepted "
+                    "as verified."
+                ),
+                failure_code=failure_code,
+                apply_verification=ApplyVerification.FAILED,
+                recoverable=False,
+            )
+            self._clear_pending_automation()
+        else:
+            self._finalise_pending_automation(result)
+        # Canary completions use the same progress-window result controls as
+        # ordinary automation. Retain any captured response in the main
+        # process so Copy result has a concrete value to copy after the
+        # diagnostic scratch source and pending-run journal are cleaned up.
+        self._remember_completed_result(
+            result,
+            None,
+            allow_manual_apply=False,
+        )
+        self.last_automation_result = result
+        self.automation_run_context = None if not result.recoverable else self.automation_run_context
+        self.automation_state = "recoverable" if result.recoverable else "complete"
+        progress.finish(result, can_apply=False)
+        self.notify(
+            "Full automation test passed" if passed else "Full automation test needs attention",
+            result.message,
+            (
+                QSystemTrayIcon.MessageIcon.Information
+                if passed
+                else QSystemTrayIcon.MessageIcon.Warning
+            ),
+            9000,
         )
 
     def copy_diagnostics(self) -> None:
@@ -2008,6 +2601,7 @@ class PromptMeld:
         if self._automation_is_active():
             self._present_current_automation()
             return
+        self.automation_run_context = None
         run_id = str(uuid.uuid4())
         self.automation_state = "launching"
         self.automation_cancel_event = threading.Event()
@@ -2045,6 +2639,8 @@ class PromptMeld:
         self.automation_cancel_event = None
         self.last_automation_result = result
         self.automation_state = "recoverable" if result.recoverable else "complete"
+        if not result.recoverable:
+            self.automation_run_context = None
         progress.finish(result, can_apply=False)
         self.notify(
             "ChatGPT connection ready" if result.prepared else "ChatGPT needs attention",
@@ -2818,6 +3414,7 @@ class PromptMeld:
             QTimer.singleShot(0, self.open_action_settings)
 
     def quit(self) -> None:
+        self.quitting = True
         self.automation_run_context = None
         self.automation_state = "complete"
         if self.automation_cancel_event is not None:
@@ -2842,6 +3439,11 @@ def run() -> int:
     qt_app.setOrganizationName(APP_ID)
     qt_app.setQuitOnLastWindowClosed(False)
 
+    paths = AppPaths.discover()
+    configure_logging(paths)
+    if "--canary-preflight" in sys.argv:
+        return _run_packaged_canary_preflight(qt_app)
+
     if not QSystemTrayIcon.isSystemTrayAvailable():
         QMessageBox.critical(
             None,
@@ -2850,8 +3452,6 @@ def run() -> int:
         )
         return 1
 
-    paths = AppPaths.discover()
-    configure_logging(paths)
     instance = SingleInstance()
     if not instance.acquire():
         return 0
@@ -2865,3 +3465,41 @@ def run() -> int:
     qt_app.aboutToQuit.connect(launcher.hotkeys.unregister_all)
     qt_app.aboutToQuit.connect(instance.release)
     return qt_app.exec()
+
+
+def _run_packaged_canary_preflight(qt_app: QApplication) -> int:
+    """Exercise frozen scratch and clipboard setup without contacting ChatGPT."""
+
+    from PySide6.QtWidgets import QPlainTextEdit
+
+    scratch = QPlainTextEdit()
+    scratch.setObjectName("automationCanaryPreflightScratch")
+    scratch.setPlainText("PromptMeld canary source")
+    scratch.selectAll()
+    selection = None
+    probe = None
+    clipboard_finished = False
+    try:
+        selection = capture_promptmeld_scratch_selection(scratch)
+        probe = ClipboardCanaryProbe.begin("PROMPTMELD_CANARY_PREFLIGHT")
+        receipt = apply_verified_source_selection(selection, "PROMPTMELD_TEST")
+        if scratch.toPlainText() != "PROMPTMELD_TEST":
+            raise SourceRecoveryError("Scratch apply read-back failed.")
+        reverse_verified_source_replacement(receipt)
+        if scratch.toPlainText() != selection.text:
+            raise SourceRecoveryError("Scratch reversal read-back failed.")
+        clipboard_preserved = probe.finish()
+        clipboard_finished = True
+        if not clipboard_preserved:
+            raise RuntimeError("Clipboard restoration verification failed.")
+        LOGGER.info("Packaged canary preflight passed")
+        return 0
+    except Exception:
+        LOGGER.exception("Packaged canary preflight failed")
+        return 2
+    finally:
+        if probe is not None and not clipboard_finished:
+            probe.finish()
+        release_promptmeld_scratch_selection(selection)
+        scratch.deleteLater()
+        qt_app.processEvents()

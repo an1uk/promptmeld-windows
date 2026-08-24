@@ -24,6 +24,26 @@ Run the test suite:
 .\.venv\Scripts\python.exe -m pytest
 ```
 
+Exercise the source helper entry point without launching ChatGPT:
+
+```powershell
+.\.venv\Scripts\python.exe -m promptmeld.automation_worker --self-test
+```
+
+Automation reliability tests cover versioned envelopes and pre-Send handshake
+restart, post-Send no-restart enforcement, out-of-order checkpoints, helper
+death, cooperative cancellation and no-progress timeout at every helper
+checkpoint, malformed events, response ownership, HWND/PID and focused-control
+changes, Unicode source ranges, full-format clipboard restoration, read-back
+rollback, metadata-only restart recovery, and unsafe delayed reversal.
+For a packaged build, also run `_internal\PromptMeldAutomation.exe --self-test`.
+
+The user-initiated **Diagnostics > Run full automation test** canary is the live
+end-to-end acceptance check. Verify it with ChatGPT closed and already open,
+with mixed-DPI monitors, at sign-in or introductory interstitials, and for both
+successful and cancelled runs. Its disclosure must appear before it submits
+the harmless Temporary Chat test phrase.
+
 Run the dependency licence audit directly:
 
 ```powershell

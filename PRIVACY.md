@@ -117,10 +117,13 @@ source text, derived text-type history, source-application history, or prompt.
 
 When **Copy generated text to the clipboard** is enabled, the generated ChatGPT
 response replaces the restored clipboard contents after ChatGPT responds. When
-automatic replacement is enabled for an editable selection, PromptMeld also
-returns focus to the original application and pastes that response over the
-selection. The response is held transiently in memory while this happens and
-is not written to PromptMeld files.
+automatic replacement is enabled for a supported source adapter, the response
+first crosses back into PromptMeld's main process. The automation companion is
+restricted to ChatGPT and receives no source text or source window handle.
+PromptMeld revalidates the source process, top-level window, focused control,
+and range, applies the response directly through the adapter, and reads that
+range back before reporting success. The response is held transiently in
+memory while this happens and is not written to PromptMeld files.
 
 The selected text and completed prompt are used only for this immediate
 operation. PromptMeld does not write them to a temporary file, database,
@@ -131,6 +134,10 @@ into an unknown control. It focuses ChatGPT and leaves the completed prompt on
 the clipboard so you can paste it manually. In that case, the original
 clipboard contents are not restored automatically because doing so would
 remove the fallback prompt.
+
+After PromptMeld has activated Send, an ambiguous failure does not copy the
+prompt or offer automatic delivery retry. It leaves the clipboard unchanged
+and asks you to inspect ChatGPT first, avoiding accidental duplicate requests.
 
 ## The Windows clipboard
 
@@ -143,6 +150,13 @@ read its current contents.
 If you work with sensitive text, review or disable clipboard history and any
 third-party clipboard manager before using PromptMeld. You can also clear
 clipboard history after use.
+
+The opt-in full automation diagnostic temporarily places a harmless private
+nonce in both Unicode text and a PromptMeld-specific clipboard format. This is
+used only to prove that the complete clipboard data object survives the
+ChatGPT automation path. PromptMeld restores the prior clipboard only while it
+still owns the clipboard sequence; a newer copy made by you or another
+application is left untouched.
 
 ## What reaches ChatGPT
 
@@ -178,9 +192,10 @@ OpenAI account settings, and OpenAI's policies. PromptMeld cannot control that
 handling.
 
 When generated-result copying or replacement is enabled, PromptMeld reads the
-completed response through ChatGPT's local Copy control. The response is held
-briefly in memory and placed on the clipboard or pasted into the verified
-source selection. The latest retrieved response remains in process memory so
+completed response through a Copy control correlated to the submitted message
+and conversation container. The response is held briefly in memory and placed
+on the clipboard or applied through a verified source adapter. The latest
+retrieved response remains in process memory so
 the completion window and tray can offer **Copy result** and **Apply now**. It
 is replaced by the next retrieved response and forgotten when PromptMeld
 exits. It is not written to PromptMeld's files or diagnostics.
@@ -192,10 +207,11 @@ are cleared when a newer response arrives and are forgotten when PromptMeld
 exits; they are never written to settings, logs, diagnostics, or backups.
 
 For replacement, the original selected text is preserved in memory so the
-tray can copy it for recovery and invoke the source application's native Undo
-command. Only the most recently preserved original is retained, and it is
-forgotten when PromptMeld exits. It is not included in logs, diagnostics,
-settings, usage records, or update requests.
+tray can copy it for recovery. An adapter-specific reversal is available only
+while the exact inserted range remains unchanged; PromptMeld does not send a
+delayed generic Ctrl+Z. Only the most recently preserved original is retained,
+and it is forgotten when PromptMeld exits. It is not included in logs,
+diagnostics, settings, usage records, or update requests.
 
 ## What PromptMeld stores
 
@@ -205,6 +221,11 @@ PromptMeld stores the following files under `%LOCALAPPDATA%\PromptMeld`:
 - `settings.json`: launcher and writing-style preferences.
 - `usage.json`: per-action usage counts and last-used timestamps for ranking.
 - `promptmeld.log`: operational messages, timings, and errors.
+- `pending-automation.json`: while a run may need restart recovery, its schema
+  version, run ID, timestamps, typed checkpoint, submission disposition, and
+  content-free status flags. It never contains selected text, prompts,
+  responses, Project names, source titles, or replacement keys and is removed
+  after a clean terminal outcome or when it expires.
 - `update-state.json`: the last update attempt, cached public release metadata,
   and the last version for which a notification was shown.
 - `updates\`: a verified installer while an update is being applied; old update

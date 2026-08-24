@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from .actions import ActionRegistry
-from .branding import APP_NAME, TAGLINE
+from .branding import APP_NAME
 from .icons import ActionIconProvider
 from .models import (
     EDITING_STRENGTH_OPTIONS,
@@ -32,7 +32,12 @@ from .models import (
     RESULTING_TEXT_LENGTH_OPTIONS,
     TITLE_SUBJECT_OPTIONS,
 )
-from .returning import EffectiveApplicationProfile, ReturnDecision
+from .returning import (
+    APPLICATION_RETURN_MODE_OPTIONS,
+    EffectiveApplicationProfile,
+    ReturnDecision,
+    application_display_name,
+)
 from .suggestions import SuggestionContext, classify_suggestion_context
 from .theme import (
     high_contrast_stylesheet,
@@ -86,7 +91,7 @@ class LauncherPopup(QWidget):
         self.source_is_editable = True
         self.application_policy_override = False
         self.action_result_policy_lock = False
-        self._source_profile_note = ""
+        self._application_defaults_description = ""
         self.temporary_chat_enabled = temporary_chat_enabled
         self.guided_drafting_enabled = guided_drafting_enabled
         self.resulting_text_length_value = resulting_text_length
@@ -132,8 +137,6 @@ class LauncherPopup(QWidget):
         title_row.setContentsMargins(0, 0, 0, 0)
         self.title = QLabel(APP_NAME)
         self.title.setObjectName("title")
-        self.tagline = QLabel(TAGLINE)
-        self.tagline.setObjectName("tagline")
         self.close_button = QPushButton("×")
         self.close_button.setObjectName("launcherCloseButton")
         self.close_button.setAccessibleName("Close launcher")
@@ -142,18 +145,11 @@ class LauncherPopup(QWidget):
         self.close_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.title.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self.tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_row.addWidget(
             self.title,
             0,
             0,
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
-        )
-        title_row.addWidget(
-            self.tagline,
-            0,
-            0,
-            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
         )
         title_row.addWidget(
             self.close_button,
@@ -165,7 +161,6 @@ class LauncherPopup(QWidget):
         self._drag_handles = {
             self.header,
             self.title,
-            self.tagline,
         }
 
 
@@ -180,6 +175,15 @@ class LauncherPopup(QWidget):
         self.source_context.setAccessibleName("Generated result destination")
         self.source_context.hide()
         layout.addWidget(self.source_context)
+
+        self.application_defaults_context = QLabel()
+        self.application_defaults_context.setObjectName("applicationDefaults")
+        self.application_defaults_context.setWordWrap(True)
+        self.application_defaults_context.setAccessibleName(
+            "Application-specific defaults"
+        )
+        self.application_defaults_context.hide()
+        layout.addWidget(self.application_defaults_context)
 
         self.suggestion_context_label = QLabel()
         self.suggestion_context_label.setObjectName("hint")
@@ -252,15 +256,23 @@ class LauncherPopup(QWidget):
         starter_pack_row.addStretch(1)
         layout.addLayout(starter_pack_row)
 
-        self.options_toggle = QPushButton("Request options and custom instruction")
+        self.options_toggle = QPushButton(
+            "⌃  Review defaults or add request details  ⌃"
+        )
+        self.options_toggle.setObjectName("launcherDisclosureButton")
         self.options_toggle.setCheckable(True)
         self.options_toggle.setChecked(False)
         self.options_toggle.setAccessibleName(
-            "Show request options and custom instruction"
+            "Show defaults and controls for adding context or a one-off "
+            "instruction"
         )
         self.options_toggle.setToolTip(
-            "Show remembered choices, output and guidance controls, additional "
-            "context, and the one-off instruction field."
+            "Reveal the active defaults and controls for submission, result "
+            "handling, writing guidance, additional context, and a one-off "
+            "instruction. This opens options; it does not submit the request."
+        )
+        self.options_toggle.setAccessibleDescription(
+            self.options_toggle.toolTip()
         )
         layout.addWidget(self.options_toggle)
         self.options_panel = QFrame()
@@ -272,7 +284,9 @@ class LauncherPopup(QWidget):
         layout.addWidget(self.options_panel)
 
         self.remembered_options_label = QLabel(
-            "Remembered choices (unless an application profile overrides them)"
+            "Active defaults are shown below. Enabled checkbox and output "
+            "changes are remembered; guidance, context and one-off instructions "
+            "apply to this request."
         )
         self.remembered_options_label.setObjectName("hint")
         self.remembered_options_label.setWordWrap(True)
@@ -683,12 +697,7 @@ class LauncherPopup(QWidget):
         self.application_overridden_fields = (
             effective.overridden_fields if effective is not None else frozenset()
         )
-        self._source_profile_note = (
-            f" \u00b7 {len(self.application_overridden_fields)} application default"
-            + ("s" if len(self.application_overridden_fields) != 1 else "")
-            if self.application_overridden_fields
-            else ""
-        )
+        self._update_application_defaults_context(effective, decision)
         self._apply_return_decision(decision)
         if effective is not None:
             self.set_natural_voice_enabled(effective.natural_voice_enabled)
@@ -732,6 +741,105 @@ class LauncherPopup(QWidget):
             )
         self._update_replace_selected_text_availability()
 
+    def _update_application_defaults_context(
+        self,
+        effective: EffectiveApplicationProfile | None,
+        decision: ReturnDecision,
+    ) -> None:
+        if effective is None or not effective.overridden_fields:
+            self._application_defaults_description = ""
+            self.application_defaults_context.clear()
+            self.application_defaults_context.hide()
+            return
+
+        enabled_label = {False: "Off", True: "On"}
+        response_seconds = effective.response_timeout_seconds
+        response_wait = (
+            "Wait indefinitely"
+            if response_seconds is None
+            else {
+                60: "1 minute",
+                180: "3 minutes",
+                300: "5 minutes",
+                600: "10 minutes",
+                1200: "20 minutes",
+            }.get(int(response_seconds), f"{int(response_seconds)} seconds")
+        )
+        values = {
+            "return_mode": dict(APPLICATION_RETURN_MODE_OPTIONS).get(
+                decision.requested_mode,
+                decision.summary,
+            ),
+            "recipient_audience": dict(RECIPIENT_AUDIENCE_OPTIONS).get(
+                effective.recipient_audience,
+                effective.recipient_audience,
+            ),
+            "primary_language": effective.primary_language,
+            "resulting_text_length": dict(RESULTING_TEXT_LENGTH_OPTIONS).get(
+                effective.resulting_text_length,
+                effective.resulting_text_length,
+            ),
+            "resulting_text_formatting": dict(
+                RESULTING_TEXT_FORMATTING_OPTIONS
+            ).get(
+                effective.resulting_text_formatting,
+                effective.resulting_text_formatting,
+            ),
+            "title_subject": dict(TITLE_SUBJECT_OPTIONS).get(
+                effective.title_subject,
+                effective.title_subject,
+            ),
+            "editing_strength": dict(EDITING_STRENGTH_OPTIONS).get(
+                effective.editing_strength,
+                effective.editing_strength,
+            ),
+            "preserve_facts": enabled_label[effective.preserve_facts],
+            "natural_voice": enabled_label[effective.natural_voice_enabled],
+            "guided_drafting": enabled_label[
+                effective.guided_drafting_enabled
+            ],
+            "writing_block": enabled_label[effective.writing_block_enabled],
+            "auto_submit": enabled_label[effective.auto_submit_enabled],
+            "temporary_chat": enabled_label[effective.temporary_chat_enabled],
+            "privacy_preview": enabled_label[effective.privacy_preview_enabled],
+            "response_wait": response_wait,
+            "project_name": effective.project_name,
+        }
+        labels = {
+            "return_mode": "Result handling",
+            "recipient_audience": "Audience",
+            "primary_language": "Language",
+            "resulting_text_length": "Result length",
+            "resulting_text_formatting": "Formatting",
+            "title_subject": "Title or subject",
+            "editing_strength": "Editing strength",
+            "preserve_facts": "Preserve facts and specifics",
+            "natural_voice": "Natural voice",
+            "guided_drafting": "Guided questions",
+            "writing_block": "Copyable writing block",
+            "auto_submit": "Submit automatically",
+            "temporary_chat": "Temporary Chat",
+            "privacy_preview": "Privacy preview",
+            "response_wait": "Response wait",
+            "project_name": "ChatGPT Project",
+        }
+        details = [
+            f"{label}: {values[field]}"
+            for field, label in labels.items()
+            if field in effective.overridden_fields
+        ]
+        app_name = application_display_name(effective.application)
+        self._application_defaults_description = (
+            f"Application defaults for {app_name}: " + " · ".join(details)
+        )
+        self.application_defaults_context.setText(
+            self._application_defaults_description
+        )
+        self.application_defaults_context.setAccessibleDescription(
+            self._application_defaults_description
+        )
+        self.application_defaults_context.show()
+
     def set_action_context(self, decision: ReturnDecision) -> None:
         """Update the destination shown after an action is highlighted."""
 
@@ -741,11 +849,16 @@ class LauncherPopup(QWidget):
     def _apply_return_decision(self, decision: ReturnDecision) -> None:
         self.application_policy_override = decision.overridden
         self.action_result_policy_lock = decision.action_policy_locked
-        self.source_context.setText(
-            f"Result: {decision.summary}{self._source_profile_note}"
-        )
+        self.source_context.setText(f"Result: {decision.summary}")
         self.source_context.setAccessibleDescription(
-            decision.fallback_reason or decision.summary
+            "\n".join(
+                part
+                for part in (
+                    decision.fallback_reason or decision.summary,
+                    self._application_defaults_description,
+                )
+                if part
+            )
         )
         self.source_context.show()
         self.replace_selected_text.blockSignals(True)
@@ -946,25 +1059,32 @@ class LauncherPopup(QWidget):
 
         self.options_panel.setVisible(expanded)
         if expanded:
-            self.options_toggle.setText("Hide request options")
+            self.options_toggle.setText(
+                "⌄  Hide defaults and request details  ⌄"
+            )
             self.options_toggle.setAccessibleName(
-                "Hide request options and custom instruction"
+                "Hide defaults and request-detail controls"
             )
             self.options_toggle.setToolTip(
-                "Hide the secondary request controls to give the writing "
-                "action list more space."
+                "Collapse these controls and return more space to the writing "
+                "action list."
             )
         else:
             self.options_toggle.setText(
-                "Request options and custom instruction"
+                "⌃  Review defaults or add request details  ⌃"
             )
             self.options_toggle.setAccessibleName(
-                "Show request options and custom instruction"
+                "Show defaults and controls for adding context or a one-off "
+                "instruction"
             )
             self.options_toggle.setToolTip(
-                "Show remembered choices, output and guidance controls, "
-                "additional context, and the one-off instruction field."
+                "Reveal the active defaults and controls for submission, result "
+                "handling, writing guidance, additional context, and a one-off "
+                "instruction. This opens options; it does not submit the request."
             )
+        self.options_toggle.setAccessibleDescription(
+            self.options_toggle.toolTip()
+        )
         self.updateGeometry()
 
     def _auto_submit_toggled(self, enabled: bool) -> None:
@@ -1498,6 +1618,14 @@ class LauncherPopup(QWidget):
             self.setStyleSheet(
                 high_contrast_stylesheet()
                 + message_box_stylesheet(self.theme)
+                + """
+                QPushButton#launcherDisclosureButton {
+                    background: palette(window);
+                    color: palette(text);
+                    border: 1px solid palette(text);
+                    font-weight: 600;
+                }
+                """
             )
             return
         if resolve_theme(self.theme) == "light":
@@ -1517,16 +1645,18 @@ class LauncherPopup(QWidget):
                 }
                 QLabel { color: #202631; }
                 QLabel#title { font-size: 18px; font-weight: 650; }
-                QLabel#tagline {
-                    color: #365fc7;
-                    font-size: 11px;
-                    font-style: italic;
-                }
                 QLabel#hint { color: #697381; font-size: 11px; }
                 QLabel#breadcrumb {
                     color: #365fc7;
                     font-size: 11px;
                     padding: 0 2px 2px 2px;
+                }
+                QLabel#applicationDefaults {
+                    color: #3f4b5d;
+                    background: #f1f4f8;
+                    border-left: 3px solid #7694df;
+                    padding: 6px 8px;
+                    font-size: 11px;
                 }
                 QLineEdit, QPlainTextEdit {
                     color: #202631;
@@ -1576,6 +1706,19 @@ class LauncherPopup(QWidget):
                     font-weight: 600;
                 }
                 QPushButton:hover { background: #244fae; }
+                QPushButton#launcherDisclosureButton {
+                    color: #294f9f;
+                    background: #f4f7fc;
+                    border: 1px solid #b9c7e5;
+                    padding: 8px 12px;
+                    font-weight: 600;
+                }
+                QPushButton#launcherDisclosureButton:hover,
+                QPushButton#launcherDisclosureButton:checked {
+                    color: #173a83;
+                    background: #e7eefc;
+                    border-color: #7896d6;
+                }
                 QPushButton#launcherLinkButton {
                     background: transparent;
                     border: none;
@@ -1653,16 +1796,18 @@ class LauncherPopup(QWidget):
             }
             QLabel { color: #e9ebef; }
             QLabel#title { font-size: 18px; font-weight: 650; }
-            QLabel#tagline {
-                color: #9fb2ef;
-                font-size: 11px;
-                font-style: italic;
-            }
             QLabel#hint { color: #9298a5; font-size: 11px; }
             QLabel#breadcrumb {
                 color: #9fb2ef;
                 font-size: 11px;
                 padding: 0 2px 2px 2px;
+            }
+            QLabel#applicationDefaults {
+                color: #d2d7e0;
+                background: #252a33;
+                border-left: 3px solid #6d8df2;
+                padding: 6px 8px;
+                font-size: 11px;
             }
             QLineEdit, QPlainTextEdit {
                 color: #f4f5f7;
@@ -1712,6 +1857,19 @@ class LauncherPopup(QWidget):
                 font-weight: 600;
             }
             QPushButton:hover { background: #3d6ede; }
+            QPushButton#launcherDisclosureButton {
+                color: #b9c9f5;
+                background: #252a33;
+                border: 1px solid #4a587a;
+                padding: 8px 12px;
+                font-weight: 600;
+            }
+            QPushButton#launcherDisclosureButton:hover,
+            QPushButton#launcherDisclosureButton:checked {
+                color: #ffffff;
+                background: #30394a;
+                border-color: #6d8df2;
+            }
             QPushButton#launcherLinkButton {
                 background: transparent;
                 border: none;

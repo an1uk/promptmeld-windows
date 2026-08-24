@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 
 import pytest
 import win32gui
 
+from promptmeld import chatgpt as chatgpt_module
 from promptmeld.chatgpt import (
+    ChatGPTAutomationCancelled,
     ChatGPTAutomationError,
     ChatGPTDesktop,
     _click_control_on_virtual_desktop,
+)
+from promptmeld.models import ResponseAnchor
+from promptmeld.automation_protocol import (
+    AutomationCheckpoint,
+    RecoveryAction,
+    SubmissionDisposition,
 )
 
 
@@ -73,10 +82,11 @@ class FakeComposer(FakeControl):
 
 
 class FakeWindow(FakeControl):
-    def __init__(self, controls, events, process_id=None):
+    def __init__(self, controls, events, process_id=None, handle=None):
         super().__init__("ChatGPT", "Window", events)
         self.controls = controls
         self._process_id = process_id
+        self.handle = handle
 
     def descendants(self):
         return self.controls
@@ -116,6 +126,34 @@ def test_get_or_launch_window_opens_current_chatgpt_app():
 
     assert adapter._get_or_launch_window() is window
     assert launched == ["codex:"]
+
+
+def test_cold_launch_uses_dedicated_readiness_timeout(monkeypatch):
+    clock = {"now": 0.0}
+    launched = []
+    adapter = ChatGPTDesktop(
+        timeout_seconds=0.2,
+        launch_timeout_seconds=45.0,
+        desktop_factory=lambda **kwargs: FakeDesktop(None),
+        startfile=launched.append,
+    )
+    monkeypatch.setattr(adapter, "_find_window", lambda: None)
+    monkeypatch.setattr(
+        chatgpt_module.time,
+        "monotonic",
+        lambda: clock["now"],
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_sleep",
+        lambda seconds: clock.update(now=clock["now"] + seconds),
+    )
+
+    with pytest.raises(ChatGPTAutomationError, match="did not become ready"):
+        adapter._get_or_launch_window()
+
+    assert launched == ["codex:"]
+    assert clock["now"] >= 45.0
 
 
 def test_find_window_ignores_chatgpt_classic():
@@ -179,6 +217,90 @@ def test_submission_confirmation_rejects_unchanged_composer():
     assert adapter._confirm_submission(window, composer, "complete prompt", ()) is False
 
 
+def test_unconfirmed_send_never_copies_or_retries_prompt(monkeypatch):
+    events: list[str] = []
+    clipboard_writes: list[str] = []
+    controls = [
+        FakeControl("Switch mode, current mode: ChatGPT", "Button", events),
+        FakeControl("New chat", "Button", events, class_name="sidebar-item"),
+        FakeControl(
+            "Chat",
+            "Button",
+            events,
+            class_name="text-token-text-primary",
+        ),
+        FakeControl("WritingLauncher", "Button", events),
+        FakeControl("Change project: WritingLauncher", "Button", events),
+        FakeComposer(events),
+    ]
+    window = FakeWindow(controls, events)
+    adapter = ChatGPTDesktop(
+        desktop_factory=lambda **kwargs: FakeDesktop(window),
+        clipboard_reader=lambda: "user clipboard",
+        clipboard_writer=clipboard_writes.append,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+    )
+    monkeypatch.setattr(adapter, "_confirm_submission", lambda *args: False)
+
+    result = adapter.submit("private prompt", "WritingLauncher")
+
+    assert result.submitted is False
+    assert result.fallback_copied is False
+    assert result.checkpoint == AutomationCheckpoint.SEND_STARTED
+    assert result.submission_disposition == SubmissionDisposition.MAYBE_SUBMITTED
+    assert result.retry_mode == "inspect"
+    assert RecoveryAction.RETRY_DELIVERY not in result.recovery_actions
+    assert clipboard_writes == []
+
+
+def test_cancellation_during_response_wait_remains_confirmed_and_never_resends(
+    monkeypatch,
+):
+    events: list[str] = []
+    clipboard_writes: list[str] = []
+    controls = [
+        FakeControl("Switch mode, current mode: ChatGPT", "Button", events),
+        FakeControl("New chat", "Button", events, class_name="sidebar-item"),
+        FakeControl(
+            "Chat",
+            "Button",
+            events,
+            class_name="text-token-text-primary",
+        ),
+        FakeControl("WritingLauncher", "Button", events),
+        FakeControl("Change project: WritingLauncher", "Button", events),
+        FakeComposer(events),
+    ]
+    window = FakeWindow(controls, events)
+    adapter = ChatGPTDesktop(
+        desktop_factory=lambda **kwargs: FakeDesktop(window),
+        clipboard_reader=lambda: "user clipboard",
+        clipboard_writer=clipboard_writes.append,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+    )
+    monkeypatch.setattr(adapter, "_confirm_submission", lambda *args: True)
+    monkeypatch.setattr(
+        adapter,
+        "_copy_latest_response",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ChatGPTAutomationCancelled("cancelled")
+        ),
+    )
+
+    result = adapter.submit(
+        "private prompt",
+        "WritingLauncher",
+        capture_generated_text=True,
+    )
+
+    assert result.cancelled is True
+    assert result.submitted is True
+    assert result.submission_disposition == SubmissionDisposition.CONFIRMED
+    assert result.retry_mode == "response"
+    assert RecoveryAction.RETRY_DELIVERY not in result.recovery_actions
+    assert "private prompt" not in clipboard_writes
+
+
 def test_response_wait_never_copies_a_preexisting_response():
     events: list[str] = []
     copied: list[str] = []
@@ -204,6 +326,440 @@ def test_response_wait_never_copies_a_preexisting_response():
             "new prompt",
             baseline=baseline,
         )
+
+    assert "click:Copy" not in events
+
+
+def test_response_wait_never_copies_baseline_after_generation_stops(
+    monkeypatch,
+):
+    events: list[str] = []
+    clipboard = {"text": "unchanged"}
+    copy_button = FakeControl(
+        "Copy",
+        "Button",
+        events,
+        on_click=lambda: clipboard.update(text="old response"),
+    )
+    stop = FakeControl("Stop generating", "Button", events)
+
+    class CompletedWithoutNewResponse(FakeWindow):
+        def __init__(self):
+            super().__init__([copy_button], events)
+            self.reads = 0
+
+        def descendants(self):
+            self.reads += 1
+            return [stop, copy_button] if self.reads == 1 else [copy_button]
+
+    window = CompletedWithoutNewResponse()
+    adapter = ChatGPTDesktop(
+        timeout_seconds=0.01,
+        response_timeout_seconds=0.01,
+        desktop_factory=lambda **kwargs: FakeDesktop(window),
+        clipboard_reader=lambda: clipboard["text"],
+        clipboard_writer=lambda text: clipboard.update(text=text),
+    )
+
+    with pytest.raises(ChatGPTAutomationError, match="completed response"):
+        adapter._copy_latest_response(
+            window,
+            "new prompt",
+            baseline=("0:old",),
+        )
+
+    assert "click:Copy" not in events
+
+
+def test_clipboard_restore_preserves_a_newer_user_copy():
+    state = {"text": "original", "sequence": 1}
+
+    def write(value: str) -> None:
+        state["text"] = value
+        state["sequence"] += 1
+
+    adapter = ChatGPTDesktop(
+        clipboard_reader=lambda: state["text"],
+        clipboard_writer=write,
+        clipboard_sequence_reader=lambda: state["sequence"],
+    )
+    adapter._write_clipboard("temporary")
+    state.update(text="user copy", sequence=state["sequence"] + 1)
+
+    assert adapter._restore_clipboard_if_unchanged(
+        "original",
+        expected="temporary",
+    ) is False
+    assert state["text"] == "user copy"
+
+
+def test_full_clipboard_snapshot_restores_rich_formats_when_still_owned():
+    state = {
+        "text": "user text",
+        "formats": {"html": b"<b>user text</b>", "image": b"pixels"},
+        "sequence": 10,
+    }
+
+    class Snapshot:
+        def __init__(self):
+            self.text = state["text"]
+            self.formats = dict(state["formats"])
+            self.owned_sequence = None
+            self.closed = False
+
+        def mark_owned(self, sequence):
+            self.owned_sequence = sequence
+
+        def restore_if_owned(self):
+            if state["sequence"] != self.owned_sequence:
+                self.closed = True
+                return False
+            state["text"] = self.text
+            state["formats"] = dict(self.formats)
+            state["sequence"] += 1
+            self.closed = True
+            return True
+
+        def close(self):
+            self.closed = True
+
+    snapshots = []
+
+    def capture_snapshot():
+        value = Snapshot()
+        snapshots.append(value)
+        return value
+
+    def write(value):
+        state["text"] = value
+        state["formats"] = {"unicode": value.encode()}
+        state["sequence"] += 1
+
+    adapter = ChatGPTDesktop(
+        clipboard_reader=lambda: state["text"],
+        clipboard_writer=write,
+        clipboard_sequence_reader=lambda: state["sequence"],
+        clipboard_snapshot_factory=capture_snapshot,
+    )
+    adapter.enforce_clipboard_sequence = True
+    before, snapshot = adapter._capture_clipboard_state()
+    adapter._write_clipboard("temporary prompt")
+
+    assert adapter._restore_clipboard_if_unchanged(
+        before,
+        snapshot=snapshot,
+        expected="temporary prompt",
+    ) is True
+    assert state["text"] == "user text"
+    assert state["formats"] == {
+        "html": b"<b>user text</b>",
+        "image": b"pixels",
+    }
+    assert snapshots[0].closed is True
+
+
+def test_clipboard_restore_retries_transient_empty_read_while_owned():
+    state = {
+        "text": "response",
+        "sequence": 10,
+        "reads": 0,
+        "restored": False,
+    }
+
+    class Snapshot:
+        def __init__(self):
+            self.owned_sequence = None
+
+        def mark_owned(self, sequence):
+            self.owned_sequence = sequence
+
+        def restore_if_owned(self):
+            assert self.owned_sequence == state["sequence"]
+            state["restored"] = True
+            return True
+
+        def close(self):
+            raise AssertionError("An owned snapshot must not be discarded")
+
+    def read_clipboard():
+        state["reads"] += 1
+        return None if state["reads"] == 1 else state["text"]
+
+    adapter = ChatGPTDesktop(
+        clipboard_reader=read_clipboard,
+        clipboard_writer=lambda value: state.update(
+            text=value,
+            sequence=state["sequence"] + 1,
+        ),
+        clipboard_sequence_reader=lambda: state["sequence"],
+    )
+    adapter.enforce_clipboard_sequence = True
+    adapter.clipboard_owned_sequence = state["sequence"]
+
+    assert adapter._restore_clipboard_if_unchanged(
+        "marker",
+        snapshot=Snapshot(),
+        expected="response",
+    ) is True
+    assert state["reads"] == 2
+    assert state["restored"] is True
+
+
+def test_clipboard_restore_aborts_if_sequence_changes_during_busy_read():
+    state = {"sequence": 10, "closed": False}
+
+    class Snapshot:
+        def close(self):
+            state["closed"] = True
+
+    def read_clipboard():
+        state["sequence"] += 1
+        return None
+
+    adapter = ChatGPTDesktop(
+        clipboard_reader=read_clipboard,
+        clipboard_sequence_reader=lambda: state["sequence"],
+    )
+    adapter.enforce_clipboard_sequence = True
+    adapter.clipboard_owned_sequence = state["sequence"]
+
+    assert adapter._restore_clipboard_if_unchanged(
+        "marker",
+        snapshot=Snapshot(),
+        expected="response",
+    ) is False
+    assert state["closed"] is True
+
+
+def test_response_copy_attempts_each_new_control_only_once(monkeypatch):
+    events: list[str] = []
+    writes: list[str] = []
+    copy_button = FakeControl("Copy", "Button", events)
+    window = FakeWindow([copy_button], events)
+    monkeypatch.setattr("promptmeld.chatgpt.time.sleep", lambda _delay: None)
+    adapter = ChatGPTDesktop(
+        timeout_seconds=0.01,
+        response_timeout_seconds=0.01,
+        clipboard_reader=lambda: writes[-1] if writes else "unchanged",
+        clipboard_writer=writes.append,
+    )
+
+    with pytest.raises(ChatGPTAutomationError, match="completed response"):
+        adapter._copy_latest_response(window, "new prompt")
+
+    assert events.count("click:Copy") == 1
+    assert len(writes) == 1
+    assert writes[0].startswith("__PROMPTMELD_OUTPUT_NOT_READY_")
+
+
+def test_response_copy_rejects_clipboard_contention_between_probes(
+    monkeypatch,
+):
+    events: list[str] = []
+    clipboard = {"text": "unchanged", "copy_count": 0}
+
+    def replace_clipboard() -> None:
+        clipboard["copy_count"] += 1
+        clipboard["text"] = (
+            "owned response"
+            if clipboard["copy_count"] == 1
+            else "newer user copy"
+        )
+
+    copy_button = FakeControl(
+        "Copy",
+        "Button",
+        events,
+        automation_id="response-copy-1",
+        on_click=replace_clipboard,
+    )
+    window = FakeWindow([copy_button], events)
+    monkeypatch.setattr("promptmeld.chatgpt.time.sleep", lambda _delay: None)
+    adapter = ChatGPTDesktop(
+        timeout_seconds=0.01,
+        response_timeout_seconds=0.01,
+        clipboard_reader=lambda: str(clipboard["text"]),
+        clipboard_writer=lambda text: clipboard.update(text=text),
+    )
+
+    with pytest.raises(ChatGPTAutomationError, match="completed response"):
+        adapter._copy_latest_response(window, "new prompt")
+
+    assert events == ["click:Copy", "click:Copy"]
+    assert clipboard["text"] == "newer user copy"
+
+
+def test_response_copy_is_anchored_to_submitted_message_and_container(
+    monkeypatch,
+):
+    events: list[str] = []
+    clipboard = {"text": "unchanged"}
+    prompt = "request owned by this conversation"
+    window = FakeWindow([], events)
+    window.handle = 900
+    conversation = FakeControl(
+        "Conversation",
+        "Pane",
+        events,
+        automation_id="conversation-1",
+    )
+    conversation.parent = lambda: window
+    submitted = FakeControl(
+        prompt,
+        "Text",
+        events,
+        automation_id="user-message-1",
+    )
+    submitted.parent = lambda: conversation
+    response_copy = FakeControl(
+        "Copy",
+        "Button",
+        events,
+        automation_id="response-copy-1",
+        on_click=lambda: clipboard.update(text="owned response"),
+    )
+    response_copy.parent = lambda: conversation
+    window.controls = [submitted, response_copy]
+    monkeypatch.setattr("promptmeld.chatgpt.time.sleep", lambda _delay: None)
+    adapter = ChatGPTDesktop(
+        timeout_seconds=0.01,
+        response_timeout_seconds=0.5,
+        desktop_factory=lambda **kwargs: FakeDesktop(window),
+        clipboard_reader=lambda: clipboard["text"],
+        clipboard_writer=lambda text: clipboard.update(text=text),
+    )
+    anchor = adapter._anchor_submitted_message(
+        window,
+        ResponseAnchor(
+            destination_token=adapter._destination_token(window),
+            prompt_digest=adapter._text_digest(prompt),
+        ),
+    )
+    assert anchor is not None
+    assert anchor.submitted_message_token
+    assert anchor.conversation_container_token
+
+    assert adapter._copy_latest_response(window, prompt, anchor=anchor) == (
+        "owned response"
+    )
+    assert events.count("click:Copy") == 2
+
+
+def test_unrelated_chat_copy_is_rejected_even_if_globally_new(monkeypatch):
+    events: list[str] = []
+    clipboard = {"text": "unchanged"}
+    prompt = "request owned by prior chat"
+    window = FakeWindow([], events)
+    window.handle = 900
+    unrelated_copy = FakeControl(
+        "Copy",
+        "Button",
+        events,
+        automation_id="globally-new-copy",
+        on_click=lambda: clipboard.update(text="unrelated response"),
+    )
+    window.controls = [unrelated_copy]
+    monkeypatch.setattr("promptmeld.chatgpt.time.sleep", lambda _delay: None)
+    adapter = ChatGPTDesktop(
+        timeout_seconds=0.01,
+        response_timeout_seconds=0.5,
+        desktop_factory=lambda **kwargs: FakeDesktop(window),
+        clipboard_reader=lambda: clipboard["text"],
+        clipboard_writer=lambda text: clipboard.update(text=text),
+    )
+    anchor = ResponseAnchor(
+        destination_token=adapter._destination_token(window),
+        prompt_digest=adapter._text_digest(prompt),
+        submitted_message_token="user-message-from-prior-chat|Text||",
+    )
+
+    with pytest.raises(ChatGPTAutomationError, match="no longer present"):
+        adapter._copy_latest_response(window, prompt, anchor=anchor)
+
+    assert "click:Copy" not in events
+
+
+def test_response_copy_uses_stable_identity_not_global_copy_order(monkeypatch):
+    events: list[str] = []
+    clipboard = {"text": "unchanged"}
+    prompt = "current prompt"
+    window = FakeWindow([], events)
+    submitted = FakeControl(
+        prompt,
+        "Text",
+        events,
+        automation_id="user-message-1",
+    )
+    new_copy = FakeControl(
+        "Copy",
+        "Button",
+        events,
+        automation_id="new-copy",
+        on_click=lambda: clipboard.update(text="current response"),
+    )
+    old_copy = FakeControl(
+        "Copy",
+        "Button",
+        events,
+        automation_id="old-copy",
+        on_click=lambda: clipboard.update(text="old response"),
+    )
+    # The new control appears before the old one in the global Copy ordering.
+    window.controls = [submitted, new_copy, old_copy]
+    monkeypatch.setattr("promptmeld.chatgpt.time.sleep", lambda _delay: None)
+    adapter = ChatGPTDesktop(
+        timeout_seconds=0.01,
+        response_timeout_seconds=0.05,
+        desktop_factory=lambda **kwargs: FakeDesktop(window),
+        clipboard_reader=lambda: clipboard["text"],
+        clipboard_writer=lambda text: clipboard.update(text=text),
+    )
+    old_token = adapter._response_control_token(old_copy, 1)
+    anchor = ResponseAnchor(
+        destination_token=adapter._destination_token(window),
+        baseline_tokens=(old_token,),
+        prompt_digest=adapter._text_digest(prompt),
+        submitted_message_token=adapter._stable_control_token(submitted, 0),
+    )
+
+    assert adapter._copy_latest_response(window, prompt, anchor=anchor) == (
+        "current response"
+    )
+    assert events == ["click:Copy", "click:Copy"]
+
+
+def test_stale_submitted_message_wrapper_cannot_own_response(monkeypatch):
+    events: list[str] = []
+    prompt = "current prompt"
+    window = FakeWindow([], events)
+    window.handle = 900
+    stale_message = FakeControl(
+        prompt,
+        "Text",
+        events,
+        automation_id="replacement-wrapper",
+    )
+    response_copy = FakeControl(
+        "Copy",
+        "Button",
+        events,
+        automation_id="new-copy",
+    )
+    window.controls = [stale_message, response_copy]
+    monkeypatch.setattr("promptmeld.chatgpt.time.sleep", lambda _delay: None)
+    adapter = ChatGPTDesktop(
+        timeout_seconds=0.01,
+        response_timeout_seconds=0.5,
+        desktop_factory=lambda **kwargs: FakeDesktop(window),
+    )
+    anchor = ResponseAnchor(
+        destination_token=adapter._destination_token(window),
+        prompt_digest=adapter._text_digest(prompt),
+        submitted_message_token="original-wrapper|Text||",
+    )
+
+    with pytest.raises(ChatGPTAutomationError, match="no longer present"):
+        adapter._copy_latest_response(window, prompt, anchor=anchor)
 
     assert "click:Copy" not in events
 
@@ -257,12 +813,13 @@ def test_submit_navigates_project_and_restores_clipboard():
         "focus:Message ChatGPT",
         "keys:{ENTER}",
     ]
-    assert clipboard == ["selected source"]
+    assert clipboard == []
 
 
 def test_submit_copies_generated_response_to_clipboard():
     events: list[str] = []
     progress: list[tuple[str, str]] = []
+    boundary_events: list[tuple[str, str]] = []
     clipboard = {"text": "selected source"}
     copy_button = FakeControl("Copy", "Button", events)
     copy_button.on_click = lambda: clipboard.update(text="Generated answer")
@@ -283,6 +840,9 @@ def test_submit_copies_generated_response_to_clipboard():
         send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
         progress_callback=lambda stage, message: progress.append(
             (stage, message)
+        ) or boundary_events.append(("progress", stage)),
+        response_callback=lambda text, anchor: boundary_events.append(
+            ("response", text)
         ),
     )
 
@@ -301,6 +861,9 @@ def test_submit_copies_generated_response_to_clipboard():
         stage == "waiting-for-response"
         and "continue working in another window" in message
         for stage, message in progress
+    )
+    assert boundary_events.index(("response", "Generated answer")) < (
+        boundary_events.index(("progress", "response-captured"))
     )
 
 
@@ -359,6 +922,381 @@ def test_response_copy_uses_background_safe_control_activation():
     result = adapter._copy_latest_response(window, "Complete prompt")
 
     assert result == "Generated answer"
+    assert events == ["click:Copy", "click:Copy"]
+
+
+def test_response_copy_waits_for_delayed_chromium_clipboard_write():
+    events: list[str] = []
+    state = {
+        "text": "unchanged",
+        "sequence": 10,
+        "pending": False,
+        "sequence_reads": 0,
+    }
+    copy_button = FakeControl(
+        "Copy",
+        "Button",
+        events,
+        on_click=lambda: state.update(pending=True, sequence_reads=0),
+    )
+
+    def write_clipboard(value: str) -> None:
+        state["text"] = value
+        state["sequence"] += 1
+
+    def read_sequence() -> int:
+        if state["pending"]:
+            state["sequence_reads"] += 1
+            if state["sequence_reads"] >= 3:
+                state["pending"] = False
+                state["text"] = "Generated answer"
+                state["sequence"] += 1
+        return state["sequence"]
+
+    adapter = ChatGPTDesktop(
+        clipboard_reader=lambda: state["text"],
+        clipboard_writer=write_clipboard,
+        clipboard_sequence_reader=read_sequence,
+    )
+    adapter.enforce_clipboard_sequence = True
+
+    assert adapter._read_verified_copy_control(
+        copy_button,
+        "sentinel",
+        "original prompt",
+    ) == "Generated answer"
+    assert state["sequence_reads"] >= 3
+
+
+def test_response_copy_retries_with_verified_foreground_keyboard(
+    monkeypatch,
+):
+    events: list[str] = []
+    clock = {"now": 0.0}
+    state = {
+        "text": "unchanged",
+        "sequence": 10,
+        "foreground": 321,
+    }
+    restored: list[int] = []
+    copy_button = FakeControl("Copy", "Button", events)
+
+    class ForegroundWindow(FakeWindow):
+        def set_focus(self):
+            super().set_focus()
+            state["foreground"] = self.handle
+
+    window = ForegroundWindow([copy_button], events, handle=900)
+
+    def write_clipboard(value: str) -> None:
+        state["text"] = value
+        state["sequence"] += 1
+
+    def send_keys(keys: str, **_kwargs) -> None:
+        events.append(f"keys:{keys}")
+        assert state["foreground"] == 900
+        state["text"] = "Generated answer"
+        state["sequence"] += 1
+
+    def restore_foreground(handle: int) -> bool:
+        restored.append(handle)
+        state["foreground"] = handle
+        return True
+
+    adapter = ChatGPTDesktop(
+        clipboard_reader=lambda: state["text"],
+        clipboard_writer=write_clipboard,
+        clipboard_sequence_reader=lambda: state["sequence"],
+        foreground_window_reader=lambda: state["foreground"],
+        send_keys=send_keys,
+    )
+    adapter.enforce_clipboard_sequence = True
+    adapter.chatgpt_hwnd = 900
+    monkeypatch.setattr(
+        chatgpt_module.time,
+        "monotonic",
+        lambda: clock["now"],
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_sleep",
+        lambda seconds: clock.update(now=clock["now"] + seconds),
+    )
+    monkeypatch.setattr(
+        chatgpt_module,
+        "_restore_foreground_window",
+        restore_foreground,
+    )
+
+    assert adapter._read_verified_copy_control(
+        copy_button,
+        "sentinel",
+        "original prompt",
+        window=window,
+    ) == "Generated answer"
+    assert events == [
+        "click:Copy",
+        "focus:ChatGPT",
+        "focus:Copy",
+        "keys:{ENTER}",
+    ]
+    assert restored == [321]
+    assert state["foreground"] == 321
+
+
+def test_response_copy_uses_owned_pointer_fallback_after_keyboard(
+    monkeypatch,
+):
+    events: list[str] = []
+    clock = {"now": 0.0}
+    state = {
+        "text": "unchanged",
+        "sequence": 10,
+        "foreground": 321,
+    }
+    restored: list[int] = []
+    copy_button = FakeControl("Copy", "Button", events)
+
+    class ForegroundWindow(FakeWindow):
+        def set_focus(self):
+            super().set_focus()
+            state["foreground"] = self.handle
+
+    window = ForegroundWindow([copy_button], events, handle=900)
+
+    def write_clipboard(value: str) -> None:
+        state["text"] = value
+        state["sequence"] += 1
+
+    def send_keys(keys: str, **_kwargs) -> None:
+        events.append(f"keys:{keys}")
+
+    def click_pointer(control) -> None:
+        events.append(f"pointer:{control.element_info.name}")
+        state["text"] = "Generated answer"
+        state["sequence"] += 1
+
+    adapter = ChatGPTDesktop(
+        clipboard_reader=lambda: state["text"],
+        clipboard_writer=write_clipboard,
+        clipboard_sequence_reader=lambda: state["sequence"],
+        foreground_window_reader=lambda: state["foreground"],
+        send_keys=send_keys,
+        mouse_clicker=click_pointer,
+    )
+    adapter.enforce_clipboard_sequence = True
+    adapter.chatgpt_hwnd = 900
+    adapter.response_anchor = ResponseAnchor(
+        response_control_token=adapter._response_control_token(copy_button, 0)
+    )
+    monkeypatch.setattr(
+        chatgpt_module.time,
+        "monotonic",
+        lambda: clock["now"],
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_sleep",
+        lambda seconds: clock.update(now=clock["now"] + seconds),
+    )
+    monkeypatch.setattr(
+        chatgpt_module,
+        "_restore_foreground_window",
+        lambda handle: restored.append(handle) or state.update(
+            foreground=handle
+        ) or True,
+    )
+
+    assert adapter._read_verified_copy_control(
+        copy_button,
+        "sentinel",
+        "original prompt",
+        window=window,
+    ) == "Generated answer"
+    assert events == [
+        "click:Copy",
+        "focus:ChatGPT",
+        "focus:Copy",
+        "keys:{ENTER}",
+        "focus:ChatGPT",
+        "pointer:Copy",
+    ]
+    assert restored == [321]
+    assert state["foreground"] == 321
+
+
+def test_response_copy_retries_clipboard_read_after_sequence_change(
+    monkeypatch,
+):
+    events: list[str] = []
+    clock = {"now": 0.0}
+    state = {"text": "unchanged", "sequence": 10, "reads": 0}
+
+    def copied() -> None:
+        state["sequence"] += 1
+
+    def read_clipboard():
+        state["reads"] += 1
+        return "Generated answer" if state["reads"] >= 3 else None
+
+    copy_button = FakeControl(
+        "Copy",
+        "Button",
+        events,
+        on_click=copied,
+    )
+    adapter = ChatGPTDesktop(
+        clipboard_reader=read_clipboard,
+        clipboard_writer=lambda value: state.update(
+            text=value,
+            sequence=state["sequence"] + 1,
+        ),
+        clipboard_sequence_reader=lambda: state["sequence"],
+    )
+    adapter.enforce_clipboard_sequence = True
+    monkeypatch.setattr(
+        chatgpt_module.time,
+        "monotonic",
+        lambda: clock["now"],
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_sleep",
+        lambda seconds: clock.update(now=clock["now"] + seconds),
+    )
+
+    assert adapter._read_verified_copy_control(
+        copy_button,
+        "sentinel",
+        "original prompt",
+    ) == "Generated answer"
+    assert state["reads"] >= 3
+
+
+def test_response_copy_waits_for_clipboard_sequence_to_stabilise(
+    monkeypatch,
+):
+    events: list[str] = []
+    clock = {"now": 0.0}
+    state = {
+        "text": "unchanged",
+        "sequence": 10,
+        "sequence_reads": 0,
+    }
+
+    def copied() -> None:
+        state["text"] = "Generated answer"
+        state["sequence"] += 1
+        state["sequence_reads"] = 0
+
+    def read_sequence() -> int:
+        state["sequence_reads"] += 1
+        if state["sequence_reads"] == 4:
+            state["sequence"] += 1
+        return state["sequence"]
+
+    copy_button = FakeControl(
+        "Copy",
+        "Button",
+        events,
+        on_click=copied,
+    )
+    adapter = ChatGPTDesktop(
+        clipboard_reader=lambda: state["text"],
+        clipboard_writer=lambda value: state.update(
+            text=value,
+            sequence=state["sequence"] + 1,
+        ),
+        clipboard_sequence_reader=read_sequence,
+    )
+    adapter.enforce_clipboard_sequence = True
+    monkeypatch.setattr(
+        chatgpt_module.time,
+        "monotonic",
+        lambda: clock["now"],
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_sleep",
+        lambda seconds: clock.update(now=clock["now"] + seconds),
+    )
+
+    assert adapter._read_verified_copy_control(
+        copy_button,
+        "sentinel",
+        "original prompt",
+    ) == "Generated answer"
+    assert clock["now"] >= 0.35
+    assert adapter._restore_clipboard_if_unchanged(
+        "canary marker",
+        expected="Generated answer",
+    ) is True
+    assert state["text"] == "canary marker"
+
+
+def test_response_copy_does_not_send_keys_to_changed_native_window(
+    monkeypatch,
+):
+    events: list[str] = []
+    clock = {"now": 0.0}
+    state = {"text": "unchanged", "sequence": 10}
+    copy_button = FakeControl("Copy", "Button", events)
+    window = FakeWindow([copy_button], events, handle=901)
+    adapter = ChatGPTDesktop(
+        clipboard_reader=lambda: state["text"],
+        clipboard_writer=lambda value: state.update(
+            text=value,
+            sequence=state["sequence"] + 1,
+        ),
+        clipboard_sequence_reader=lambda: state["sequence"],
+        foreground_window_reader=lambda: 777,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+    )
+    adapter.enforce_clipboard_sequence = True
+    adapter.chatgpt_hwnd = 900
+    monkeypatch.setattr(
+        chatgpt_module.time,
+        "monotonic",
+        lambda: clock["now"],
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_sleep",
+        lambda seconds: clock.update(now=clock["now"] + seconds),
+    )
+
+    assert adapter._read_verified_copy_control(
+        copy_button,
+        "sentinel",
+        "original prompt",
+        window=window,
+    ) is None
+    assert events == ["click:Copy"]
+
+
+def test_native_owned_response_copy_failure_returns_immediately():
+    events: list[str] = []
+    writes: list[str] = []
+    copy_button = FakeControl("Copy", "Button", events)
+    window = FakeWindow([copy_button], events, handle=900)
+    adapter = ChatGPTDesktop(
+        response_timeout_seconds=120,
+        clipboard_reader=lambda: writes[-1] if writes else "unchanged",
+        clipboard_writer=writes.append,
+    )
+    anchor = ResponseAnchor(
+        response_control_token=adapter._response_control_token(copy_button, 0)
+    )
+
+    with pytest.raises(ChatGPTAutomationError) as raised:
+        adapter._copy_latest_response(
+            window,
+            "original prompt",
+            anchor=anchor,
+        )
+
+    assert raised.value.code == "response_copy_failed"
+    assert raised.value.retry_mode == "response"
     assert events == ["click:Copy"]
 
 
@@ -397,8 +1335,293 @@ def test_response_copy_waits_until_generation_has_finished(monkeypatch):
 
     assert result == "Complete generated answer"
     assert clipboard["text"] == "Complete generated answer"
-    assert events == ["click:Copy"]
+    assert events == ["click:Copy", "click:Copy"]
     assert window.reads >= 4
+
+
+def test_plain_stop_button_is_treated_as_active_generation():
+    events: list[str] = []
+
+    assert ChatGPTDesktop._response_is_generating(
+        [FakeControl("Stop", "Button", events)]
+    ) is True
+
+
+def test_response_anchor_uses_submitted_user_copy_control():
+    events: list[str] = []
+    prompt = "Reply with exactly this phrase"
+    window = FakeWindow([], events)
+    window.handle = 900
+    submitted = FakeControl(
+        prompt,
+        "Text",
+        events,
+        automation_id="submitted-text",
+    )
+    user_copy = FakeControl(
+        "Copy message",
+        "Button",
+        events,
+        automation_id="submitted-user-copy",
+    )
+    response_copy = FakeControl(
+        "Copy",
+        "Button",
+        events,
+        automation_id="owned-response-copy",
+    )
+    window.controls = [submitted, user_copy, response_copy]
+    adapter = ChatGPTDesktop()
+
+    anchor = adapter._anchor_submitted_message(
+        window,
+        ResponseAnchor(prompt_digest=adapter._text_digest(prompt)),
+    )
+
+    assert anchor is not None
+    assert anchor.submitted_message_token == adapter._stable_control_token(
+        user_copy,
+        1,
+    )
+    assert "chatgpt.user-message-copy.v1" in adapter.selector_ids
+
+
+def test_response_anchor_uses_new_user_copy_when_prompt_text_is_split():
+    events: list[str] = []
+    prompt = "Reply with exactly this phrase: PROMPTMELD_CANARY_123456789ABC"
+    window = FakeWindow([], events)
+    window.handle = 900
+    old_user_copy = FakeControl(
+        "Copy message",
+        "Button",
+        events,
+        automation_id="old-user-copy",
+    )
+    window.controls = [old_user_copy]
+    adapter = ChatGPTDesktop()
+    anchor = adapter._build_response_anchor(window, prompt)
+    split_prompt = FakeControl(
+        "Reply with exactly this phrase: PROMPTMELD",
+        "Text",
+        events,
+        automation_id="split-prompt-text",
+    )
+    submitted_user_copy = FakeControl(
+        "Copy message",
+        "Button",
+        events,
+        automation_id="submitted-user-copy",
+    )
+    response_copy = FakeControl(
+        "Copy",
+        "Button",
+        events,
+        automation_id="owned-response-copy",
+    )
+    window.controls = [
+        old_user_copy,
+        split_prompt,
+        submitted_user_copy,
+        response_copy,
+    ]
+
+    anchored = adapter._anchor_submitted_message(window, anchor)
+
+    assert anchored is not None
+    assert anchored.submitted_message_token == adapter._stable_control_token(
+        submitted_user_copy,
+        2,
+    )
+    assert "chatgpt.user-message-copy.v1" in adapter.selector_ids
+
+
+def test_destination_token_ignores_chromium_runtime_identity_churn():
+    events: list[str] = []
+    window = FakeWindow([], events)
+    window.handle = 900
+    window.controls = [
+        FakeControl(
+            "Turn off temporary chat",
+            "Button",
+            events,
+            automation_id="temporary-toggle-before",
+        ),
+        FakeComposer(events),
+    ]
+    adapter = ChatGPTDesktop()
+    before = adapter._destination_token(window)
+    rerendered_composer = FakeComposer(events)
+    rerendered_composer.element_info.automation_id = "composer-after"
+    window.controls = [
+        FakeControl(
+            "Turn off temporary chat",
+            "Button",
+            events,
+            automation_id="temporary-toggle-after",
+        ),
+        rerendered_composer,
+    ]
+
+    assert adapter._destination_token(window) == before
+
+
+def test_destination_token_changes_when_temporary_chat_is_left():
+    events: list[str] = []
+    window = FakeWindow([], events)
+    window.handle = 900
+    adapter = ChatGPTDesktop()
+    window.controls = [
+        FakeControl("Turn off temporary chat", "Button", events),
+        FakeComposer(events),
+    ]
+    temporary = adapter._destination_token(window)
+    window.controls = [
+        FakeControl("Turn on temporary chat", "Button", events),
+        FakeComposer(events),
+    ]
+
+    assert adapter._destination_token(window) != temporary
+
+
+def test_temporary_destination_tolerates_transiently_missing_controls():
+    events: list[str] = []
+    window = FakeWindow([], events)
+    window.handle = 900
+    adapter = ChatGPTDesktop()
+    window.controls = [
+        FakeControl("Turn off temporary chat", "Button", events),
+        FakeComposer(events),
+    ]
+    anchor = adapter._build_response_anchor(window, "canary prompt")
+    window.controls = [FakeControl("Stop", "Button", events)]
+
+    assert adapter._destination_conflicts(
+        window,
+        window.controls,
+        anchor,
+    ) is False
+
+
+def test_temporary_destination_rejects_explicit_exit():
+    events: list[str] = []
+    window = FakeWindow([], events)
+    window.handle = 900
+    adapter = ChatGPTDesktop()
+    window.controls = [
+        FakeControl("Turn off temporary chat", "Button", events),
+        FakeComposer(events),
+    ]
+    anchor = adapter._build_response_anchor(window, "canary prompt")
+    window.controls = [
+        FakeControl("Turn on temporary chat", "Button", events),
+        FakeComposer(events),
+    ]
+
+    assert adapter._destination_conflicts(
+        window,
+        window.controls,
+        anchor,
+    ) is True
+
+
+def test_anchored_response_survives_submitted_prompt_virtualization():
+    events: list[str] = []
+    clipboard = {"text": "unchanged"}
+    window = FakeWindow([], events)
+    window.handle = 900
+    response_copy = FakeControl(
+        "Copy",
+        "Button",
+        events,
+        automation_id="owned-response-copy",
+        on_click=lambda: clipboard.update(text="owned response"),
+    )
+    window.controls = [response_copy]
+    adapter = ChatGPTDesktop(
+        response_timeout_seconds=0.1,
+        clipboard_reader=lambda: clipboard["text"],
+        clipboard_writer=lambda text: clipboard.update(text=text),
+    )
+    anchor = ResponseAnchor(
+        destination_token=adapter._destination_token(window),
+        prompt_digest=adapter._text_digest("virtualized prompt"),
+        submitted_message_token="missing-user-message|Button||",
+        response_control_token=adapter._response_control_token(response_copy, 0),
+    )
+
+    assert adapter._copy_latest_response(
+        window,
+        "virtualized prompt",
+        anchor=anchor,
+    ) == "owned response"
+
+
+def test_response_anchor_stays_with_first_assistant_copy_before_next_user_turn():
+    events: list[str] = []
+    clipboard = {"text": "unchanged"}
+    prompt = "owned prompt"
+    window = FakeWindow([], events)
+    window.handle = 900
+    submitted = FakeControl(
+        prompt,
+        "Text",
+        events,
+        automation_id="submitted-text",
+    )
+    user_copy = FakeControl(
+        "Copy message",
+        "Button",
+        events,
+        automation_id="owned-user-copy",
+    )
+    owned_copy = FakeControl(
+        "Copy",
+        "Button",
+        events,
+        automation_id="owned-response-copy",
+        on_click=lambda: clipboard.update(text="owned response"),
+    )
+    later_user_copy = FakeControl(
+        "Copy message",
+        "Button",
+        events,
+        automation_id="later-user-copy",
+    )
+    unrelated_copy = FakeControl(
+        "Copy",
+        "Button",
+        events,
+        automation_id="later-response-copy",
+        on_click=lambda: clipboard.update(text="unrelated response"),
+    )
+    window.controls = [
+        submitted,
+        user_copy,
+        owned_copy,
+        later_user_copy,
+        unrelated_copy,
+    ]
+    adapter = ChatGPTDesktop(
+        response_timeout_seconds=0.1,
+        clipboard_reader=lambda: clipboard["text"],
+        clipboard_writer=lambda text: clipboard.update(text=text),
+    )
+    anchor = adapter._anchor_submitted_message(
+        window,
+        ResponseAnchor(
+            destination_token=adapter._destination_token(window),
+            prompt_digest=adapter._text_digest(prompt),
+        ),
+    )
+
+    assert anchor is not None
+    assert adapter._copy_latest_response(
+        window,
+        prompt,
+        anchor=anchor,
+    ) == "owned response"
+    assert "click:Copy" in events
+    assert clipboard["text"] == "owned response"
 
 
 def test_indefinite_response_wait_continues_until_copy_is_available(
@@ -493,78 +1716,17 @@ def test_background_activation_does_not_take_focus_as_a_fallback():
     assert events == []
 
 
-def test_late_response_does_not_interrupt_work_in_another_window(monkeypatch):
-    events: list[str] = []
-    clipboard = {"text": "Original text"}
-    foreground = {"hwnd": 900}
-    controls = [
-        FakeControl(
-            "Switch mode, current mode: ChatGPT",
-            "Button",
-            events,
-        ),
-        FakeControl(
-            "New chat",
-            "Button",
-            events,
-            class_name="sidebar-item",
-        ),
-        FakeControl(
-            "Chat",
-            "Button",
-            events,
-            class_name="text-token-text-primary",
-        ),
-        FakeControl("WritingLauncher", "Button", events),
-        FakeControl(
-            "Change project: WritingLauncher",
-            "Button",
-            events,
-        ),
-        FakeComposer(events),
-    ]
-    window = FakeWindow(controls, events, process_id=42)
-    window.handle = 900
-    adapter = ChatGPTDesktop(
-        desktop_factory=lambda **kwargs: FakeDesktop(window),
-        clipboard_reader=lambda: clipboard["text"],
-        clipboard_writer=lambda text: clipboard.update(text=text),
-        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
-        foreground_window_reader=lambda: foreground["hwnd"],
-        process_path_reader=lambda process_id: (
-            r"C:\Program Files\WindowsApps\OpenAI.Codex_1\app\ChatGPT.exe"
-        ),
-    )
-    monkeypatch.setattr(
-        adapter,
-        "_copy_latest_response",
-        lambda window, prompt, **kwargs: (
-            foreground.update(hwnd=901) or "Generated answer"
-        ),
-    )
-    monkeypatch.setattr(adapter, "_confirm_submission", lambda *args: True)
-    monkeypatch.setattr(
-        adapter,
-        "_replace_source_selection",
-        lambda *args: pytest.fail("replacement must not take focus"),
-    )
+def test_chatgpt_companion_adapter_has_no_source_application_interface():
+    parameters = inspect.signature(ChatGPTDesktop.submit).parameters
 
-    result = adapter.submit(
-        "complete prompt",
-        "WritingLauncher",
-        source_hwnd=123,
-        source_is_editable=True,
-        source_text="Original text",
-        replace_selected_text=True,
-    )
-
-    assert result.submitted is True
-    assert result.selection_replaced is False
-    assert result.generated_text_copied is True
-    assert result.output_failed is False
-    assert result.generated_text == "Generated answer"
-    assert clipboard["text"] == "Generated answer"
-    assert "working in another window" in result.message
+    for forbidden in (
+        "source_hwnd",
+        "source_is_editable",
+        "source_text",
+        "source_app",
+        "replace_selected_text",
+    ):
+        assert forbidden not in parameters
 
 
 def test_response_wait_uses_the_chatgpt_native_window_handle():
@@ -572,129 +1734,6 @@ def test_response_wait_uses_the_chatgpt_native_window_handle():
     window.handle = 900
 
     assert ChatGPTDesktop._native_window_handle(window) == 900
-
-
-def test_late_response_can_return_to_the_unchanged_source(monkeypatch):
-    foreground_windows = iter((900, 123))
-    adapter = ChatGPTDesktop(
-        foreground_window_reader=lambda: next(foreground_windows),
-    )
-
-    assert adapter._foreground_changed_while_waiting(900, 123) is False
-
-
-def test_failed_replacement_copies_verified_generated_text(monkeypatch):
-    events: list[str] = []
-    clipboard = {"text": "selected source"}
-    controls = [
-        FakeControl("Switch mode, current mode: ChatGPT", "Button", events),
-        FakeControl("New chat", "Button", events, class_name="sidebar-item"),
-        FakeControl(
-            "Chat",
-            "Button",
-            events,
-            class_name="text-token-text-primary",
-        ),
-        FakeControl("WritingLauncher", "Button", events),
-        FakeControl("Change project: WritingLauncher", "Button", events),
-        FakeComposer(events),
-    ]
-    adapter = ChatGPTDesktop(
-        desktop_factory=lambda **kwargs: FakeDesktop(
-            FakeWindow(controls, events)
-        ),
-        clipboard_reader=lambda: clipboard["text"],
-        clipboard_writer=lambda text: clipboard.update(text=text),
-        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
-    )
-    monkeypatch.setattr(
-        adapter,
-        "_copy_latest_response",
-        lambda window, prompt, **kwargs: "Generated answer",
-    )
-    monkeypatch.setattr(
-        adapter,
-        "_replace_source_selection",
-        lambda hwnd, original, generated, source_app: (_ for _ in ()).throw(
-            ChatGPTAutomationError("source rejected paste")
-        ),
-    )
-
-    result = adapter.submit(
-        "complete prompt",
-        "WritingLauncher",
-        source_hwnd=123,
-        source_is_editable=True,
-        replace_selected_text=True,
-    )
-
-    assert result.output_failed is True
-    assert result.generated_text_copied is True
-    assert result.selection_replaced is False
-    assert clipboard["text"] == "Generated answer"
-    assert "copied" in result.message
-
-
-def test_replacement_reverifies_original_selection_before_paste(monkeypatch):
-    clipboard = {"text": "Generated answer"}
-    events = []
-
-    def send_keys(keys, **kwargs):
-        events.append(keys)
-        if keys == "^c":
-            clipboard["text"] = "Original text"
-
-    adapter = ChatGPTDesktop(
-        clipboard_reader=lambda: clipboard["text"],
-        clipboard_writer=lambda text: clipboard.update(text=text),
-        send_keys=send_keys,
-    )
-    monkeypatch.setattr(win32gui, "IsWindow", lambda hwnd: True)
-    monkeypatch.setattr(win32gui, "IsIconic", lambda hwnd: False)
-    monkeypatch.setattr(win32gui, "BringWindowToTop", lambda hwnd: None)
-    monkeypatch.setattr(win32gui, "SetForegroundWindow", lambda hwnd: None)
-    monkeypatch.setattr(win32gui, "GetForegroundWindow", lambda: 123)
-
-    adapter._replace_source_selection(
-        123,
-        "Original text",
-        "Generated answer",
-        "winword.exe",
-    )
-
-    assert events == ["^c", "^v"]
-    assert clipboard["text"] == "Generated answer"
-
-
-def test_replacement_refuses_to_paste_if_selection_changed(monkeypatch):
-    clipboard = {"text": "Generated answer"}
-    events = []
-
-    def send_keys(keys, **kwargs):
-        events.append(keys)
-        if keys == "^c":
-            clipboard["text"] = "Different selected text"
-
-    adapter = ChatGPTDesktop(
-        clipboard_reader=lambda: clipboard["text"],
-        clipboard_writer=lambda text: clipboard.update(text=text),
-        send_keys=send_keys,
-    )
-    monkeypatch.setattr(win32gui, "IsWindow", lambda hwnd: True)
-    monkeypatch.setattr(win32gui, "IsIconic", lambda hwnd: False)
-    monkeypatch.setattr(win32gui, "BringWindowToTop", lambda hwnd: None)
-    monkeypatch.setattr(win32gui, "SetForegroundWindow", lambda hwnd: None)
-    monkeypatch.setattr(win32gui, "GetForegroundWindow", lambda: 123)
-
-    with pytest.raises(ChatGPTAutomationError, match="selection changed"):
-        adapter._replace_source_selection(
-            123,
-            "Original text",
-            "Generated answer",
-            "chrome.exe",
-        )
-
-    assert events == ["^c"]
 
 
 def test_prepare_only_inserts_prompt_without_pressing_enter():
@@ -746,7 +1785,7 @@ def test_prepare_only_inserts_prompt_without_pressing_enter():
     assert "model or reasoning level" in result.message
     assert "set-text:Message ChatGPT" in events
     assert "keys:{ENTER}" not in events
-    assert clipboard == ["selected source"]
+    assert clipboard == []
 
 
 def test_temporary_chat_skips_project_and_prepares_prompt():
@@ -805,7 +1844,7 @@ def test_temporary_chat_skips_project_and_prepares_prompt():
     assert "click:PromptMeld" not in events
     assert "click:Turn on temporary chat" in events
     assert composer.value == "complete prompt"
-    assert clipboard == ["selected source"]
+    assert clipboard == []
 
 
 def test_one_time_temporary_chat_continue_is_left_to_the_user():
@@ -1572,7 +2611,6 @@ def test_submit_creates_missing_writinglauncher_project():
     assert "click:Create project" in events
     assert clipboard == [
         "WritingLauncher",
-        "selected source",
     ]
 
 
@@ -1659,6 +2697,8 @@ def test_project_creation_supports_two_stage_projects_index():
         automation_id="chatgpt-project-name",
     )
     create = FakeControl("Create project", "Button", events)
+    cloud = FakeControl("Cloud", "Button", events)
+    local = FakeControl("Local", "Button", events)
     controls.append(add_project)
     activations = 0
 
@@ -1669,9 +2709,14 @@ def test_project_creation_supports_two_stage_projects_index():
             controls.append(search)
         else:
             controls.remove(search)
-            controls.extend([name_edit, create])
+            controls.extend([cloud, local])
 
     add_project.on_click = advance_creation
+    cloud.on_click = lambda: (
+        controls.remove(cloud),
+        controls.remove(local),
+        controls.extend([name_edit, create]),
+    )
     window = FakeWindow(controls, events)
     adapter = ChatGPTDesktop(
         clipboard_writer=lambda text: None,
@@ -1688,7 +2733,535 @@ def test_project_creation_supports_two_stage_projects_index():
 
     assert adapter._create_project(window, "WritingLauncher") is True
     assert events.count("click:Add new project") == 2
+    assert "click:Cloud" in events
+    assert "click:Local" not in events
     assert "focus:Project name" in events
+
+
+def test_project_creation_chooses_cloud_before_naming():
+    events: list[str] = []
+    controls: list[FakeControl] = []
+    name_edit = FakeControl(
+        "Project name",
+        "Edit",
+        events,
+        automation_id="chatgpt-project-name",
+    )
+    create = FakeControl("Create project", "Button", events)
+    cloud = FakeControl("Cloud", "Button", events)
+    local = FakeControl("Local", "Button", events)
+
+    def show_storage_choice():
+        controls.extend([cloud, local])
+
+    def choose_cloud():
+        controls.remove(cloud)
+        controls.remove(local)
+        controls.extend([name_edit, create])
+
+    add_project = FakeControl(
+        "Add new project",
+        "Button",
+        events,
+        on_click=show_storage_choice,
+    )
+    controls.append(add_project)
+    cloud.on_click = choose_cloud
+    create.on_click = lambda: controls.append(
+        FakeControl(
+            "Change project: WritingLauncher",
+            "Button",
+            events,
+        )
+    )
+    adapter = ChatGPTDesktop(
+        clipboard_writer=lambda text: None,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+        timeout_seconds=0.2,
+    )
+
+    assert adapter._create_project(
+        FakeWindow(controls, events),
+        "WritingLauncher",
+    ) is True
+    assert events.index("click:Cloud") < events.index("focus:Project name")
+    assert "click:Local" not in events
+
+
+def test_project_creation_chooses_cloud_when_name_is_already_visible():
+    events: list[str] = []
+    controls: list[FakeControl] = []
+    name_edit = FakeControl(
+        "Project name",
+        "Edit",
+        events,
+        automation_id="chatgpt-project-name",
+    )
+    create = FakeControl("Create project", "Button", events)
+    cloud = FakeControl("Cloud", "RadioButton", events)
+    local = FakeControl("Local", "RadioButton", events)
+
+    def show_creation_form():
+        controls.extend([name_edit, cloud, local, create])
+
+    def choose_cloud():
+        controls.remove(cloud)
+        controls.remove(local)
+
+    controls.append(
+        FakeControl(
+            "Add new project",
+            "Button",
+            events,
+            on_click=show_creation_form,
+        )
+    )
+    cloud.on_click = choose_cloud
+    create.on_click = lambda: controls.append(
+        FakeControl(
+            "Change project: WritingLauncher",
+            "Button",
+            events,
+        )
+    )
+    adapter = ChatGPTDesktop(
+        clipboard_writer=lambda text: None,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+        timeout_seconds=0.2,
+    )
+
+    assert adapter._create_project(
+        FakeWindow(controls, events),
+        "WritingLauncher",
+    ) is True
+    assert events.index("click:Cloud") < events.index("focus:Project name")
+    assert "click:Local" not in events
+
+
+def test_project_creation_advances_current_cloud_type_dialog():
+    events: list[str] = []
+    controls: list[FakeControl] = []
+    name_edit = FakeControl(
+        "Project name",
+        "Edit",
+        events,
+        automation_id="chatgpt-project-name",
+    )
+    create = FakeControl("Create project", "Button", events)
+    cloud = FakeControl(
+        "Cloud Work through ideas and tasks without setup",
+        "Button",
+        events,
+    )
+    local = FakeControl(
+        "Local Edit, run, and test files on your computer",
+        "Button",
+        events,
+    )
+    cloud.is_selected = lambda: True
+    local.is_selected = lambda: False
+    next_control = FakeControl("Next", "Button", events)
+
+    def advance_to_name():
+        controls.remove(cloud)
+        controls.remove(local)
+        controls.remove(next_control)
+        controls.extend([name_edit, create])
+
+    next_control.on_click = advance_to_name
+    controls.extend(
+        [
+            FakeControl("Add new project", "Button", events),
+            cloud,
+            local,
+            next_control,
+        ]
+    )
+    create.on_click = lambda: controls.append(
+        FakeControl(
+            "Change project: WritingLauncher",
+            "Button",
+            events,
+        )
+    )
+    adapter = ChatGPTDesktop(
+        clipboard_writer=lambda text: None,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+        timeout_seconds=0.2,
+    )
+
+    assert adapter._create_project(
+        FakeWindow(controls, events),
+        "WritingLauncher",
+    ) is True
+    assert "click:Cloud Work through ideas and tasks without setup" not in events
+    assert "click:Local Edit, run, and test files on your computer" not in events
+    assert "click:Next" in events
+    assert events.index("click:Next") < events.index("focus:Project name")
+
+
+def test_project_creation_handles_cloud_list_item_with_text_child():
+    events: list[str] = []
+    controls: list[FakeControl] = []
+    name_edit = FakeControl(
+        "Project name",
+        "Edit",
+        events,
+        automation_id="chatgpt-project-name",
+    )
+    create = FakeControl("Create project", "Button", events)
+
+    class StorageListItem(FakeControl):
+        def descendants(self):
+            return [FakeControl("Cloud", "Text", events)]
+
+    cloud = StorageListItem(
+        "Work through ideas and tasks without setup",
+        "ListItem",
+        events,
+    )
+    next_control = FakeControl("Next", "Text", events)
+
+    def advance_to_name():
+        controls.remove(cloud)
+        controls.remove(next_control)
+        controls.extend([name_edit, create])
+
+    next_control.on_click = advance_to_name
+    controls.extend(
+        [
+            FakeControl("Add new project", "Button", events),
+            cloud,
+            next_control,
+        ]
+    )
+    create.on_click = lambda: controls.append(
+        FakeControl(
+            "Change project: WritingLauncher",
+            "Button",
+            events,
+        )
+    )
+    adapter = ChatGPTDesktop(
+        clipboard_writer=lambda text: None,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+        timeout_seconds=0.2,
+    )
+
+    assert adapter._create_project(
+        FakeWindow(controls, events),
+        "WritingLauncher",
+    ) is True
+    assert "click:Work through ideas and tasks without setup" in events
+    assert "click:Next" in events
+    assert events.index("click:Next") < events.index("focus:Project name")
+    assert not any("Local" in event for event in events)
+
+
+def test_project_creation_accepts_enabled_create_text_control():
+    events: list[str] = []
+    controls: list[FakeControl] = []
+    name_edit = FakeControl(
+        "Project name",
+        "Edit",
+        events,
+        automation_id="chatgpt-project-name",
+    )
+    create = FakeControl("Create project", "Text", events)
+    controls.extend(
+        [
+            FakeControl("Add new project", "Button", events),
+            name_edit,
+            create,
+        ]
+    )
+    create.on_click = lambda: controls.append(
+        FakeControl(
+            "Change project: WritingLauncher",
+            "Button",
+            events,
+        )
+    )
+    adapter = ChatGPTDesktop(
+        clipboard_reader=lambda: "original clipboard",
+        clipboard_writer=lambda text: None,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+        timeout_seconds=0.2,
+    )
+
+    assert adapter._create_project(
+        FakeWindow(controls, events),
+        "WritingLauncher",
+    ) is True
+    assert "click:Create project" in events
+
+
+def test_project_creation_requires_positive_project_evidence():
+    events: list[str] = []
+    controls: list[FakeControl] = []
+    name_edit = FakeControl(
+        "Project name",
+        "Edit",
+        events,
+        automation_id="chatgpt-project-name",
+    )
+    create = FakeControl("Create project", "Button", events)
+    controls.extend(
+        [
+            FakeControl("Add new project", "Button", events),
+            name_edit,
+            create,
+        ]
+    )
+    create.on_click = lambda: (
+        controls.remove(name_edit),
+        controls.remove(create),
+    )
+    adapter = ChatGPTDesktop(
+        clipboard_writer=lambda text: None,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+        timeout_seconds=0.01,
+    )
+
+    assert adapter._create_project(
+        FakeWindow(controls, events),
+        "WritingLauncher",
+    ) is False
+    assert events.count("click:Create project") == 1
+    assert adapter.navigation_failure_code == (
+        "project_create_activation_unconfirmed"
+    )
+    assert adapter.navigation_retry_mode == "inspect"
+
+
+def test_project_creation_rejects_disabled_create_control():
+    events: list[str] = []
+    controls = [
+        FakeControl("Add new project", "Button", events),
+        FakeControl(
+            "Project name",
+            "Edit",
+            events,
+            automation_id="chatgpt-project-name",
+        ),
+        FakeControl(
+            "Create project",
+            "Button",
+            events,
+            enabled=False,
+        ),
+    ]
+    adapter = ChatGPTDesktop(
+        clipboard_writer=lambda text: None,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+        timeout_seconds=0.01,
+    )
+
+    assert adapter._create_project(
+        FakeWindow(controls, events),
+        "WritingLauncher",
+    ) is False
+    assert "click:Create project" not in events
+    assert adapter.navigation_failure_code == "project_create_unavailable"
+    assert adapter.navigation_retry_mode == "delivery"
+
+
+def test_project_creation_rejects_unconfirmed_cloud_choice():
+    events: list[str] = []
+    controls = [
+        FakeControl("Add new project", "Button", events),
+        FakeControl(
+            "Project name",
+            "Edit",
+            events,
+            automation_id="chatgpt-project-name",
+        ),
+        FakeControl("Cloud", "RadioButton", events),
+        FakeControl("Local", "RadioButton", events),
+        FakeControl("Create project", "Button", events),
+    ]
+    adapter = ChatGPTDesktop(
+        clipboard_writer=lambda text: None,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+        timeout_seconds=0.01,
+    )
+
+    assert adapter._create_project(
+        FakeWindow(controls, events),
+        "WritingLauncher",
+    ) is False
+    assert events.count("click:Cloud") == 1
+    assert "click:Local" not in events
+    assert "click:Create project" not in events
+    assert adapter.navigation_failure_code == (
+        "project_cloud_activation_unconfirmed"
+    )
+
+
+def test_project_creation_requires_paired_storage_choices():
+    events: list[str] = []
+    controls = [
+        FakeControl("Add new project", "Button", events),
+        FakeControl("Cloud", "Button", events),
+    ]
+    adapter = ChatGPTDesktop(timeout_seconds=0.01)
+
+    assert adapter._create_project(
+        FakeWindow(controls, events),
+        "WritingLauncher",
+    ) is False
+    assert "click:Cloud" not in events
+    assert adapter.navigation_failure_code == (
+        "project_storage_choice_missing"
+    )
+
+
+def test_project_creation_reacquires_stale_window_wrappers(monkeypatch):
+    events: list[str] = []
+    controls: list[FakeControl] = [
+        FakeControl("Add new project", "Button", events),
+        FakeControl(
+            "Project name",
+            "Edit",
+            events,
+            automation_id="chatgpt-project-name",
+        ),
+    ]
+    create = FakeControl("Create project", "Button", events)
+    create.on_click = lambda: controls.append(
+        FakeControl(
+            "Change project: WritingLauncher",
+            "Button",
+            events,
+        )
+    )
+    controls.append(create)
+    fresh_window = FakeWindow(controls, events)
+
+    class StaleWindow(FakeWindow):
+        def descendants(self):
+            raise RuntimeError("stale UIA wrapper")
+
+    adapter = ChatGPTDesktop(
+        clipboard_writer=lambda text: None,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+        timeout_seconds=0.01,
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_refresh_chatgpt_window",
+        lambda: fresh_window,
+    )
+
+    assert adapter._create_project(
+        StaleWindow([], events),
+        "WritingLauncher",
+    ) is True
+    assert "click:Create project" in events
+
+
+def test_project_creation_accepts_exact_project_row_as_evidence():
+    events: list[str] = []
+    controls: list[FakeControl] = [
+        FakeControl("Add new project", "Button", events),
+        FakeControl(
+            "Project name",
+            "Edit",
+            events,
+            automation_id="chatgpt-project-name",
+        ),
+    ]
+    create = FakeControl("Create project", "Button", events)
+    create.on_click = lambda: controls.append(
+        FakeControl(
+            "WritingLauncher",
+            "Button",
+            events,
+            class_name="sidebar-item group/folder-row",
+        )
+    )
+    controls.append(create)
+    adapter = ChatGPTDesktop(
+        clipboard_writer=lambda text: None,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+        timeout_seconds=0.01,
+    )
+
+    assert adapter._create_project(
+        FakeWindow(controls, events),
+        "WritingLauncher",
+    ) is True
+
+
+def test_project_creation_logs_exclude_project_name(caplog):
+    events: list[str] = []
+    private_project_name = "Private Customer Project"
+    controls: list[FakeControl] = [
+        FakeControl("Add new project", "Button", events),
+        FakeControl(
+            "Project name",
+            "Edit",
+            events,
+            automation_id="chatgpt-project-name",
+        ),
+    ]
+    create = FakeControl("Create project", "Button", events)
+    create.on_click = lambda: controls.append(
+        FakeControl(
+            f"Change project: {private_project_name}",
+            "Button",
+            events,
+        )
+    )
+    controls.append(create)
+    adapter = ChatGPTDesktop(
+        clipboard_writer=lambda text: None,
+        send_keys=lambda keys, **kwargs: events.append(f"keys:{keys}"),
+        timeout_seconds=0.01,
+    )
+    caplog.set_level("INFO", logger="promptmeld.chatgpt")
+
+    assert adapter._create_project(
+        FakeWindow(controls, events),
+        private_project_name,
+    ) is True
+    assert private_project_name not in caplog.text
+    assert "project_step=confirm-project-created" in caplog.text
+
+
+def test_submit_exposes_project_creation_failure_checkpoint(monkeypatch):
+    events: list[str] = []
+    clipboard: list[str] = []
+    window = FakeWindow([], events)
+    adapter = ChatGPTDesktop(
+        clipboard_reader=lambda: "selected source",
+        clipboard_writer=clipboard.append,
+    )
+    monkeypatch.setattr(adapter, "_get_or_launch_window", lambda: window)
+
+    def fail_project_creation(window, project_name):
+        adapter._report_progress(
+            "opening-project",
+            "Opening the requested Project",
+        )
+        return adapter._project_creation_failed(
+            "confirm whether ChatGPT created the Cloud Project",
+            "project_create_activation_unconfirmed",
+            retry_mode="inspect",
+        )
+
+    monkeypatch.setattr(
+        adapter,
+        "_navigate_to_project_chat",
+        fail_project_creation,
+    )
+
+    result = adapter.submit("complete prompt", "WritingLauncher")
+
+    assert result.failed_stage == "opening-project"
+    assert result.failure_code == "project_create_activation_unconfirmed"
+    assert result.retry_mode == "inspect"
+    assert result.recoverable is True
 
 
 def test_project_lookup_rejects_same_named_chat_sidebar_row():
