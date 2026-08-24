@@ -152,8 +152,9 @@ The **Overall defaults** tab controls choices remembered across launches:
 - Copying generated text to the clipboard after ChatGPT responds. This also
   requires automatic submission.
 - Replacing selected text automatically when the source selection was detected
-  in an editable control. This also requires automatic submission. PromptMeld
-  verifies the preserved selection again immediately before pasting.
+  in a supported read-back adapter. This also requires automatic submission.
+  PromptMeld revalidates the source process, top-level window, focused control,
+  and exact range before applying, then reads the inserted range back.
 - Temporary Chat, which opens a top-level chat instead of using the writing
   action's configured Project. ChatGPT may show a one-time explanation;
   PromptMeld waits while you read and respond to it and does not activate
@@ -184,8 +185,10 @@ menu and are remembered in the same way.
 Automatic replacement is opt-in and the generated response may still be wrong
 or unsuitable. PromptMeld preserves the original in memory and exposes
 **Undo last replacement** and **Copy preserved original** in the tray. If the
-source selection changed or replacement cannot be verified, PromptMeld copies
-the generated result and leaves the original alone.
+inserted range is unchanged, Undo uses the same adapter to reverse that exact
+range; it never sends a delayed generic Ctrl+Z. If the source is unsupported or
+replacement cannot be verified, PromptMeld retains the generated result for
+copy or review and leaves the original alone.
 
 ## Application-specific defaults
 
@@ -213,8 +216,8 @@ An application profile can override:
 
 Every option can inherit its **Overall defaults** or launcher value, so
 a profile only needs to describe what is genuinely different. A replacement
-profile still safely falls back to copying when the source does not expose an
-editable control.
+profile still safely falls back to copy or review when the source does not
+expose a verifiable adapter.
 
 New configurations include conservative starter profiles. Microsoft Word
 waits until completion or cancellation and then replaces a verified editable
@@ -259,6 +262,15 @@ non-destructive package, launch, sign-in, and accessibility readiness check. It
 does not create a chat or insert text. Copied diagnostics include the last
 privacy-safe stage, failure code, submission checkpoint, retry mode, and stage
 timings.
+
+The separate **Diagnostics > Run full automation test** action is opt-in and
+discloses that it sends one harmless unique test phrase to a verified Temporary
+Chat. It tests response ownership, companion transfer, clipboard preservation,
+PromptMeld-owned scratch application, read-back, and cleanup without using a
+user document. If PromptMeld restarts with an unfinished metadata-only run
+journal, **Review interrupted automation** explains whether Send was not
+reached, may have happened, or was definitely confirmed; it never resubmits or
+reapplies automatically.
 
 The launcher's **This request: intent or additional context** field is
 deliberately temporary and is cleared whenever a new selection is captured. It
@@ -361,6 +373,7 @@ PromptMeld stores editable data in:
 |-- actions.json
 |-- backups\
 |-- icons\
+|-- pending-automation.json (only while restart review may be needed)
 |-- settings.json
 |-- usage.json
 `-- promptmeld.log

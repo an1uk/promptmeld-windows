@@ -379,7 +379,7 @@ def test_automation_progress_is_keyboard_accessible_and_cancellable(qtbot):
     assert window.accessibleName() == "PromptMeld automation progress"
 
 
-def test_promptmeld_tagline_is_shown_in_launcher_and_configuration(
+def test_promptmeld_tagline_is_only_shown_in_configuration(
     qtbot,
     tmp_path,
 ):
@@ -398,24 +398,13 @@ def test_promptmeld_tagline_is_shown_in_launcher_and_configuration(
     qtbot.addWidget(popup)
     qtbot.addWidget(dialog)
 
-    assert "Write well and prosper" in {
+    assert "Write well and prosper" not in {
         label.text() for label in popup.findChildren(QLabel)
     }
     assert "Write well and prosper" in {
         label.text() for label in dialog.findChildren(QLabel)
     }
-    popup.show()
-    qtbot.wait(0)
-    popup.layout().activate()
     dialog.layout().activate()
-    assert popup.tagline.geometry().top() == popup.title.geometry().top()
-    assert (
-        abs(
-            popup.tagline.mapTo(popup, popup.tagline.rect().center()).x()
-            - popup.rect().center().x()
-        )
-        <= 2
-    )
     heading = dialog.findChild(QLabel, "settingsTitle")
     assert heading is not None
     assert dialog.tagline.geometry().top() == heading.geometry().top()
@@ -573,13 +562,18 @@ def test_launcher_prioritises_action_space_until_options_are_requested(
     assert popup.options_panel.isHidden()
     assert popup.options_panel.isAncestorOf(popup.additional_information)
     assert popup.options_toggle.accessibleName().startswith("Show")
+    assert popup.options_toggle.objectName() == "launcherDisclosureButton"
+    assert popup.options_toggle.text().startswith("⌃")
+    assert popup.options_toggle.text().endswith("⌃")
+    assert "does not submit" in popup.options_toggle.toolTip()
 
     popup.options_toggle.setChecked(True)
     qtbot.wait(1)
     expanded_height = popup.list.height()
 
     assert popup.options_panel.isVisible()
-    assert popup.options_toggle.text() == "Hide request options"
+    assert popup.options_toggle.text().startswith("⌄")
+    assert "Hide defaults and request details" in popup.options_toggle.text()
     assert popup.options_toggle.accessibleName().startswith("Hide")
     assert collapsed_height > expanded_height
 
@@ -685,11 +679,60 @@ def test_launcher_shows_application_result_policy(qtbot, tmp_path):
     )
 
     assert "Copy the result for Google Chrome" in popup.source_context.text()
+    assert popup.application_defaults_context.isHidden()
     assert popup.replace_selected_text.isEnabled() is False
     assert "application policy" in popup.replace_selected_text.text()
     popup.set_source_is_editable(True)
     popup.set_auto_submit_enabled(False)
     assert popup.replace_selected_text.isEnabled() is False
+
+
+def test_launcher_spells_out_application_defaults(qtbot, tmp_path):
+    popup = LauncherPopup(
+        ActionRegistry(
+            [WritingAction("edit", "Edit", (), "Improve this.")],
+            UsageTracker(tmp_path / "usage.json"),
+        )
+    )
+    qtbot.addWidget(popup)
+    settings = AppSettings(
+        application_profiles={
+            "chrome.exe": ApplicationProfile(
+                return_mode="leave",
+                response_wait="600",
+            )
+        }
+    )
+    selection = CapturedSelection(
+        "Text",
+        123,
+        "Browser field",
+        True,
+        "chrome.exe",
+    )
+    effective = resolve_application_profile(settings, selection)
+
+    popup.set_source_context(
+        "chrome.exe",
+        ReturnDecision(
+            requested_mode="leave",
+            application="chrome.exe",
+            overridden=True,
+        ),
+        effective,
+    )
+
+    assert popup.source_context.text() == "Result: Leave the result in ChatGPT"
+    assert "application default" not in popup.source_context.text().casefold()
+    assert popup.application_defaults_context.text() == (
+        "Application defaults for Google Chrome: "
+        "Result handling: Leave the result in ChatGPT · "
+        "Response wait: 10 minutes"
+    )
+    assert popup.application_defaults_context.isHidden() is False
+    assert "Response wait: 10 minutes" in (
+        popup.source_context.accessibleDescription()
+    )
 
 
 def test_launcher_applies_application_guidance_defaults(qtbot, tmp_path):
@@ -3370,6 +3413,57 @@ def test_launcher_catalogue_is_add_only_and_non_modal(qtbot, tmp_path):
     assert dialog.more_button.isHidden() is True
 
 
+def test_closing_launcher_catalogue_restores_and_focuses_launcher():
+    calls: list[str] = []
+    focus_reasons: list[Qt.FocusReason] = []
+    popup = SimpleNamespace(
+        show=lambda: calls.append("show"),
+        raise_=lambda: calls.append("raise"),
+        activateWindow=lambda: calls.append("activate"),
+        search=SimpleNamespace(
+            setFocus=lambda reason: focus_reasons.append(reason)
+        ),
+    )
+    catalogue = object()
+    app = PromptMeld.__new__(PromptMeld)
+    app.popup = popup
+    app.starter_pack_catalogue = catalogue
+    app.quitting = False
+
+    app._starter_pack_catalogue_closed(catalogue)
+
+    assert app.starter_pack_catalogue is None
+    assert calls == ["show", "raise", "activate"]
+    assert focus_reasons == [Qt.FocusReason.OtherFocusReason]
+
+
+def test_closing_launcher_catalogue_during_quit_does_not_restore_launcher():
+    calls: list[str] = []
+    app = PromptMeld.__new__(PromptMeld)
+    app.popup = SimpleNamespace(show=lambda: calls.append("show"))
+    app.starter_pack_catalogue = object()
+    app.quitting = True
+
+    app._starter_pack_catalogue_closed(app.starter_pack_catalogue)
+
+    assert app.starter_pack_catalogue is None
+    assert calls == []
+
+
+def test_obsolete_launcher_catalogue_close_does_not_interrupt_new_catalogue():
+    calls: list[str] = []
+    current_catalogue = object()
+    app = PromptMeld.__new__(PromptMeld)
+    app.popup = SimpleNamespace(show=lambda: calls.append("show"))
+    app.starter_pack_catalogue = current_catalogue
+    app.quitting = False
+
+    app._starter_pack_catalogue_closed(object())
+
+    assert app.starter_pack_catalogue is current_catalogue
+    assert calls == []
+
+
 def test_launcher_catalogue_adds_pack_immediately(qtbot, tmp_path, monkeypatch):
     paths = AppPaths.discover(tmp_path)
     paths.ensure()
@@ -3389,8 +3483,10 @@ def test_launcher_catalogue_adds_pack_immediately(qtbot, tmp_path, monkeypatch):
 
     app.reload_configuration_after_save = reload_configuration
     catalogue_actions: list[list[WritingAction]] = []
+    accepted: list[bool] = []
     catalogue = SimpleNamespace(
-        set_actions=lambda actions: catalogue_actions.append(list(actions))
+        set_actions=lambda actions: catalogue_actions.append(list(actions)),
+        accept=lambda: accepted.append(True),
     )
     monkeypatch.setattr(
         QMessageBox,
@@ -3408,6 +3504,7 @@ def test_launcher_catalogue_adds_pack_immediately(qtbot, tmp_path, monkeypatch):
     assert app.settings.folder_icons["Draft & create/Reports"] == (
         "lucide:list-checks"
     )
+    assert accepted == [True]
 
 
 def test_starter_pack_catalogue_filters_and_reports_status(

@@ -4,7 +4,21 @@ import io
 import json
 
 from promptmeld import automation_worker
-from promptmeld.models import SubmissionResult
+from promptmeld.automation_protocol import AUTOMATION_PROTOCOL_VERSION
+from promptmeld.models import ResponseAnchor, SubmissionResult
+
+
+def worker_request(prompt: str, *, request_id: str = "request-1") -> str:
+    return json.dumps(
+        {
+            "_protocol_version": AUTOMATION_PROTOCOL_VERSION,
+            "request_id": request_id,
+            "run_id": "run-1",
+            "checkpoint": "preparing",
+            "attempt": 1,
+            "prompt": prompt,
+        }
+    )
 
 
 def test_worker_requests_per_monitor_v2_dpi_awareness(monkeypatch):
@@ -159,7 +173,39 @@ def test_worker_forwards_capture_without_clipboard_output(monkeypatch):
 
     assert calls[0]["capture_generated_text"] is True
     assert calls[0]["copy_generated_text"] is False
-    assert calls[0]["replace_selected_text"] is False
+    assert "replace_selected_text" not in calls[0]
+
+
+def test_worker_never_forwards_source_document_fields(monkeypatch):
+    calls = []
+
+    class FakeAdapter:
+        timings = []
+
+        def __init__(self, **kwargs):
+            pass
+
+        def submit(self, prompt, project_name, **kwargs):
+            calls.append(kwargs)
+            return SubmissionResult(submitted=True)
+
+    monkeypatch.setattr(automation_worker, "ChatGPTDesktop", FakeAdapter)
+
+    automation_worker._process_payload(
+        {
+            "prompt": "complete prompt",
+            "project_name": "PromptMeld",
+            "source_text": "private source",
+            "source_hwnd": 123,
+            "source_app": "winword.exe",
+            "replace_selected_text": True,
+        }
+    )
+
+    assert "source_text" not in calls[0]
+    assert "source_hwnd" not in calls[0]
+    assert "source_app" not in calls[0]
+    assert "replace_selected_text" not in calls[0]
 
 
 def test_worker_forwards_redaction_key_for_local_result_restoration(
@@ -228,11 +274,9 @@ def test_response_retry_never_calls_submit(monkeypatch):
     assert calls[0][1]["response_baseline"] == ("0:old",)
 
 
-def test_server_processes_multiple_requests_before_shutdown(monkeypatch):
+def test_server_emits_versioned_handshake_and_result(monkeypatch):
     stdin = io.StringIO(
-        '{"prompt":"one"}\n'
-        '{"prompt":"two"}\n'
-        '{"_command":"shutdown"}\n'
+        worker_request("one") + "\n"
     )
     stdout = io.StringIO()
     monkeypatch.setattr(automation_worker.sys, "stdin", stdin)
@@ -240,7 +284,7 @@ def test_server_processes_multiple_requests_before_shutdown(monkeypatch):
     monkeypatch.setattr(
         automation_worker,
         "_process_payload",
-        lambda payload, progress_callback=None: {
+        lambda payload, progress_callback=None, **kwargs: {
             "submitted": True,
             "message": payload["prompt"],
         },
@@ -252,19 +296,24 @@ def test_server_processes_multiple_requests_before_shutdown(monkeypatch):
         json.loads(line)
         for line in stdout.getvalue().splitlines()
     ]
-    assert [response["message"] for response in responses] == [
-        "one",
-        "two",
-    ]
+    assert responses[0]["_event"] == "hello"
+    assert responses[0]["protocol_version"] == AUTOMATION_PROTOCOL_VERSION
+    result = responses[-1]
+    assert result["_event"] == "result"
+    assert result["request_id"] == "request-1"
+    assert result["run_id"] == "run-1"
+    assert result["checkpoint"] == "preparing"
+    assert result["attempt"] == 1
+    assert result["payload"]["message"] == "one"
 
 
 def test_server_emits_progress_before_result(monkeypatch):
-    stdin = io.StringIO('{"prompt":"one"}\n{"_command":"shutdown"}\n')
+    stdin = io.StringIO(worker_request("one") + "\n")
     stdout = io.StringIO()
     monkeypatch.setattr(automation_worker.sys, "stdin", stdin)
     monkeypatch.setattr(automation_worker.sys, "stdout", stdout)
 
-    def process(payload, progress_callback=None):
+    def process(payload, progress_callback=None, **kwargs):
         progress_callback("finding-composer", "Finding the message box")
         return {"submitted": True, "message": payload["prompt"]}
 
@@ -276,9 +325,72 @@ def test_server_emits_progress_before_result(monkeypatch):
         json.loads(line)
         for line in stdout.getvalue().splitlines()
     ]
-    assert responses[0] == {
-        "_event": "progress",
-        "stage": "finding-composer",
-        "message": "Finding the message box",
-    }
-    assert responses[1]["submitted"] is True
+    assert responses[0]["_event"] == "hello"
+    progress = next(
+        response for response in responses if response["_event"] == "progress"
+    )
+    result = next(
+        response for response in responses if response["_event"] == "result"
+    )
+    assert progress["stage"] == "finding-composer"
+    assert progress["message"] == "Finding the message box"
+    assert progress["checkpoint"] == "preparing"
+    assert progress["attempt"] == 1
+    assert result["payload"]["submitted"] is True
+
+
+def test_server_crosses_captured_text_before_later_helper_failure(monkeypatch):
+    stdin = io.StringIO(worker_request("one") + "\n")
+    stdout = io.StringIO()
+    monkeypatch.setattr(automation_worker.sys, "stdin", stdin)
+    monkeypatch.setattr(automation_worker.sys, "stdout", stdout)
+
+    def process(payload, response_captured_callback=None, **kwargs):
+        response_captured_callback(
+            "Recovered answer",
+            ResponseAnchor(destination_token="conversation-1"),
+        )
+        raise RuntimeError("failed during later helper cleanup")
+
+    monkeypatch.setattr(automation_worker, "_process_payload", process)
+
+    assert automation_worker._run_server() == 0
+
+    responses = [
+        json.loads(line)
+        for line in stdout.getvalue().splitlines()
+    ]
+    captured_index = next(
+        index
+        for index, response in enumerate(responses)
+        if response["_event"] == "response_captured"
+    )
+    result_index = next(
+        index
+        for index, response in enumerate(responses)
+        if response["_event"] == "result"
+    )
+    captured = responses[captured_index]
+    result = responses[result_index]
+    assert captured_index < result_index
+    assert captured["generated_text"] == "Recovered answer"
+    assert captured["response_anchor"]["destination_token"] == "conversation-1"
+    assert result["checkpoint"] == "response_captured"
+    assert result["payload"]["generated_text"] == "Recovered answer"
+
+
+def test_worker_refuses_unversioned_one_shot_input(monkeypatch):
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    monkeypatch.setattr(automation_worker.sys, "argv", ["worker.exe"])
+    monkeypatch.setattr(
+        automation_worker.sys,
+        "stdin",
+        io.StringIO('{"prompt": "private prompt"}'),
+    )
+    monkeypatch.setattr(automation_worker.sys, "stdout", stdout)
+    monkeypatch.setattr(automation_worker.sys, "stderr", stderr)
+
+    assert automation_worker.main() == 2
+    assert stdout.getvalue() == ""
+    assert "versioned --server protocol" in stderr.getvalue()

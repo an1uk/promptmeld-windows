@@ -1,13 +1,27 @@
 from __future__ import annotations
 
 import threading
+from types import SimpleNamespace
+
+import pytest
+from PySide6.QtWidgets import QMessageBox, QPlainTextEdit
 
 from promptmeld import app as app_module
+from promptmeld import windows as windows_module
 from promptmeld.app import PromptMeld
+from promptmeld.automation_protocol import (
+    ApplyVerification,
+    AutomationCheckpoint,
+    RecoveryAction,
+    SubmissionDisposition,
+)
+from promptmeld.automation_recovery import PendingAutomationRecord
 from promptmeld.models import (
+    ApplyReceipt,
     AppSettings,
     ApplicationProfile,
     CapturedSelection,
+    SourceFingerprint,
     SubmissionResult,
     WritingAction,
 )
@@ -15,6 +29,47 @@ from promptmeld.paths import AppPaths
 from promptmeld.privacy import RedactionResult
 from promptmeld.returning import ReturnDecision
 from promptmeld.windows import SourceRecoveryError
+
+
+def verified_selection(
+    text: str = "Original text",
+    *,
+    source_app: str = "winword.exe",
+) -> CapturedSelection:
+    return CapturedSelection(
+        text,
+        123,
+        "Private title",
+        True,
+        source_app,
+        SourceFingerprint(
+            process_id=456,
+            process_started=789,
+            top_level_hwnd=123,
+            top_level_class="SourceWindow",
+            focused_hwnd=124,
+            focused_class="RichEditD2DPT",
+            adapter_id="win32-edit-v1",
+            selection_start=0,
+            selection_end=len(text),
+        ),
+    )
+
+
+def apply_receipt(
+    selection: CapturedSelection,
+    generated_text: str,
+) -> ApplyReceipt:
+    fingerprint = selection.source_fingerprint
+    assert fingerprint is not None
+    return ApplyReceipt(
+        adapter_id="win32-edit-v1",
+        source_fingerprint=fingerprint,
+        original_text=selection.text,
+        generated_text=generated_text,
+        replacement_start=0,
+        replacement_end=len(generated_text),
+    )
 
 
 def _notifications_for(result: SubmissionResult) -> list[tuple[object, ...]]:
@@ -114,21 +169,16 @@ def completion_app() -> PromptMeld:
 
 
 def test_completed_result_enables_direct_copy_and_apply(monkeypatch):
-    selection = CapturedSelection(
-        "Original text",
-        123,
-        "Private title",
-        True,
-        "winword.exe",
-    )
+    selection = verified_selection()
     app = completion_app()
     clipboard = []
     replacements = []
     monkeypatch.setattr(app_module, "write_clipboard_text", clipboard.append)
     monkeypatch.setattr(
         app_module,
-        "replace_source_selection",
-        lambda *args: replacements.append(args),
+        "apply_verified_source_selection",
+        lambda captured, generated: replacements.append((captured, generated))
+        or apply_receipt(captured, generated),
     )
 
     can_apply = app._remember_completed_result(
@@ -148,7 +198,7 @@ def test_completed_result_enables_direct_copy_and_apply(monkeypatch):
 
     app.apply_latest_result()
     assert replacements == [
-        (123, "Original text", "Generated answer", "winword.exe")
+        (selection, "Generated answer")
     ]
     assert app.pending_result_applied is True
     assert app.apply_result_action.enabled is False
@@ -157,13 +207,7 @@ def test_completed_result_enables_direct_copy_and_apply(monkeypatch):
 
 
 def test_apply_now_falls_back_to_copy_when_selection_is_not_safe(monkeypatch):
-    selection = CapturedSelection(
-        "Original text",
-        123,
-        "Private title",
-        True,
-        "winword.exe",
-    )
+    selection = verified_selection()
     app = completion_app()
     app._remember_completed_result(
         SubmissionResult(
@@ -175,7 +219,7 @@ def test_apply_now_falls_back_to_copy_when_selection_is_not_safe(monkeypatch):
     clipboard = []
     monkeypatch.setattr(
         app_module,
-        "replace_source_selection",
+        "apply_verified_source_selection",
         lambda *args: (_ for _ in ()).throw(
             SourceRecoveryError("The original selection changed.")
         ),
@@ -189,7 +233,42 @@ def test_apply_now_falls_back_to_copy_when_selection_is_not_safe(monkeypatch):
     assert app.notifications[-1][0] == "Result could not be applied safely"
 
 
-def test_multiple_alternatives_open_the_review_with_the_first_selected():
+def test_automatic_apply_occurs_only_in_main_process_after_readback(
+    monkeypatch,
+):
+    selection = verified_selection()
+    app = completion_app()
+    calls = []
+    receipt = apply_receipt(selection, "Generated answer")
+    monkeypatch.setattr(
+        app_module,
+        "automatic_source_return_is_allowed",
+        lambda captured, chatgpt_hwnd: True,
+    )
+    monkeypatch.setattr(
+        app_module,
+        "apply_verified_source_selection",
+        lambda captured, generated: calls.append((captured, generated)) or receipt,
+    )
+
+    result = app._apply_automatic_result_if_safe(
+        SubmissionResult(
+            submitted=True,
+            generated_text="Generated answer",
+            chatgpt_hwnd=500,
+        ),
+        selection,
+        ReturnDecision(replace_selection=True),
+        1,
+    )
+
+    assert calls == [(selection, "Generated answer")]
+    assert result.selection_replaced is True
+    assert result.apply_verification == ApplyVerification.VERIFIED
+    assert app.last_replacement == receipt
+
+
+def test_unsupported_source_retains_result_without_claiming_apply(monkeypatch):
     selection = CapturedSelection(
         "Original text",
         123,
@@ -197,6 +276,64 @@ def test_multiple_alternatives_open_the_review_with_the_first_selected():
         True,
         "winword.exe",
     )
+    app = completion_app()
+    monkeypatch.setattr(
+        app_module,
+        "apply_verified_source_selection",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("unsupported adapter must not be dispatched")
+        ),
+    )
+
+    result = app._apply_automatic_result_if_safe(
+        SubmissionResult(submitted=True, generated_text="Generated answer"),
+        selection,
+        ReturnDecision(replace_selection=True),
+        1,
+    )
+
+    assert result.selection_replaced is False
+    assert result.apply_verification == ApplyVerification.UNSUPPORTED
+    assert RecoveryAction.COPY_RESULT in result.recovery_actions
+    assert result.generated_text == "Generated answer"
+
+
+def test_automatic_apply_failure_retains_response_for_copy(monkeypatch):
+    selection = verified_selection()
+    app = completion_app()
+    monkeypatch.setattr(
+        app_module,
+        "automatic_source_return_is_allowed",
+        lambda captured, chatgpt_hwnd: True,
+    )
+    monkeypatch.setattr(
+        app_module,
+        "apply_verified_source_selection",
+        lambda *args: (_ for _ in ()).throw(
+            SourceRecoveryError("post-paste readback mismatch")
+        ),
+    )
+
+    result = app._apply_automatic_result_if_safe(
+        SubmissionResult(submitted=True, generated_text="Generated answer"),
+        selection,
+        ReturnDecision(replace_selection=True),
+        1,
+    )
+
+    assert result.selection_replaced is False
+    assert result.output_failed is True
+    assert result.apply_verification == ApplyVerification.FAILED
+    assert result.generated_text == "Generated answer"
+    assert result.recovery_actions == (
+        RecoveryAction.COPY_RESULT,
+        RecoveryAction.COPY_ORIGINAL,
+    )
+    assert app.preserved_original == selection
+
+
+def test_multiple_alternatives_open_the_review_with_the_first_selected():
+    selection = verified_selection()
     app = completion_app()
     app.result_review = None
     reviews = []
@@ -242,13 +379,7 @@ def test_review_completion_notifies_with_copy_and_apply_actions():
     app._show_result_review = lambda results, **options: reviews.append(
         (results, options)
     )
-    selection = CapturedSelection(
-        "Original text",
-        123,
-        "Private title",
-        True,
-        "chrome.exe",
-    )
+    selection = verified_selection(source_app="chrome.exe")
 
     app._submission_finished(
         SubmissionResult(
@@ -328,13 +459,7 @@ def test_review_choice_becomes_the_result_used_by_tray_actions(monkeypatch):
 
 def test_apply_uses_only_the_changes_selected_in_review(monkeypatch):
     app = completion_app()
-    selection = CapturedSelection(
-        "Original sentence.",
-        123,
-        "Private title",
-        True,
-        "winword.exe",
-    )
+    selection = verified_selection("Original sentence.")
     app._remember_completed_result(
         SubmissionResult(
             submitted=True,
@@ -358,25 +483,21 @@ def test_apply_uses_only_the_changes_selected_in_review(monkeypatch):
     replacements = []
     monkeypatch.setattr(
         app_module,
-        "replace_source_selection",
-        lambda *args: replacements.append(args),
+        "apply_verified_source_selection",
+        lambda captured, generated: replacements.append((captured, generated))
+        or apply_receipt(captured, generated),
     )
 
     app.apply_latest_result()
 
     assert replacements == [
-        (
-            123,
-            "Original sentence.",
-            "Partly revised sentence.",
-            "winword.exe",
-        )
+        (selection, "Partly revised sentence.")
     ]
 
 
 def recovery_app(selection: CapturedSelection) -> PromptMeld:
     app = object.__new__(PromptMeld)
-    app.last_replacement = selection
+    app.last_replacement = apply_receipt(selection, "Generated text")
     app.preserved_original = selection
     app.undo_replacement_action = FakeAction()
     app.copy_original_action = FakeAction()
@@ -385,43 +506,31 @@ def recovery_app(selection: CapturedSelection) -> PromptMeld:
 
 
 def test_successful_replacement_enables_native_undo(monkeypatch):
-    selection = CapturedSelection(
-        "Original text",
-        123,
-        "Private document title",
-        True,
-        "winword.exe",
-    )
+    selection = verified_selection()
     app = recovery_app(selection)
     calls = []
     monkeypatch.setattr(
         app_module,
-        "undo_source_replacement",
-        lambda hwnd: calls.append(hwnd),
+        "reverse_verified_source_replacement",
+        lambda receipt: calls.append(receipt),
     )
 
     app.undo_last_replacement()
 
-    assert calls == [123]
+    assert calls == [apply_receipt(selection, "Generated text")]
     assert app.last_replacement is None
     assert app.undo_replacement_action.enabled is False
     assert app.copy_original_action.enabled is True
 
 
-def test_failed_native_undo_copies_preserved_original(monkeypatch):
-    selection = CapturedSelection(
-        "Private original",
-        123,
-        "Private title",
-        True,
-        "winword.exe",
-    )
+def test_failed_verified_reversal_leaves_clipboard_unchanged(monkeypatch):
+    selection = verified_selection("Private original")
     app = recovery_app(selection)
     clipboard = []
     monkeypatch.setattr(
         app_module,
-        "undo_source_replacement",
-        lambda hwnd: (_ for _ in ()).throw(
+        "reverse_verified_source_replacement",
+        lambda receipt: (_ for _ in ()).throw(
             SourceRecoveryError("window closed")
         ),
     )
@@ -429,24 +538,18 @@ def test_failed_native_undo_copies_preserved_original(monkeypatch):
 
     app.undo_last_replacement()
 
-    assert clipboard == ["Private original"]
+    assert clipboard == []
 
 
-def test_failed_native_undo_handles_clipboard_recovery_failure(monkeypatch):
-    selection = CapturedSelection(
-        "Private original",
-        123,
-        "Private title",
-        True,
-        "winword.exe",
-    )
+def test_failed_verified_reversal_keeps_copy_original_action(monkeypatch):
+    selection = verified_selection("Private original")
     app = recovery_app(selection)
     notifications = []
     app.notify = lambda *args: notifications.append(args)
     monkeypatch.setattr(
         app_module,
-        "undo_source_replacement",
-        lambda hwnd: (_ for _ in ()).throw(
+        "reverse_verified_source_replacement",
+        lambda receipt: (_ for _ in ()).throw(
             SourceRecoveryError("window closed")
         ),
     )
@@ -458,9 +561,10 @@ def test_failed_native_undo_handles_clipboard_recovery_failure(monkeypatch):
 
     app.undo_last_replacement()
 
-    assert notifications[0][0] == (
-        "Undo and clipboard recovery were unavailable"
-    )
+    assert notifications[0][0] == "Undo was unavailable"
+    assert app.copy_original_action.enabled is True
+    assert app.undo_replacement_action.enabled is False
+    assert app.last_replacement is None
 
 
 def test_cancel_automation_sets_event_and_disables_tray_action():
@@ -667,3 +771,301 @@ def test_diagnostics_exclude_selected_text_and_window_title(tmp_path):
     assert "winword.exe" in diagnostics
     assert "Highly private" not in diagnostics
     assert "Confidential document" not in diagnostics
+
+
+def test_interrupted_run_message_distinguishes_submission_ownership():
+    before_send = PendingAutomationRecord.create("run-before")
+    maybe = PendingAutomationRecord.create("run-maybe").advanced(
+        AutomationCheckpoint.SEND_STARTED,
+        SubmissionDisposition.MAYBE_SUBMITTED,
+    )
+    confirmed = PendingAutomationRecord.create("run-confirmed").advanced(
+        AutomationCheckpoint.SUBMISSION_CONFIRMED,
+        SubmissionDisposition.CONFIRMED,
+    )
+
+    assert "stopped before Send" in PromptMeld._interrupted_automation_message(
+        before_send
+    )
+    assert "submission was not confirmed" in (
+        PromptMeld._interrupted_automation_message(maybe)
+    )
+    assert "definitely submitted" in PromptMeld._interrupted_automation_message(
+        confirmed
+    )
+
+
+def test_ambiguous_send_cannot_reenter_delivery_even_via_stale_ui_signal():
+    app = object.__new__(PromptMeld)
+    original_run_id = "ambiguous-run"
+    app.automation_run_context = SimpleNamespace(run_id=original_run_id)
+    app.automation_worker = None
+    app.last_automation_result = SubmissionResult(
+        submitted=False,
+        checkpoint=AutomationCheckpoint.SEND_STARTED,
+        submission_disposition=SubmissionDisposition.MAYBE_SUBMITTED,
+        retry_mode="inspect",
+        recoverable=True,
+    )
+    starts = []
+    app._start_automation_context = lambda *args, **kwargs: starts.append(
+        (args, kwargs)
+    )
+
+    app.retry_automation("delivery")
+
+    assert starts == []
+    assert app.automation_run_context.run_id == original_run_id
+
+
+@pytest.mark.parametrize("markdown_escaped", [False, True])
+def test_full_canary_verifies_promptmeld_owned_scratch_application(
+    monkeypatch,
+    qtbot,
+    markdown_escaped,
+):
+    app = completion_app()
+    app.cancel_automation_action = FakeAction()
+    app.automation_run_context = object()
+    app.automation_state = "waiting"
+    app.pending_automation_path = None
+    app.pending_automation_record = None
+    app.interrupted_automation = None
+    expected = "PROMPTMELD_CANARY_123"
+    captured_response = (
+        expected.replace("_", "\\_") if markdown_escaped else expected
+    )
+    copied_text = []
+    monkeypatch.setattr(app_module, "write_clipboard_text", copied_text.append)
+    scratch = QPlainTextEdit()
+    qtbot.addWidget(scratch)
+    scratch.setPlainText("PromptMeld canary source")
+    scratch.selectAll()
+    monkeypatch.setattr(
+        windows_module.SelectionCapture,
+        "_source_process_identity",
+        staticmethod(lambda hwnd: (123, 456)),
+    )
+    monkeypatch.setattr(
+        windows_module.SelectionCapture,
+        "_current_process_identity",
+        staticmethod(lambda: (123, 456)),
+    )
+    monkeypatch.setattr(
+        windows_module.win32process,
+        "GetWindowThreadProcessId",
+        lambda hwnd: (1, 123),
+    )
+    monkeypatch.setattr(
+        windows_module.win32gui,
+        "IsWindow",
+        lambda hwnd: True,
+    )
+    monkeypatch.setattr(
+        windows_module.SelectionCapture,
+        "_window_class",
+        staticmethod(lambda hwnd: "PromptMeldScratch"),
+    )
+    monkeypatch.setattr(
+        windows_module,
+        "_validate_source_fingerprint",
+        lambda *args: None,
+    )
+    scratch_selection = app_module.capture_promptmeld_scratch_selection(scratch)
+
+    class ClipboardProbe:
+        def finish(self):
+            return True
+
+    class CanaryProgress:
+        def __init__(self):
+            self.finished = None
+
+        def finish(self, result, can_apply=False):
+            self.finished = (result, can_apply)
+
+    progress = CanaryProgress()
+    app._full_canary_finished(
+        SubmissionResult(
+            submitted=True,
+            generated_text=captured_response,
+            submission_confirmed=True,
+            checkpoint=AutomationCheckpoint.RESPONSE_CAPTURED,
+            submission_disposition=SubmissionDisposition.CONFIRMED,
+        ),
+        progress,
+        expected,
+        scratch,
+        scratch_selection,
+        ClipboardProbe(),
+    )
+
+    assert app.last_automation_result.apply_verification == (
+        ApplyVerification.VERIFIED
+    )
+    assert app.last_automation_result.checkpoint == AutomationCheckpoint.COMPLETE
+    assert app.last_automation_result.recoverable is False
+    assert scratch.toPlainText() == "PromptMeld canary source"
+    assert progress.finished[1] is False
+    assert app.notifications[-1][0] == "Full automation test passed"
+    app.copy_latest_result()
+    assert copied_text == [captured_response]
+    assert app.automation_progress.copied is True
+
+
+def test_full_canary_is_opt_in_temporary_chat_with_no_source_payload(
+    monkeypatch,
+    qtbot,
+):
+    app = object.__new__(PromptMeld)
+    app.popup = None
+    app.settings = AppSettings()
+    app.cancel_automation_action = FakeAction()
+    app.automation_worker = None
+    app._automation_is_active = lambda: False
+    app._begin_pending_automation = lambda context: None
+    app._show_automation_progress = lambda *args, **kwargs: FakeProgress()
+    app.notify = lambda *args: None
+
+    class ThreadPool:
+        def __init__(self):
+            self.worker = None
+
+        def start(self, worker):
+            self.worker = worker
+
+    app.thread_pool = ThreadPool()
+    calls = []
+    questions = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: questions.append((args, kwargs))
+        or QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(
+        app_module,
+        "submit_via_worker",
+        lambda prompt, project, settings, **options: calls.append(
+            (prompt, project, settings, options)
+        )
+        or SubmissionResult(submitted=True, generated_text="mismatch"),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "capture_promptmeld_scratch_selection",
+        lambda scratch: SimpleNamespace(text="PromptMeld canary source"),
+    )
+
+    class ClipboardProbe:
+        @classmethod
+        def begin(cls, token):
+            return cls()
+
+        def finish(self):
+            return True
+
+    monkeypatch.setattr(app_module, "ClipboardCanaryProbe", ClipboardProbe)
+
+    app.run_full_automation_canary()
+    app.thread_pool.worker.function(lambda *args: None)
+
+    prompt, project, settings, options = calls[0]
+    assert prompt.startswith("Reply with exactly this phrase")
+    assert project == ""
+    assert settings.temporary_chat_enabled is True
+    assert settings.auto_submit_enabled is True
+    assert settings.replace_selected_text_enabled is False
+    assert options["capture_generated_text"] is True
+    assert "source_text" not in options
+    assert "source_hwnd" not in options
+    assert "full-format restoration" in questions[0][0][2]
+    assert "unique test phrase" in questions[0][0][2]
+    assert "nonce" not in questions[0][0][2].casefold()
+
+
+def test_full_canary_markdown_normalisation_remains_exact():
+    expected = "PROMPTMELD_CANARY_123"
+
+    assert app_module._canonical_canary_response(
+        "PROMPTMELD\\_CANARY\\_123",
+        expected,
+    ) == expected
+    assert app_module._canonical_canary_response(
+        "PROMPTMELD\\_CANARY\\_123 extra",
+        expected,
+    ) is None
+
+
+def test_full_canary_rejects_missing_clipboard_round_trip(
+    monkeypatch,
+    qtbot,
+):
+    app = completion_app()
+    app.cancel_automation_action = FakeAction()
+    app.automation_run_context = object()
+    app.automation_state = "waiting"
+    app.pending_automation_path = None
+    app.pending_automation_record = None
+    app.interrupted_automation = None
+    expected = "PROMPTMELD_CANARY_123"
+    original = "PromptMeld canary source"
+    scratch = QPlainTextEdit()
+    qtbot.addWidget(scratch)
+    scratch.setPlainText(original)
+    scratch_selection = SimpleNamespace(text=original)
+
+    def apply_scratch(selection, generated):
+        scratch.setPlainText(generated)
+        return object()
+
+    def reverse_scratch(receipt):
+        scratch.setPlainText(original)
+
+    monkeypatch.setattr(
+        app_module,
+        "apply_verified_source_selection",
+        apply_scratch,
+    )
+    monkeypatch.setattr(
+        app_module,
+        "reverse_verified_source_replacement",
+        reverse_scratch,
+    )
+    monkeypatch.setattr(
+        app_module,
+        "release_promptmeld_scratch_selection",
+        lambda selection: None,
+    )
+
+    class ClipboardProbe:
+        def finish(self):
+            return False
+
+    class CanaryProgress:
+        def finish(self, result, can_apply=False):
+            self.result = result
+
+    progress = CanaryProgress()
+    app._full_canary_finished(
+        SubmissionResult(
+            submitted=True,
+            generated_text=expected,
+            submission_confirmed=True,
+            checkpoint=AutomationCheckpoint.RESPONSE_CAPTURED,
+            submission_disposition=SubmissionDisposition.CONFIRMED,
+        ),
+        progress,
+        expected,
+        scratch,
+        scratch_selection,
+        ClipboardProbe(),
+    )
+
+    assert app.last_automation_result.failure_code == (
+        "canary_clipboard_verification_failed"
+    )
+    assert app.last_automation_result.apply_verification == (
+        ApplyVerification.FAILED
+    )
+    assert scratch.toPlainText() == original
